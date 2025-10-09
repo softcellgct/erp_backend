@@ -13,3 +13,11 @@ class UserCreateSchema(BaseModel):
 class LoginSchema(BaseModel):
     identifier: str
     password: str
+
+class PermissionAssignSchema(BaseModel):
+    role_id: UUID
+    screen_id: UUID
+    can_view: bool = False
+    can_create: bool = False
+    can_edit: bool = False
+    can_delete: bool = False

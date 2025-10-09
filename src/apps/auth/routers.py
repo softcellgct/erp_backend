@@ -1,8 +1,9 @@
+from typing import List
 from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from apps.auth.services import RoleService, UserService
-from common.schemas.auth.user_schemas import LoginSchema, UserCreateSchema
+from apps.auth.services import RoleService, UserService, PermissionService
+from common.schemas.auth.user_schemas import LoginSchema, UserCreateSchema, PermissionAssignSchema
 from components.db.db import get_db_session
 from components.middleware import is_superadmin, public_route
 
@@ -77,3 +78,32 @@ async def get_role_permissions(request: Request, db: AsyncSession = Depends(get_
 # @public_route
 # async def get_roles(request:Request, db: AsyncSession = Depends(get_db_session)):
 #     return await UserService(db).get_roles()
+
+
+permissions_router = APIRouter(tags=["Auth - Permissions"])
+
+@permissions_router.post("/permissions/role/{role_id}/assign",
+                         name="Assign Permission",
+                         description="Assign permissions for a role on a specific screen/module.")
+@is_superadmin
+async def assign_permission(request: Request, role_id: str, permission_data: List[PermissionAssignSchema], db: AsyncSession = Depends(get_db_session)):
+    return await PermissionService(db).bulk_add_permissions(permission_data,role_id)
+
+@permissions_router.get("/modules-screens",
+                        name="Get Modules and Screens",
+                        description="Retrieve a list of all active modules and their associated screens.")
+async def get_modules_and_screens(request: Request, db: AsyncSession = Depends(get_db_session)):
+    return await PermissionService(db).get_modules_and_screens()
+
+@permissions_router.get("/permissions/role/{role_id}",
+                        name="Get Permissions by Role",
+                        description="Retrieve all permissions assigned to a specific role.")
+async def get_permissions_by_role(request: Request, role_id: UUID, db: AsyncSession = Depends(get_db_session)):
+    return await PermissionService(db).get_role_permissions(role_id)
+
+@permissions_router.delete("/permissions/role/{role_id}",
+                            name="Delete Permissions by Role",
+                            description="Delete all permissions assigned to a specific role.")
+@is_superadmin
+async def delete_permissions_by_role(request: Request, role_id: str, db: AsyncSession = Depends(get_db_session)):
+    return await PermissionService(db).remove_all_permissions_for_role(role_id)
