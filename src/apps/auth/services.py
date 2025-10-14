@@ -1,10 +1,10 @@
-from ast import List
 from datetime import timedelta
 from uuid import UUID
 from fastapi import HTTPException, Request
 from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import selectinload
 from common.models.auth.user import Module, RolePermission, Screen, User, Role
+from common.schemas.auth.role_schemas import RoleCreateSchema
 from common.schemas.auth.user_schemas import LoginSchema, PermissionAssignSchema, UserCreateSchema
 from components.utils.password_utils import get_password_hash, verify_password
 from components.utils.security import create_access_token
@@ -23,6 +23,44 @@ class RoleService:
         except Exception as e:
             raise e
 
+    async def create_role(self, role_data: RoleCreateSchema):
+        try:
+            data = Role(**role_data.model_dump())
+            self.db.add(data)
+            await self.db.commit()
+            await self.db.refresh(data)
+            return data
+        except Exception as e:
+            raise e
+
+    async def update_role(self, role_id: UUID, role_data: RoleCreateSchema):
+        try:
+            query = select(Role).where(Role.id == role_id)
+            result = await self.db.execute(query)
+            role = result.scalar_one_or_none()
+            if not role:
+                raise HTTPException(status_code=404, detail="Role not found")
+            for key, value in role_data.model_dump().items():
+                setattr(role, key, value)
+            self.db.add(role)
+            await self.db.commit()
+            await self.db.refresh(role)
+            return role
+        except Exception as e:
+            raise e
+
+    async def delete_role(self, role_id: UUID):
+        try:
+            query = select(Role).where(Role.id == role_id)
+            result = await self.db.execute(query)
+            role = result.scalar_one_or_none()
+            if not role:
+                raise HTTPException(status_code=404, detail="Role not found")
+            await self.db.delete(role)
+            await self.db.commit()
+            return {"detail": "Role deleted successfully"}
+        except Exception as e:
+            raise e
 
 class UserService:
     def __init__(self, db):
@@ -44,7 +82,7 @@ class UserService:
         try:
             query = select(User).where(
                 or_(
-                    User.username == login_data.identifier,
+                    User.user_code == login_data.identifier,
                     User.email == login_data.identifier,
                 )
             )
@@ -52,7 +90,7 @@ class UserService:
             user = result.scalar_one_or_none()
             if not user or not verify_password(login_data.password, user.password):
                 raise HTTPException(
-                    status_code=401, detail="Invalid username or password"
+                    status_code=401, detail="Invalid user code or password"
                 )
             access_token = create_access_token(
                 data={"id": str(user.id), "type": "access"},

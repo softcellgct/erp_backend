@@ -19,6 +19,14 @@ class Role(Base):
         back_populates="role",
         lazy="selectin",
         foreign_keys="[RolePermission.role_id]",
+        cascade="all, delete-orphan",
+    )
+    users : Mapped[list["User"]] = relationship(
+        "User",
+        back_populates="role",
+        lazy="selectin",
+        foreign_keys="[User.role_id]",
+        cascade="all, delete-orphan",
     )
 
 
@@ -72,6 +80,7 @@ def insert_initial_user(target, connection, **kwargs):
         super_admin_user = {
             "email": "superadmin@softcell.in",
             "username": "super_admin",
+            "user_code": "GCT001",
             "full_name": "Super Administrator",
             "password": get_password_hash("superadmin@123"),  # simple hash for demo
             "is_active": True,

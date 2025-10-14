@@ -1,6 +1,6 @@
 from .gate.routers import router as gate_router
 from .auth.routers import users_router, auth_router, roles_router, permissions_router
-from .master.routers import router as master_router
+from .master.routers import institution_router, department_router, course_router, class_router
 
 ROUTERS = [
     (auth_router, "/api"),
@@ -8,5 +8,8 @@ ROUTERS = [
     (roles_router, "/api"),
     (permissions_router, "/api"),
     (gate_router, "/api"),
-    (master_router, "/api/master")
+    (institution_router, "/api/master"),
+    (department_router, "/api/master"),
+    (course_router, "/api/master"),
+    (class_router, "/api/master"),
 ]
