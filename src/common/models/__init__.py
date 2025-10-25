@@ -7,5 +7,7 @@ from .auth.user import (
     Role,
 )
 
-__all__ = ["Institution", "User", "Role", "UserPermission", "Screen", "Module"]
+from common.models.master.academic_year import AcademicYear
+
+__all__ = ["Institution", "User", "Role", "UserPermission", "Screen", "Module", "AcademicYear"]
 # __all__ = ["Role"]

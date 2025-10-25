@@ -12,6 +12,7 @@ class InstitutionUpdate(BaseModel):
     name: Optional[str] = None
     is_active: Optional[bool] = None
 
+
 class InstitutionResponse(BaseModel):
     id: UUID
     code: str

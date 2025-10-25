@@ -1,5 +1,7 @@
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from apps.master.services import MasterService
+from common.schemas.master.academic_year import AcademicYearResponse, AcademicYearSchema, UpdateAcademicYearSchema
 from components.db.db import get_db_session
 from components.middleware import is_superadmin
 from typing import List
@@ -34,21 +36,17 @@ async def create_institution(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Create a new institution."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).create_institution(data)
 
 
 @institution_router.get(
-    "", response_model=List[InstitutionResponse], summary="List all institutions"
+    "",  summary="List all institutions"
 )
 @is_superadmin
 async def list_institutions(
     request: Request, db: AsyncSession = Depends(get_db_session)
 ):
     """Get a list of all institutions."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).list_institutions()
 
 
@@ -62,8 +60,6 @@ async def get_institution(
     request: Request, institution_id: UUID, db: AsyncSession = Depends(get_db_session)
 ):
     """Get details of a specific institution by ID."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).get_institution(institution_id)
 
 
@@ -80,8 +76,6 @@ async def update_institution(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Update an existing institution by ID."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).update_institution(institution_id, data)
 
 
@@ -91,8 +85,6 @@ async def delete_institution(
     request: Request, institution_id: UUID, db: AsyncSession = Depends(get_db_session)
 ):
     """Delete an institution by ID."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).delete_institution(institution_id)
 
 
@@ -108,8 +100,6 @@ async def create_department(
     request: Request, data: DepartmentCreate, db: AsyncSession = Depends(get_db_session)
 ):
     """Create a new department."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).create_department(data)
 
 
@@ -121,8 +111,6 @@ async def list_departments(
     request: Request, db: AsyncSession = Depends(get_db_session)
 ):
     """Get a list of all departments."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).list_departments()
 
 
@@ -136,8 +124,6 @@ async def get_department(
     request: Request, department_id: UUID, db: AsyncSession = Depends(get_db_session)
 ):
     """Get details of a specific department by ID."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).get_department(department_id)
 
 
@@ -154,8 +140,6 @@ async def update_department(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Update an existing department by ID."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).update_department(department_id, data)
 
 
@@ -165,8 +149,6 @@ async def delete_department(
     request: Request, department_id: UUID, db: AsyncSession = Depends(get_db_session)
 ):
     """Delete a department by ID."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).delete_department(department_id)
 
 
@@ -180,8 +162,6 @@ async def create_course(
     request: Request, data: CourseCreate, db: AsyncSession = Depends(get_db_session)
 ):
     """Create a new course."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).create_course(data)
 
 
@@ -189,8 +169,6 @@ async def create_course(
 @is_superadmin
 async def list_courses(request: Request, db: AsyncSession = Depends(get_db_session)):
     """Get a list of all courses."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).list_courses()
 
 
@@ -202,8 +180,6 @@ async def get_course(
     request: Request, course_id: UUID, db: AsyncSession = Depends(get_db_session)
 ):
     """Get details of a specific course by ID."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).get_course(course_id)
 
 
@@ -218,8 +194,6 @@ async def update_course(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Update an existing course by ID."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).update_course(course_id, data)
 
 
@@ -229,8 +203,6 @@ async def delete_course(
     request: Request, course_id: UUID, db: AsyncSession = Depends(get_db_session)
 ):
     """Delete a course by ID."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).delete_course(course_id)
 
 
@@ -244,8 +216,6 @@ async def create_class(
     request: Request, data: ClassCreate, db: AsyncSession = Depends(get_db_session)
 ):
     """Create a new class."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).create_class(data)
 
 
@@ -253,8 +223,6 @@ async def create_class(
 @is_superadmin
 async def list_classes(request: Request, db: AsyncSession = Depends(get_db_session)):
     """Get a list of all classes."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).list_classes()
 
 
@@ -266,8 +234,6 @@ async def get_class(
     request: Request, class_id: UUID, db: AsyncSession = Depends(get_db_session)
 ):
     """Get details of a specific class by ID."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).get_class(class_id)
 
 
@@ -282,8 +248,6 @@ async def update_class(
     db: AsyncSession = Depends(get_db_session),
 ):
     """Update an existing class by ID."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).update_class(class_id, data)
 
 
@@ -293,6 +257,75 @@ async def delete_class(
     request: Request, class_id: UUID, db: AsyncSession = Depends(get_db_session)
 ):
     """Delete a class by ID."""
-    from apps.master.services import MasterService
-
     return await MasterService(db).delete_class(class_id)
+
+
+academic_year_router = APIRouter(prefix="/academic-years", tags=["Academic Years"])
+
+
+@academic_year_router.post(
+    "",
+    status_code=201,
+    name="Create Academic Year",
+    description="Create a new academic year",
+)
+@is_superadmin
+async def create_academic_year(
+    request: Request,
+    data: AcademicYearSchema,
+    db: AsyncSession = Depends(get_db_session),
+):
+    return await MasterService(db).create_academic_year(data)
+
+
+@academic_year_router.get(
+    "",
+    response_model=List[AcademicYearResponse],
+    name="List Academic Years",
+    description="Get a list of all academic years",
+)
+async def list_academic_years(
+    request: Request, db: AsyncSession = Depends(get_db_session)
+):
+    """Get a list of all academic years."""
+    return await MasterService(db).list_academic_years()
+
+@academic_year_router.get(
+    "/{academic_year_id}",
+    response_model=AcademicYearResponse,
+    name="Get Academic Year",
+    description="Get details of a specific academic year by ID",
+)
+async def get_academic_year(
+    request: Request, academic_year_id: UUID, db: AsyncSession = Depends(get_db_session)
+):
+    """Get details of a specific academic year by ID."""
+    return await MasterService(db).get_academic_year(academic_year_id)
+
+@academic_year_router.put(
+    "/{academic_year_id}",
+    response_model=UpdateAcademicYearSchema,
+    name="Update Academic Year",
+    description="Update an existing academic year by ID",
+)
+@is_superadmin
+async def update_academic_year(
+    request: Request,
+    academic_year_id: UUID,
+    data: UpdateAcademicYearSchema,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Update an existing academic year by ID."""
+    return await MasterService(db).update_academic_year(academic_year_id, data)
+
+@academic_year_router.delete(
+    "/{academic_year_id}",
+    name="Delete Academic Year",
+    description="Delete an academic year by ID",
+)
+@is_superadmin
+async def delete_academic_year( 
+    request: Request, academic_year_id: UUID, db: AsyncSession = Depends(get_db_session)
+):
+    """Delete an academic year by ID."""
+    return await MasterService(db).delete_academic_year(academic_year_id)

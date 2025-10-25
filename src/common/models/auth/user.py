@@ -1,4 +1,5 @@
 from uuid import UUID
+from common.models.master import academic_year
 from components.db.base_model import Base
 from sqlalchemy.orm import mapped_column, Mapped, relationship
 from sqlalchemy import Boolean, ForeignKey, String, event
@@ -93,6 +94,7 @@ def insert_initial_user(target, connection, **kwargs):
 
 
 class Institution(Base):
+    from ..master.academic_year import AcademicYear
     __tablename__ = "institutions"
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
@@ -100,6 +102,7 @@ class Institution(Base):
 
     # Relationships
     departments: Mapped[list["Department"]] = relationship(back_populates="institution")
+    academic_years: Mapped[list["AcademicYear"]] = relationship("AcademicYear", back_populates="institution")
 
 
 class Department(Base):

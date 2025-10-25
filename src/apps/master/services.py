@@ -4,6 +4,9 @@ from common.models.auth.user import Institution, Department, Course, Class
 from fastapi import HTTPException
 from uuid import UUID
 
+from common.models.master.academic_year import AcademicYear
+from common.schemas.master.academic_year import AcademicYearSchema
+
 class MasterService:
     def __init__(self, db: AsyncSession):
         self.db = db
@@ -167,3 +170,41 @@ class MasterService:
             raise HTTPException(status_code=404, detail="Class not found")
         await self.db.commit()
         return {"message": "Class deactivated"}
+
+
+    async def create_academic_year(self, data: AcademicYearSchema):
+        academic_year = AcademicYear(**data.model_dump())
+        self.db.add(academic_year)
+        await self.db.commit()
+        await self.db.refresh(academic_year)
+        return academic_year
+
+
+    async def list_academic_years(self):
+        result = await self.db.execute(select(AcademicYear))
+        return result.scalars().all()
+
+    async def get_academic_year(self, academic_year_id: UUID):
+        result = await self.db.execute(select(AcademicYear).where(AcademicYear.id == academic_year_id))
+        academic_year = result.scalar_one_or_none()
+        if not academic_year:
+            raise HTTPException(status_code=404, detail="Academic Year not found")
+        return academic_year
+
+    async def update_academic_year(self, academic_year_id: UUID, data: AcademicYearSchema):
+        result = await self.db.execute(
+            update(AcademicYear).where(AcademicYear.id == academic_year_id).values(**data.model_dump(exclude_unset=True))
+        )
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Academic Year not found")
+        await self.db.commit()
+        return await self.get_academic_year(academic_year_id)
+    
+    async def delete_academic_year(self, academic_year_id: UUID):
+        result = await self.db.execute(
+            update(AcademicYear).where(AcademicYear.id == academic_year_id).values(status=False)
+        )
+        if result.rowcount == 0:
+            raise HTTPException(status_code=404, detail="Academic Year not found")
+        await self.db.commit()
+        return {"message": "Academic Year deactivated"}

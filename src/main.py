@@ -8,6 +8,7 @@ from components.middleware import PermissionMiddleware, get_current_user, public
 from fastapi.middleware.cors import CORSMiddleware
 from components.db.db import (
     create_database_if_not_exists,
+    create_roles_and_users,
     db_engine,
     setup_schemas,
     sync_engine,
@@ -51,9 +52,14 @@ async def lifespan(app: FastAPI):
             setup_schemas(conn, Base.metadata)
     else:
         logger.info("Database already exists")
+
+    
     async with db_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         logger.info("PostgreSQL Database connected successfully.✅")
+
+    await create_roles_and_users()
+    logger.info("Database roles and initial users are set up.✅")
 
     yield
 
