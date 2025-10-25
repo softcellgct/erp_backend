@@ -121,6 +121,12 @@ class Course(Base):
     __tablename__ = "courses"
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     title: Mapped[str] = mapped_column(String(255))
+    short_name: Mapped[str | None] = mapped_column(
+        String(50), unique=True, index=True, nullable=True
+    )  # Short name / abbreviation
+    level: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="UG", server_default="UG"
+    )  # "UG" or "PG"
     department_id: Mapped[UUID] = mapped_column(ForeignKey("departments.id"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 

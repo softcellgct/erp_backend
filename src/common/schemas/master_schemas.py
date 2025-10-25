@@ -41,11 +41,15 @@ class CourseCreate(BaseModel):
     code: str
     title: str
     department_id: UUID
+    level: str  # "UG" or "PG"
+    short_name: Optional[str] = None
 
 class CourseUpdate(BaseModel):
     code: Optional[str] = None
     title: Optional[str] = None
     department_id: Optional[UUID] = None
+    level: Optional[str] = None
+    short_name: Optional[str] = None
     is_active: Optional[bool] = None
 
 class CourseResponse(BaseModel):
@@ -53,6 +57,8 @@ class CourseResponse(BaseModel):
     code: str
     title: str
     department_id: UUID
+    level: str
+    short_name: Optional[str] = None
     is_active: bool
 
 class ClassCreate(BaseModel):
