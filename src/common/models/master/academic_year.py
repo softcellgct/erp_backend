@@ -15,4 +15,27 @@ class AcademicYear(Base):
     institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"))
 
     institution = relationship("Institution", back_populates="academic_years", lazy="selectin")
+    semester_periods = relationship(
+        "SemesterPeriod", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
+    )
 
+
+class SemesterPeriod(Base):
+    __tablename__ = "semester_periods"
+
+    name: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g., "Odd Sem - 2010"
+    short_name: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g., "Odd Sem"
+    type: Mapped[str] = mapped_column(String(20), default="Semester", nullable=False)  # e.g., "Semester" from dropdown
+    from_date: Mapped[date] = mapped_column(Date, nullable=False)
+    to_date: Mapped[date] = mapped_column(Date, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # Checkbox for "Is Sem-period active"
+
+    # Foreign key to AcademicYear, ensuring cascade delete if AcadYear is removed
+    academic_year_id: Mapped[UUID] = mapped_column(
+        ForeignKey("academic_years.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Relationship back to AcademicYear for easy querying (e.g., semester_periods = academic_year.semester_periods)
+    academic_year = relationship(
+        "AcademicYear", back_populates="semester_periods", lazy="selectin"
+    )

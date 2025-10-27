@@ -1,8 +1,7 @@
 from uuid import UUID
-from common.models.master import academic_year
 from components.db.base_model import Base
 from sqlalchemy.orm import mapped_column, Mapped, relationship
-from sqlalchemy import Boolean, ForeignKey, String, event
+from sqlalchemy import Boolean, ForeignKey, Integer, String, event
 from components.utils.password_utils import get_password_hash
 from sqlalchemy import insert, select
 from logs.logging import logger
@@ -22,7 +21,7 @@ class Role(Base):
         foreign_keys="[RolePermission.role_id]",
         cascade="all, delete-orphan",
     )
-    users : Mapped[list["User"]] = relationship(
+    users: Mapped[list["User"]] = relationship(
         "User",
         back_populates="role",
         lazy="selectin",
@@ -95,6 +94,7 @@ def insert_initial_user(target, connection, **kwargs):
 
 class Institution(Base):
     from ..master.academic_year import AcademicYear
+
     __tablename__ = "institutions"
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
@@ -102,7 +102,9 @@ class Institution(Base):
 
     # Relationships
     departments: Mapped[list["Department"]] = relationship(back_populates="institution")
-    academic_years: Mapped[list["AcademicYear"]] = relationship("AcademicYear", back_populates="institution")
+    academic_years: Mapped[list["AcademicYear"]] = relationship(
+        "AcademicYear", back_populates="institution"
+    )
 
 
 class Department(Base):
@@ -129,6 +131,8 @@ class Course(Base):
     )  # "UG" or "PG"
     department_id: Mapped[UUID] = mapped_column(ForeignKey("departments.id"))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    course_duration_years: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_semesters: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # Relationships
     department: Mapped["Department"] = relationship(back_populates="courses")

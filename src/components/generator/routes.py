@@ -1,0 +1,216 @@
+from fastapi import APIRouter, HTTPException, Query, Depends, Path, Request, status
+from components.db.base_model import Base
+from components.db.db import get_db_session
+from fastapi_querybuilder.dependencies import QueryBuilder
+from fastapi_pagination.ext.sqlalchemy import paginate
+from components.generator.schema.registry import get_schemas
+from fastapi_pagination import Page, add_pagination
+from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi.encoders import jsonable_encoder
+from typing import List
+from uuid import UUID
+import re
+
+
+def create_crud_routes(
+    model: Base,
+    CreateSchema=None,
+    UpdateSchema=None,
+    AllResponseSchema=None,
+    IdResponseSchema=None,
+    decorators=None,
+) -> APIRouter:
+    SchemaCreate = CreateSchema or get_schemas(model)[0]
+    SchemaUpdate = UpdateSchema or get_schemas(model)[1]
+    SchemaAllResponse = AllResponseSchema or get_schemas(model)[2]
+    SchemaIdResponse = IdResponseSchema or AllResponseSchema or get_schemas(model)[3]
+
+    # Split model.__name__ at uppercase letters and join as separate words
+    split_name = " ".join(re.findall(r"[A-Z][a-z]*", model.__name__))
+    snake_case_key = "_".join(split_name.lower().split())
+
+    # Create a router with the model name as the tag
+    router: APIRouter = APIRouter()
+
+    # Generator Keys
+    """
+    *:*:get_all
+    *:*:get_one
+    *:*:create
+    *:*:update
+    *:*:delete
+    """
+
+    """
+    =====================================================
+    #  Route for retrieving all records with pagination, filtering, sorting, and searching
+    =====================================================
+    """
+
+    @router.get(
+        "",
+        response_model=Page[SchemaAllResponse],
+        name=f"{model}:{snake_case_key}:get_all",
+        description=f"Retrieve paginated {split_name} records with optional filtering, sorting, and searching.",
+    )
+    async def read_all(
+        request: Request,
+        db: AsyncSession = Depends(get_db_session),
+        query=QueryBuilder(model),
+    ):
+        """
+        Retrieve paginated {split_name} records with optional filtering, sorting, and searching.
+        """
+        response_data = await paginate(db, query)
+        response_dict = jsonable_encoder(
+            response_data, exclude_unset=True, exclude_none=True
+        )
+        return response_dict
+
+    """
+    =====================================================
+    #  Route for retrieving a single record by ID
+    =====================================================
+    """
+
+    @router.get(
+        "/{id}",
+        response_model=SchemaIdResponse,
+        status_code=status.HTTP_200_OK,
+        name=f"{model}:{snake_case_key}:get_one",
+        description=f"Retrieve a single {split_name} record by its ID.",
+    )
+    async def read_one(
+        request: Request,
+        id: str = Path(
+            ..., description=f"The ID of the {split_name} record to retrieve."
+        ),
+        db: AsyncSession = Depends(get_db_session),
+    ):
+        """
+        Retrieve a single {split_name} record by its ID.
+        """
+        data = await model.get_record_by_id(db, id)
+        if not data:
+            raise HTTPException(
+                status_code=404, detail=f"{split_name} with ID {id} not found"
+            )
+        result_dict = jsonable_encoder(data, exclude_unset=True, exclude_none=True)
+        return result_dict
+
+    """
+    =====================================================
+    # Route for creating multiple records in bulk
+    =====================================================
+    """
+
+    @router.post(
+        "",
+        status_code=status.HTTP_201_CREATED,
+        name=f"{model}:{snake_case_key}:create",
+        description=f"Create new {split_name} records in the database.",
+    )
+    async def bulk_create(
+        request: Request,
+        items: List[SchemaCreate],
+        db: AsyncSession = Depends(get_db_session),
+    ):
+        """
+        Create multiple new {split_name} records in bulk and invalidate cached list.
+        """
+        count = await model.create(request, db, items)
+        return {
+            "detail": f"{split_name} data created successfully",
+            "count": count,
+        }
+
+    """
+    =====================================================
+    # Route for updating multiple records in bulk
+    =====================================================
+    """
+
+    @router.put(
+        "",
+        status_code=status.HTTP_200_OK,
+        name=f"{model}:{snake_case_key}:update",
+        description=f"Update multiple existing {split_name} records in bulk.",
+    )
+    async def bulk_update(
+        request: Request,
+        items: list[SchemaUpdate],
+        db: AsyncSession = Depends(get_db_session),
+    ):
+        """
+        Update multiple existing {split_name} records in bulk.
+        """
+        if not items:
+            raise HTTPException(
+                status_code=400, detail=f"No {split_name} data provided for update"
+            )
+
+        count = await model.update(request, db, items)
+        if count == 0:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No matching {split_name} records found for update",
+            )
+        return {"detail": f"{split_name} data updated successfully", "count": count}
+
+    """
+    =====================================================
+    # Route for deleting multiple records in bulk
+    =====================================================
+    """
+
+    @router.delete(
+        "",
+        status_code=status.HTTP_200_OK,
+        name=f"{model}:{snake_case_key}:delete",
+        description=f"Delete multiple {split_name} records by their IDs.",
+    )
+    async def bulk_delete(
+        request: Request,
+        ids: list[UUID],
+        hard_delete: bool = Query(
+            False,
+            description=f"Set to True for hard delete (only allowed for SUPERADMIN) on {split_name} records",
+        ),
+        db: AsyncSession = Depends(get_db_session),
+    ):
+        """
+        Delete multiple {split_name} records by their IDs.
+        """
+        if not ids:
+            raise HTTPException(
+                status_code=400, detail=f"No {split_name} IDs provided for deletion"
+            )
+
+        # Get user role from request
+
+        if hard_delete:
+            result = await model.hard_delete(db, ids)
+        else:
+            result = await model.soft_delete(request, db, ids)
+
+        if result == 0:
+            raise HTTPException(
+                status_code=404, detail=f"No matching {split_name} records found"
+            )
+
+        return {
+            "detail": f"{split_name} data deleted successfully",
+            "count": result,
+        }
+
+    # Apply decorators to all routes if provided
+    if decorators:
+        for route in router.routes:
+            if hasattr(route, 'endpoint') and callable(route.endpoint):
+                # Apply each decorator in the order provided
+                decorated_endpoint = route.endpoint
+                for decorator in decorators:
+                    decorated_endpoint = decorator(decorated_endpoint)
+                route.endpoint = decorated_endpoint
+
+    return add_pagination(router)

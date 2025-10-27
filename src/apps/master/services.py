@@ -7,46 +7,47 @@ from uuid import UUID
 from common.models.master.academic_year import AcademicYear
 from common.schemas.master.academic_year import AcademicYearSchema
 
+
 class MasterService:
     def __init__(self, db: AsyncSession):
         self.db = db
 
-    # Institution CRUD
-    async def create_institution(self, data):
-        institution = Institution(**data.dict())
-        self.db.add(institution)
-        await self.db.commit()
-        await self.db.refresh(institution)
-        return institution
+    # # Institution CRUD
+    # async def create_institution(self, data):
+    #     institution = Institution(**data.dict())
+    #     self.db.add(institution)
+    #     await self.db.commit()
+    #     await self.db.refresh(institution)
+    #     return institution
 
     async def list_institutions(self):
         result = await self.db.execute(select(Institution))
         return result.scalars().all()
 
-    async def get_institution(self, institution_id: UUID):
-        result = await self.db.execute(select(Institution).where(Institution.id == institution_id))
-        institution = result.scalar_one_or_none()
-        if not institution:
-            raise HTTPException(status_code=404, detail="Institution not found")
-        return institution
+    # async def get_institution(self, institution_id: UUID):
+    #     result = await self.db.execute(select(Institution).where(Institution.id == institution_id))
+    #     institution = result.scalar_one_or_none()
+    #     if not institution:
+    #         raise HTTPException(status_code=404, detail="Institution not found")
+    #     return institution
 
-    async def update_institution(self, institution_id: UUID, data):
-        result = await self.db.execute(
-            update(Institution).where(Institution.id == institution_id).values(**data.dict(exclude_unset=True))
-        )
-        if result.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Institution not found")
-        await self.db.commit()
-        return await self.get_institution(institution_id)
+    # async def update_institution(self, institution_id: UUID, data):
+    #     result = await self.db.execute(
+    #         update(Institution).where(Institution.id == institution_id).values(**data.dict(exclude_unset=True))
+    #     )
+    #     if result.rowcount == 0:
+    #         raise HTTPException(status_code=404, detail="Institution not found")
+    #     await self.db.commit()
+    #     return await self.get_institution(institution_id)
 
-    async def delete_institution(self, institution_id: UUID):
-        result = await self.db.execute(
-            update(Institution).where(Institution.id == institution_id).values(is_active=False)
-        )
-        if result.rowcount == 0:
-            raise HTTPException(status_code=404, detail="Institution not found")
-        await self.db.commit()
-        return {"message": "Institution deactivated"}
+    # async def delete_institution(self, institution_id: UUID):
+    #     result = await self.db.execute(
+    #         update(Institution).where(Institution.id == institution_id).values(is_active=False)
+    #     )
+    #     if result.rowcount == 0:
+    #         raise HTTPException(status_code=404, detail="Institution not found")
+    #     await self.db.commit()
+    #     return {"message": "Institution deactivated"}
 
     # Department CRUD
     async def create_department(self, data):
@@ -77,13 +78,7 @@ class MasterService:
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Department not found")
-        await self.db.commit()
-        return await self.get_department(department_id)
-
-    async def delete_department(self, department_id: UUID):
-        result = await self.db.execute(
-            update(Department).where(Department.id == department_id).values(is_active=False)
-        )
+        
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Department not found")
         await self.db.commit()
@@ -208,3 +203,4 @@ class MasterService:
             raise HTTPException(status_code=404, detail="Academic Year not found")
         await self.db.commit()
         return {"message": "Academic Year deactivated"}
+
