@@ -5,7 +5,11 @@ from sqlalchemy import delete, or_, select
 from sqlalchemy.orm import selectinload
 from common.models.auth.user import Module, RolePermission, Screen, User, Role
 from common.schemas.auth.role_schemas import RoleCreateSchema
-from common.schemas.auth.user_schemas import LoginSchema, PermissionAssignSchema, UserCreateSchema
+from common.schemas.auth.user_schemas import (
+    LoginSchema,
+    PermissionAssignSchema,
+    UserCreateSchema,
+)
 from components.utils.password_utils import get_password_hash, verify_password
 from components.utils.security import create_access_token
 
@@ -61,6 +65,7 @@ class RoleService:
             return {"detail": "Role deleted successfully"}
         except Exception as e:
             raise e
+
 
 class UserService:
     def __init__(self, db):
@@ -164,97 +169,125 @@ class UserService:
             raise e
 
     async def get_role_permissions(self, role_id: str, request):
-            try:
-                # Only fetch active modules
-                modules_query = select(Module).where(Module.is_active.is_(True))
-                modules_result = await self.db.execute(modules_query)
-                active_modules = {m.id: m for m in modules_result.scalars().all()}
+        try:
+            # Only fetch active modules
+            modules_query = select(Module).where(Module.is_active.is_(True))
+            modules_result = await self.db.execute(modules_query)
+            active_modules = {m.id: m for m in modules_result.scalars().all()}
 
-                # Query all RolePermission entries for the given role_id, eagerly loading related Screen and Module
-                query = select(RolePermission).options(
+            # Query all RolePermission entries for the given role_id, eagerly loading related Screen and Module
+            query = (
+                select(RolePermission)
+                .options(
                     selectinload(RolePermission.screen).selectinload(Screen.module)
-                ).where(
-                    RolePermission.role_id == role_id
                 )
-                result = await self.db.execute(query)
-                role_permissions = result.scalars().all()
+                .where(RolePermission.role_id == role_id)
+            )
+            result = await self.db.execute(query)
+            role_permissions = result.scalars().all()
 
-                # Fetch the role itself
-                role_query = select(Role).where(Role.id == role_id)
-                role_result = await self.db.execute(role_query)
-                role = role_result.scalar_one_or_none()
+            # Fetch the role itself
+            role_query = select(Role).where(Role.id == role_id)
+            role_result = await self.db.execute(role_query)
+            role = role_result.scalar_one_or_none()
 
-                modules = {}
-                screens = []
+            modules = {}
+            screens = []
 
-                for rp in role_permissions:
-                    screen = rp.screen
-                    module = screen.module if screen else None
-                    # Only include active modules
-                    if module and module.id in active_modules:
-                        modules[module.id] = {
-                            "id": str(module.id),
-                            "name": module.name,
-                            "title": module.title,
+            for rp in role_permissions:
+                screen = rp.screen
+                module = screen.module if screen else None
+                # Only include active modules
+                if module and module.id in active_modules:
+                    modules[module.id] = {
+                        "id": str(module.id),
+                        "name": module.name,
+                        "title": module.title,
+                        "module_img_url": module.module_img_url,
+                    }
+                if screen and module and module.id in active_modules:
+                    screens.append(
+                        {
+                            "id": str(screen.id),
+                            "name": screen.name,
+                            "title": screen.title,
+                            "module_id": str(screen.module_id),
+                            "can_view": rp.can_view,
+                            "can_create": rp.can_create,
+                            "can_edit": rp.can_edit,
+                            "can_delete": rp.can_delete,
                         }
-                    if screen and module and module.id in active_modules:
-                        screens.append(
-                            {
-                                "id": str(screen.id),
-                                "name": screen.name,
-                                "title": screen.title,
-                                "module_id": str(screen.module_id),
-                                "can_view": rp.can_view,
-                                "can_create": rp.can_create,
-                                "can_edit": rp.can_edit,
-                                "can_delete": rp.can_delete,
-                            }
-                        )
-                return {
-                    "role": {
-                        "id": str(role.id) if role else None,
-                        "name": role.name if role else None,
-                        "description": role.description if role else None,
-                    },
-                    "user": {
-                        "id": str(request.state.user.id),
-                        "username": request.state.user.username,
-                        "email": request.state.user.email,
-                        "role_id": str(request.state.user.role_id) if request.state.user.role_id else None,
-                    },
-                    "all_modules": {str(m.id): {"id": str(m.id), "name": m.name, "title": m.title} for m in active_modules.values()},
-                    "permitted_modules": list(modules.values()),
-                    "screens": screens
-                }
-            except Exception as e:
-                raise e
+                    )
+            return {
+                "role": {
+                    "id": str(role.id) if role else None,
+                    "name": role.name if role else None,
+                    "description": role.description if role else None,
+                },
+                "user": {
+                    "id": str(request.state.user.id),
+                    "username": request.state.user.username,
+                    "email": request.state.user.email,
+                    "role_id": str(request.state.user.role_id)
+                    if request.state.user.role_id
+                    else None,
+                },
+                "all_modules": {
+                    str(m.id): {
+                        "id": str(m.id),
+                        "name": m.name,
+                        "title": m.title,
+                        "module_img_url": m.module_img_url,
+                    }
+                    for m in active_modules.values()
+                },
+                "permitted_modules": list(modules.values()),
+                "screens": screens,
+            }
+        except Exception as e:
+            raise e
 
 
 class PermissionService:
     def __init__(self, db):
         self.db = db
 
-    async def bulk_add_permissions(self, permissions_data: list[PermissionAssignSchema], role_id: str = None):
+    async def bulk_add_permissions(
+        self, permissions_data: list[PermissionAssignSchema], role_id: str = None
+    ):
         try:
             if not permissions_data:
                 # Remove all permissions for the role
                 if not role_id:
-                    raise HTTPException(status_code=400, detail="role_id is required when permissions_data is empty")
-                delete_query = delete(RolePermission).where(RolePermission.role_id == role_id)
+                    raise HTTPException(
+                        status_code=400,
+                        detail="role_id is required when permissions_data is empty",
+                    )
+                delete_query = delete(RolePermission).where(
+                    RolePermission.role_id == role_id
+                )
                 await self.db.execute(delete_query)
                 await self.db.commit()
                 return {"detail": "All permissions removed for role"}
-            
+
             # Validate all permissions have the same role_id
             for perm in permissions_data:
                 if perm.role_id != permissions_data[0].role_id:
-                    raise HTTPException(status_code=400, detail="All permissions must have the same role_id")
-            
+                    raise HTTPException(
+                        status_code=400,
+                        detail="All permissions must have the same role_id",
+                    )
+
             # Group incoming permissions by (role_id, screen_id) for easy lookup
-            incoming_perms = {(permissions_data[0].role_id, perm.screen_id): perm for perm in permissions_data}
+            incoming_perms = {
+                (permissions_data[0].role_id, perm.screen_id): perm
+                for perm in permissions_data
+            }
 
             # Fetch all existing permissions for the role
-            query = select(RolePermission).where(RolePermission.role_id == permissions_data[0].role_id)
+            query = select(RolePermission).where(
+                RolePermission.role_id == permissions_data[0].role_id
+            )
             result = await self.db.execute(query)
             existing_permissions = result.scalars().all()
 
@@ -263,7 +296,9 @@ class PermissionService:
             to_add = []
             to_delete = []
 
-            existing_keys = {(perm.role_id, perm.screen_id) for perm in existing_permissions}
+            existing_keys = {
+                (perm.role_id, perm.screen_id) for perm in existing_permissions
+            }
 
             # Update or mark for deletion
             for perm in existing_permissions:
@@ -289,7 +324,7 @@ class PermissionService:
                         can_view=perm.can_view,
                         can_create=perm.can_create,
                         can_edit=perm.can_edit,
-                        can_delete=perm.can_delete
+                        can_delete=perm.can_delete,
                     )
                     to_add.append(new_permission)
 
@@ -308,6 +343,7 @@ class PermissionService:
             return {"detail": "Permissions processed successfully"}
         except Exception as e:
             raise e
+
     async def remove_all_permissions_for_role(self, role_id: str):
         # Now calls bulk_add_permissions with empty list and role_id
         return await self.bulk_add_permissions([], role_id=role_id)
@@ -323,12 +359,14 @@ class PermissionService:
     async def get_modules_and_screens(self):
         try:
             # Get all active modules with their screens
-            query = select(Module).where(Module.is_active.is_(True)).options(
-                selectinload(Module.screens.and_(Screen.is_active.is_(True)))
+            query = (
+                select(Module)
+                .where(Module.is_active.is_(True))
+                .options(selectinload(Module.screens.and_(Screen.is_active.is_(True))))
             )
             result = await self.db.execute(query)
             modules = result.scalars().all()
-            
+
             # Format the response
             modules_data = []
             for module in modules:
@@ -337,51 +375,63 @@ class PermissionService:
                         "id": str(screen.id),
                         "name": screen.name,
                         "title": screen.title,
-                        "parent_id": str(screen.parent_id) if screen.parent_id else None
+                        "parent_id": str(screen.parent_id)
+                        if screen.parent_id
+                        else None,
                     }
                     for screen in module.screens
                 ]
-                modules_data.append({
-                    "id": str(module.id),
-                    "name": module.name,
-                    "title": module.title,
-                    "screens": screens_data
-                })
-            
+                modules_data.append(
+                    {
+                        "id": str(module.id),
+                        "name": module.name,
+                        "title": module.title,
+                        "screens": screens_data,
+                    }
+                )
+
             return modules_data
         except Exception as e:
             raise e
 
     async def get_role_permissions(self, role_id):
         try:
-            query = select(RolePermission).where(RolePermission.role_id == role_id).options(
-                selectinload(RolePermission.screen).selectinload(Screen.module)
+            query = (
+                select(RolePermission)
+                .where(RolePermission.role_id == role_id)
+                .options(
+                    selectinload(RolePermission.screen).selectinload(Screen.module)
+                )
             )
             result = await self.db.execute(query)
             permissions = result.scalars().all()
-            
+
             # Format the response
             permissions_data = []
             for perm in permissions:
-                permissions_data.append({
-                    "id": str(perm.id),
-                    "role_id": str(perm.role_id),
-                    "screen": {
-                        "id": str(perm.screen.id),
-                        "name": perm.screen.name,
-                        "title": perm.screen.title,
-                        "module": {
-                            "id": str(perm.screen.module.id),
-                            "name": perm.screen.module.name,
-                            "title": perm.screen.module.title
-                        } if perm.screen.module else None
-                    },
-                    "can_view": perm.can_view,
-                    "can_create": perm.can_create,
-                    "can_edit": perm.can_edit,
-                    "can_delete": perm.can_delete
-                })
-            
+                permissions_data.append(
+                    {
+                        "id": str(perm.id),
+                        "role_id": str(perm.role_id),
+                        "screen": {
+                            "id": str(perm.screen.id),
+                            "name": perm.screen.name,
+                            "title": perm.screen.title,
+                            "module": {
+                                "id": str(perm.screen.module.id),
+                                "name": perm.screen.module.name,
+                                "title": perm.screen.module.title,
+                            }
+                            if perm.screen.module
+                            else None,
+                        },
+                        "can_view": perm.can_view,
+                        "can_create": perm.can_create,
+                        "can_edit": perm.can_edit,
+                        "can_delete": perm.can_delete,
+                    }
+                )
+
             return permissions_data
         except Exception as e:
-            raise e                            
+            raise e

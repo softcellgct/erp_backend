@@ -3,7 +3,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from apps.auth.services import RoleService, UserService, PermissionService
-from common.models.auth.user import User
+from common.models.auth.user import User, Module, Screen
 from common.schemas.auth.role_schemas import RoleCreateSchema
 from common.schemas.auth.user_schemas import (
     LoginSchema,
@@ -12,6 +12,8 @@ from common.schemas.auth.user_schemas import (
     UserResponseSchema,
     UserUpdateSchema,
 )
+from common.schemas.auth.module_schemas import ModuleCreate, ModuleUpdate, ModuleResponse
+from common.schemas.auth.screen_schemas import ScreenCreate, ScreenUpdate, ScreenResponse
 from components.db.db import get_db_session
 from components.generator.routes import create_crud_routes
 from components.middleware import is_superadmin, public_route
@@ -176,3 +178,40 @@ async def delete_permissions_by_role(
     request: Request, role_id: str, db: AsyncSession = Depends(get_db_session)
 ):
     return await PermissionService(db).remove_all_permissions_for_role(role_id)
+
+
+# ===========================================================
+# Modules and Screens CRUD Routes
+# ===========================================================
+
+module_router = APIRouter()
+
+# CRUD routes for Module
+module_crud = create_crud_routes(
+    model=Module,
+    CreateSchema=ModuleCreate,
+    UpdateSchema=ModuleUpdate,
+    AllResponseSchema=ModuleResponse,
+)
+
+module_router.include_router(
+    module_crud,
+    prefix="/modules",
+    tags=["Auth - Modules"],
+)
+
+screen_router = APIRouter()
+
+# CRUD routes for Screen
+screen_crud = create_crud_routes(
+    model=Screen,
+    CreateSchema=ScreenCreate,
+    UpdateSchema=ScreenUpdate,
+    AllResponseSchema=ScreenResponse,
+)
+
+screen_router.include_router(
+    screen_crud,
+    prefix="/screens",
+    tags=["Auth - Screens"],
+)

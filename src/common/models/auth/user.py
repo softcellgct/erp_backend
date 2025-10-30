@@ -156,6 +156,7 @@ class Module(Base):
         String(50), unique=True, index=True
     )  # e.g., ADMISSION, FINANCE
     title: Mapped[str] = mapped_column(String(255))
+    module_img_url: Mapped[str | None] = mapped_column(String(500), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships

@@ -9,6 +9,7 @@ class InstitutionCreate(BaseModel):
     name: str
 
 class InstitutionUpdate(BaseModel):
+    id : UUID
     code: Optional[str] = None
     name: Optional[str] = None
     is_active: Optional[bool] = None
@@ -26,6 +27,7 @@ class DepartmentCreate(BaseModel):
     institution_id: UUID
 
 class DepartmentUpdate(BaseModel):
+    id: UUID
     code: Optional[str] = None
     name: Optional[str] = None
     institution_id: Optional[UUID] = None
@@ -48,6 +50,7 @@ class CourseCreate(BaseModel):
     total_semesters: int
 
 class CourseUpdate(BaseModel):
+    id: UUID
     code: Optional[str] = None
     title: Optional[str] = None
     department_id: Optional[UUID] = None
@@ -74,6 +77,7 @@ class ClassCreate(BaseModel):
     course_id: UUID
 
 class ClassUpdate(BaseModel):
+    id: UUID
     code: Optional[str] = None
     title: Optional[str] = None
     course_id: Optional[UUID] = None
@@ -85,6 +89,8 @@ class ClassResponse(BaseModel):
     title: str
     course_id: UUID
     is_active: bool
+
+    course: CourseResponse
 
 
 class SemesterPeriodCreate(BaseModel):

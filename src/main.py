@@ -2,7 +2,10 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 import uvicorn
 from apps import ROUTERS
+from components.settings import settings
 from components.db.base_model import Base
+# from components.minio import ensure_bucket
+from components.minio import ensure_bucket
 from logs.logging import logger
 from components.middleware import PermissionMiddleware, get_current_user, public_route
 from fastapi.middleware.cors import CORSMiddleware
@@ -60,6 +63,9 @@ async def lifespan(app: FastAPI):
 
     await create_roles_and_users()
     logger.info("Database roles and initial users are set up.✅")
+
+    ensure_bucket(settings.minio_bucket)
+    logger.info("MinIO Bucket is ensured.✅")
 
     yield
 
