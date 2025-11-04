@@ -1,7 +1,7 @@
 from datetime import timedelta
 from uuid import UUID
 from fastapi import HTTPException, Request
-from sqlalchemy import delete, or_, select
+from sqlalchemy import and_, delete, null, or_, select
 from sqlalchemy.orm import selectinload
 from common.models.auth.user import Module, RolePermission, Screen, User, Role
 from common.schemas.auth.role_schemas import RoleCreateSchema
@@ -171,7 +171,8 @@ class UserService:
     async def get_role_permissions(self, role_id: str, request):
         try:
             # Only fetch active modules
-            modules_query = select(Module).where(Module.is_active.is_(True))
+            modules_query = select(Module).where(and_(Module.is_active.is_(True)
+                                                      , Module.deleted_at.is_(null())))
             modules_result = await self.db.execute(modules_query)
             active_modules = {m.id: m for m in modules_result.scalars().all()}
 
@@ -361,7 +362,8 @@ class PermissionService:
             # Get all active modules with their screens
             query = (
                 select(Module)
-                .where(Module.is_active.is_(True))
+                .where(and_(Module.is_active.is_(True),
+                            Module.deleted_at.is_(null())))
                 .options(selectinload(Module.screens.and_(Screen.is_active.is_(True))))
             )
             result = await self.db.execute(query)

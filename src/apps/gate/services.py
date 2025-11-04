@@ -1,244 +1,157 @@
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
-from fastapi import HTTPException
-from uuid import UUID, uuid4
-from datetime import datetime
-from typing import Optional
+# crud/crud_admission_visitor.py
 
+from re import S
+from uuid import UUID
 from common.models.gate.visitor_model import (
-    Visitor,
-    VendorVisitor,
     AdmissionVisitor,
-    PersonType,
-    VisitStatus,
+    ConsultancyReference,
+    OtherReference,
+    ReferenceType,
+    StaffReference,
+    StudentReference,
 )
-from common.schemas.gate.visitor_schemas import (
-    VisitorCreate,
-    VisitorUpdate,
-    VendorVisitorCreate,
+from common.schemas.gate.admission_visitor import (
     AdmissionVisitorCreate,
-    VisitorCheckIn,
-    VisitorCheckOut,
+    AdmissionVisitorUpdate,
 )
+from fastapi_pagination.ext.sqlalchemy import paginate
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload,selectinload
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
 
 
-class VisitorService:
-    """Service class for managing visitor operations"""
+class AdmissionVisitorCRUD:
+    # -----------------------------------
+    # CREATE
+    # -----------------------------------
+    async def create(self, db: AsyncSession, payload: AdmissionVisitorCreate):
+        try:
+            data = payload.dict(exclude_unset=True)
+            ref_type_raw = data.pop("reference_type")
 
-    def __init__(self, db: AsyncSession):
-        self.db = db
+            # Normalize incoming reference type to ReferenceType enum
+            if isinstance(ref_type_raw, str):
+                try:
+                    # Accept either enum member name (e.g. "CONSULTANCY") or value (e.g. "consultancy")
+                    try:
+                        ref_type = ReferenceType[ref_type_raw.upper()]
+                    except KeyError:
+                        ref_type = ReferenceType(ref_type_raw)
+                except Exception:
+                    # fallback: raise a clear error
+                    raise ValueError(f"Invalid reference_type: {ref_type_raw}")
+            else:
+                ref_type = ref_type_raw
 
-    # =====================================================
-    # PersonType CRUD Operations
-    # =====================================================
+            consultancy = data.pop("consultancy_reference", None)
+            if consultancy:
+                consultancy = consultancy
 
-    async def create_person_type(self, name: str, description: Optional[str] = None):
-        """Create a new person type"""
-        person_type = PersonType(name=name, description=description)
-        self.db.add(person_type)
-        await self.db.commit()
-        await self.db.refresh(person_type)
-        return person_type
+            staff = data.pop("staff_reference", None)
+            if staff:
+                staff = staff
 
-    async def get_person_types(self, active_only: bool = True):
-        """Get all person types"""
-        query = select(PersonType)
-        if active_only:
-            query = query.where(PersonType.is_active)
-        result = await self.db.execute(query)
-        return result.scalars().all()
+            student = data.pop("student_reference", None)
+            if student:
+                student = student
 
-    # =====================================================
-    # General Visitor Operations
-    # =====================================================
+            other = data.pop("other_reference", None)
+            if other:
+                other = other
 
-    async def create_visitor(self, visitor_data: VisitorCreate):
-        """Create a new visitor"""
-        visitor = Visitor(**visitor_data.model_dump())
-        self.db.add(visitor)
-        await self.db.commit()
-        await self.db.refresh(visitor)
-        return visitor
+            # create visitor with enum value
+            visitor = AdmissionVisitor(**data, reference_type=ref_type)
+            db.add(visitor)
+            await db.flush()
 
-    async def get_visitor(self, visitor_id: UUID):
-        """Get a visitor by ID"""
-        result = await self.db.execute(
-            select(Visitor).where(Visitor.id == visitor_id)
+            match ref_type:
+                case ReferenceType.CONSULTANCY if consultancy:
+                    db.add(
+                        ConsultancyReference(admission_visitor_id=visitor.id, **consultancy)
+                    )
+                case ReferenceType.STAFF if staff:
+                    db.add(StaffReference(reference_id=visitor.id, **staff))
+                case ReferenceType.STUDENT if student:
+                    db.add(StudentReference(reference_id=visitor.id, **student))
+                case ReferenceType.OTHER if other:
+                    db.add(OtherReference(reference_id=visitor.id, **other))
+
+            await db.commit()
+
+            # ✅ Re-fetch with relationships to avoid greenlet error
+            stmt = (
+                select(AdmissionVisitor)
+                .where(AdmissionVisitor.id == visitor.id)
+                .options(
+                    selectinload(AdmissionVisitor.consultancy_reference),
+                    selectinload(AdmissionVisitor.staff_reference),
+                    selectinload(AdmissionVisitor.student_reference),
+                    selectinload(AdmissionVisitor.other_reference),
+                )
+            )
+            result = await db.execute(stmt)
+            return result.scalar_one()
+        except Exception as e:
+            await db.rollback()
+            raise e
+
+        except SQLAlchemyError as e:
+            await db.rollback()
+            raise e
+
+    # -----------------------------------
+    # GET ONE
+    # -----------------------------------
+    async def get_one(self, db: AsyncSession, visitor_id: UUID):
+        stmt = (
+            select(AdmissionVisitor)
+            .where(AdmissionVisitor.id == visitor_id)
+            .options(
+                joinedload(AdmissionVisitor.consultancy_reference),
+                joinedload(AdmissionVisitor.staff_reference),
+                joinedload(AdmissionVisitor.student_reference),
+                joinedload(AdmissionVisitor.other_reference),
+            )
         )
-        visitor = result.scalar_one_or_none()
-        if not visitor:
-            raise HTTPException(status_code=404, detail="Visitor not found")
-        return visitor
+        result = await db.execute(stmt)
+        return result.scalars().first()
 
-    async def update_visitor(self, visitor_id: UUID, visitor_data: VisitorUpdate):
-        """Update visitor information"""
-        visitor = await self.get_visitor(visitor_id)
-        
-        update_data = visitor_data.model_dump(exclude_unset=True)
-        for key, value in update_data.items():
-            setattr(visitor, key, value)
-        
-        await self.db.commit()
-        await self.db.refresh(visitor)
-        return visitor
+    # -----------------------------------
+    # GET ALL
+    # -----------------------------------
+    async def get_all(self, db: AsyncSession, query):
+        stmt = query
+        result = await paginate(db, stmt)
+        return result
 
-    async def get_all_visitors(
-        self,
-        skip: int = 0,
-        limit: int = 100,
-        status: Optional[VisitStatus] = None,
+    # -----------------------------------
+    # UPDATE
+    # -----------------------------------
+    async def update(
+        self, db: AsyncSession, visitor_id: UUID, payload: AdmissionVisitorUpdate
     ):
-        """Get all visitors with optional filtering"""
-        query = select(Visitor).offset(skip).limit(limit)
-        
-        if status:
-            query = query.where(Visitor.visit_status == status)
-        
-        result = await self.db.execute(query)
-        return result.scalars().all()
+        visitor = await db.get(AdmissionVisitor, visitor_id)
+        if not visitor:
+            return None
 
-    # =====================================================
-    # Vendor Visitor Operations
-    # =====================================================
+        for field, value in payload.dict(exclude_unset=True).items():
+            setattr(visitor, field, value)
 
-    async def create_vendor_visitor(self, vendor_data: VendorVisitorCreate):
-        """Create a new vendor visitor"""
-        # Create base visitor
-        visitor = Visitor(**vendor_data.visitor.model_dump())
-        self.db.add(visitor)
-        await self.db.flush()  # Get visitor ID without committing
-        
-        # Create vendor-specific details
-        vendor = VendorVisitor(
-            visitor_id=visitor.id,
-            company_name=vendor_data.company_name,
-            company_address=vendor_data.company_address,
-            company_contact=vendor_data.company_contact,
-            designation=vendor_data.designation,
-            carrying_materials=vendor_data.carrying_materials,
-            material_description=vendor_data.material_description,
-        )
-        self.db.add(vendor)
-        
-        await self.db.commit()
-        await self.db.refresh(visitor)
-        await self.db.refresh(vendor)
-        
-        return {"visitor": visitor, "vendor_details": vendor}
-
-    # =====================================================
-    # Admission Visitor Operations
-    # =====================================================
-
-    async def create_admission_visitor(self, admission_data: AdmissionVisitorCreate):
-        """Create a new admission visitor"""
-        # Create base visitor
-        visitor = Visitor(**admission_data.visitor.model_dump())
-        self.db.add(visitor)
-        await self.db.flush()
-        
-        # Create admission-specific details
-        admission = AdmissionVisitor(
-            visitor_id=visitor.id,
-            student_name=admission_data.student_name,
-            guardian_name=admission_data.guardian_name,
-            course_interested=admission_data.course_interested,
-            qualification=admission_data.qualification,
-            email=admission_data.email,
-            has_appointment=admission_data.has_appointment,
-            appointment_with=admission_data.appointment_with,
-            appointment_time=admission_data.appointment_time,
-        )
-        self.db.add(admission)
-        
-        await self.db.commit()
-        await self.db.refresh(visitor)
-        await self.db.refresh(admission)
-        
-        return {"visitor": visitor, "admission_details": admission}
-
-    # =====================================================
-    # Check-in/Check-out Operations
-    # =====================================================
-
-    async def check_in_visitor(self, check_in_data: VisitorCheckIn):
-        """Check in a visitor"""
-        visitor = await self.get_visitor(check_in_data.visitor_id)
-        
-        if visitor.visit_status == VisitStatus.CHECKED_IN:
-            raise HTTPException(
-                status_code=400, detail="Visitor is already checked in"
-            )
-        
-        visitor.visit_status = VisitStatus.CHECKED_IN
-        visitor.check_in_time = check_in_data.check_in_time or datetime.utcnow()
-        
-        await self.db.commit()
-        await self.db.refresh(visitor)
+        await db.commit()
+        await db.refresh(visitor)
         return visitor
 
-    async def check_out_visitor(self, check_out_data: VisitorCheckOut):
-        """Check out a visitor"""
-        visitor = await self.get_visitor(check_out_data.visitor_id)
-        
-        if visitor.visit_status != VisitStatus.CHECKED_IN:
-            raise HTTPException(
-                status_code=400, detail="Visitor is not checked in"
-            )
-        
-        visitor.visit_status = VisitStatus.CHECKED_OUT
-        visitor.check_out_time = check_out_data.check_out_time or datetime.utcnow()
-        
-        if check_out_data.remarks:
-            visitor.remarks = check_out_data.remarks
-        
-        await self.db.commit()
-        await self.db.refresh(visitor)
-        return visitor
+    # -----------------------------------
+    # DELETE
+    # -----------------------------------
+    async def delete(self, db: AsyncSession, visitor_id: UUID):
+        visitor = await db.get(AdmissionVisitor, visitor_id)
+        if not visitor:
+            return 0
+        await db.delete(visitor)
+        await db.commit()
+        return 1
 
-    # =====================================================
-    # Pass Generation
-    # =====================================================
 
-    async def generate_pass(self, visitor_id: UUID):
-        """Generate a visitor pass"""
-        visitor = await self.get_visitor(visitor_id)
-        
-        if visitor.pass_number:
-            raise HTTPException(
-                status_code=400, detail="Pass already generated for this visitor"
-            )
-        
-        # Generate unique pass number
-        pass_number = f"VP{datetime.now().strftime('%Y%m%d')}{str(uuid4())[:8].upper()}"
-        
-        visitor.pass_number = pass_number
-        visitor.pass_generated_at = datetime.utcnow()
-        
-        await self.db.commit()
-        await self.db.refresh(visitor)
-        return visitor
-
-    # =====================================================
-    # Statistics and Reports
-    # =====================================================
-
-    async def get_today_visitors_count(self):
-        """Get count of today's visitors"""
-        from sqlalchemy import func
-        
-        today_start = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
-        
-        result = await self.db.execute(
-            select(func.count(Visitor.id)).where(
-                Visitor.created_at >= today_start
-            )
-        )
-        return result.scalar()
-
-    async def get_active_visitors(self):
-        """Get all currently checked-in visitors"""
-        result = await self.db.execute(
-            select(Visitor).where(Visitor.visit_status == VisitStatus.CHECKED_IN)
-        )
-        return result.scalars().all()
+admission_crud = AdmissionVisitorCRUD()

@@ -1,5 +1,6 @@
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
+from fastapi_pagination import add_pagination
 import uvicorn
 from apps import ROUTERS
 from components.settings import settings
@@ -20,6 +21,8 @@ from components.db.db import (
 app = FastAPI(swagger_ui_parameters={"persistAuthorization": True})
 
 app.add_middleware(PermissionMiddleware)
+
+add_pagination(app)
 
 
 """

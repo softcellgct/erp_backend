@@ -16,7 +16,13 @@ from common.models.gate.visitor_model import (
     PersonType,
     VisitorType,
     VisitStatus,
+    StaffReference,
+    StudentReference,
+    OtherReference
 )
+
+
+from common.models.admission.consultancy import Consultancy
 
 __all__ = [
     "Institution", 
@@ -33,4 +39,8 @@ __all__ = [
     "PersonType",
     "VisitorType",
     "VisitStatus",
+    "Consultancy",
+    "StaffReference",
+    "StudentReference",
+    "OtherReference"
 ]
