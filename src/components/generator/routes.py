@@ -6,7 +6,6 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from components.generator.schema.registry import get_schemas
 from fastapi_pagination import Page, add_pagination
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastapi.encoders import jsonable_encoder
 from typing import List
 from uuid import UUID
 import re
@@ -62,10 +61,7 @@ def create_crud_routes(
         Retrieve paginated {split_name} records with optional filtering, sorting, and searching.
         """
         response_data = await paginate(db, query)
-        response_dict = jsonable_encoder(
-            response_data, exclude_unset=True, exclude_none=True
-        )
-        return response_dict
+        return response_data
 
     """
     =====================================================
@@ -95,8 +91,7 @@ def create_crud_routes(
             raise HTTPException(
                 status_code=404, detail=f"{split_name} with ID {id} not found"
             )
-        result_dict = jsonable_encoder(data, exclude_unset=True, exclude_none=True)
-        return result_dict
+        return data
 
     """
     =====================================================

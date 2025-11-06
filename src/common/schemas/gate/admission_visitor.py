@@ -34,6 +34,7 @@ class AdmissionVisitorBase(BaseModel):
     aadhar_number: str
     native_place: str = Field(..., max_length=255)
     image_url: str = Field(..., max_length=255)
+    gate_pass_no: Optional[str] = Field(None, max_length=50)
     # accept string for reference_type here (match your ReferenceType enum values in app logic)
     reference_type: str
     vehicle: bool = False
@@ -63,25 +64,25 @@ class AdmissionVisitorUpdate(BaseModel):
     other_reference: Optional[OtherReferenceCreate] = None
 
 
-# Read / response schemas with orm_mode to allow SQLAlchemy model -> schema conversion
+# Read / response schemas with from_attributes to allow SQLAlchemy model -> schema conversion
 class ConsultancyReferenceRead(ConsultancyReferenceCreate):
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class StaffReferenceRead(StaffReferenceCreate):
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class StudentReferenceRead(StudentReferenceCreate):
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 
 class OtherReferenceRead(OtherReferenceCreate):
     class Config:
-        orm_mode = True
+        from_attributes = True
 
 class AdmissionVisitorRead(AdmissionVisitorBase):
     id: Optional[UUID] = None
@@ -91,4 +92,4 @@ class AdmissionVisitorRead(AdmissionVisitorBase):
     other_reference: Optional[OtherReferenceRead] = None
 
     class Config:
-        orm_mode = True
+        from_attributes = True

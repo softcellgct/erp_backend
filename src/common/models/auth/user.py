@@ -101,7 +101,7 @@ class Institution(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
-    departments: Mapped[list["Department"]] = relationship(back_populates="institution")
+    departments: Mapped[list["Department"]] = relationship(back_populates="institution", lazy="selectin")
     academic_years: Mapped[list["AcademicYear"]] = relationship(
         "AcademicYear", back_populates="institution"
     )
@@ -192,9 +192,9 @@ class Screen(Base):
     # Relationships
     module: Mapped["Module"] = relationship(back_populates="screens")
     parent: Mapped["Screen"] = relationship(
-        back_populates="children", remote_side="Screen.id"
+        back_populates="children", remote_side="Screen.id", lazy="selectin"
     )
-    children: Mapped[list["Screen"]] = relationship(back_populates="parent")
+    children: Mapped[list["Screen"]] = relationship(back_populates="parent", lazy="selectin")
     # permissions: Mapped[list["Permission"]] = relationship(back_populates="screen")
     # user_permissions: Mapped[list["UserPermission"]] = relationship("UserPermission", back_populates="screen", foreign_keys="[UserPermission.screen_id]")
     role_permissions: Mapped[list["RolePermission"]] = relationship(

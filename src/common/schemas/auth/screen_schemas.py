@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from uuid import UUID
-from typing import Optional, List
+from typing import Optional
 
 class ScreenBase(BaseModel):
     name: str
@@ -20,7 +20,5 @@ class ScreenUpdate(BaseModel):
 
 class ScreenResponse(ScreenBase):
     id: UUID
-    children: Optional[List["ScreenResponse"]] = None
 
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}

@@ -179,6 +179,8 @@ class AdmissionVisitor(Base):
 
     __tablename__ = "admission_visitors"
 
+    gate_pass_no: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+
     # Prospective Student Information
     student_name: Mapped[str] = mapped_column(String(255), nullable=False)
     mobile_number: Mapped[str] = mapped_column(String, nullable=False)

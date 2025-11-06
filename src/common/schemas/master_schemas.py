@@ -20,6 +20,7 @@ class InstitutionResponse(BaseModel):
     code: str
     name: str
     is_active: bool
+    departments: Optional[list["DepartmentResponse"]] = None
 
 class DepartmentCreate(BaseModel):
     code: str
