@@ -21,7 +21,7 @@ from .master.routers import (
     role_router,
 )
 from .master.files.routers import router as file_router
-from .admission.routers import consultancy_router
+from .admission.routers import consultancy_router, admission_entry_router,admission_router
 from .meta.routers import religion_router, community_router, caste_router
 
 ROUTERS = [
@@ -46,4 +46,6 @@ ROUTERS = [
     (caste_router, "/api/meta"),
     (module_router, "/api/master"),
     (screen_router, "/api/master"),
+    (admission_entry_router, "/api/admission"),
+    (admission_router, "/api/admission/admitted")
 ]

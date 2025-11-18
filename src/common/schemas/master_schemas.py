@@ -7,6 +7,7 @@ from datetime import date
 class InstitutionCreate(BaseModel):
     code: str
     name: str
+    is_active: bool = True
 
 class InstitutionUpdate(BaseModel):
     id : UUID

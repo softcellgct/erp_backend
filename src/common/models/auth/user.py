@@ -101,7 +101,9 @@ class Institution(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
-    departments: Mapped[list["Department"]] = relationship(back_populates="institution", lazy="selectin")
+    departments: Mapped[list["Department"]] = relationship(
+        back_populates="institution", lazy="selectin"
+    )
     academic_years: Mapped[list["AcademicYear"]] = relationship(
         "AcademicYear", back_populates="institution"
     )
@@ -112,10 +114,12 @@ class Department(Base):
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
     institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id"))
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Relationships
-    institution: Mapped["Institution"] = relationship(back_populates="departments")
+    institution: Mapped["Institution"] = relationship(
+        back_populates="departments", lazy="selectin"
+    )
     courses: Mapped[list["Course"]] = relationship(back_populates="department")
 
 
@@ -194,7 +198,9 @@ class Screen(Base):
     parent: Mapped["Screen"] = relationship(
         back_populates="children", remote_side="Screen.id", lazy="selectin"
     )
-    children: Mapped[list["Screen"]] = relationship(back_populates="parent", lazy="selectin")
+    children: Mapped[list["Screen"]] = relationship(
+        back_populates="parent", lazy="selectin"
+    )
     # permissions: Mapped[list["Permission"]] = relationship(back_populates="screen")
     # user_permissions: Mapped[list["UserPermission"]] = relationship("UserPermission", back_populates="screen", foreign_keys="[UserPermission.screen_id]")
     role_permissions: Mapped[list["RolePermission"]] = relationship(

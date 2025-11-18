@@ -59,6 +59,7 @@ class Base:  # noqa: F811
         cls, request: Request, session: AsyncSession, data_list: List[Any]
     ):
         from components.generator.utils.get_user_from_request import get_user_id
+        from sqlalchemy.inspection import inspect
 
         if not data_list:
             raise ValueError("No data provided to create records.")
@@ -68,6 +69,18 @@ class Base:  # noqa: F811
             user_id = await get_user_id(request)
             obj_data = data.dict() if hasattr(data, "dict") else data
             obj_data["created_by"] = user_id
+            
+            # Handle nested relationships - convert dict to model instances
+            mapper = inspect(cls)
+            for rel_name, rel in mapper.relationships.items():
+                if rel_name in obj_data and obj_data[rel_name] is not None:
+                    rel_data = obj_data[rel_name]
+                    if isinstance(rel_data, dict):
+                        # Get the related model class
+                        related_model = rel.mapper.class_
+                        # Create instance of related model
+                        obj_data[rel_name] = related_model(**rel_data)
+            
             objects.append(cls(**obj_data))
 
         session.add_all(objects)

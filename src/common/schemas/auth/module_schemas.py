@@ -13,6 +13,7 @@ class ModuleCreate(ModuleBase):
 
 class ModuleUpdate(BaseModel):
     id:UUID
+    name: Optional[str] = None
     title: Optional[str] = None
     module_img_url: Optional[str] = None
     is_active: Optional[bool] = None
