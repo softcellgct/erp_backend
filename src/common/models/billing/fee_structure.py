@@ -15,7 +15,7 @@ class FeeStructure(Base):
     institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True)
     financial_year_id: Mapped[UUID] = mapped_column(ForeignKey("financial_years.id", ondelete="SET NULL"), nullable=True, index=True)
     admission_year_id: Mapped[UUID] = mapped_column(ForeignKey("academic_years.id", ondelete="SET NULL"), nullable=True, index=True)
-    degree_id: Mapped[UUID | None] = mapped_column(ForeignKey("degrees.id", ondelete="SET NULL"), nullable=True, index=True)
+    degree_id: Mapped[UUID | None] = mapped_column(ForeignKey("courses.id", ondelete="SET NULL"), nullable=True, index=True)
     department_id: Mapped[UUID | None] = mapped_column(ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True)
     course_duration_years: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     fg_applicable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

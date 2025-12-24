@@ -70,16 +70,30 @@ class Base:  # noqa: F811
             obj_data = data.dict() if hasattr(data, "dict") else data
             obj_data["created_by"] = user_id
             
-            # Handle nested relationships - convert dict to model instances
+            # Handle nested relationships - convert dicts/lists to model instances
             mapper = inspect(cls)
             for rel_name, rel in mapper.relationships.items():
                 if rel_name in obj_data and obj_data[rel_name] is not None:
                     rel_data = obj_data[rel_name]
-                    if isinstance(rel_data, dict):
-                        # Get the related model class
-                        related_model = rel.mapper.class_
-                        # Create instance of related model
+                    related_model = rel.mapper.class_
+                    # If a single related object is provided as a dict -> create instance
+                    if not rel.uselist and isinstance(rel_data, dict):
                         obj_data[rel_name] = related_model(**rel_data)
+                    # If a list of related objects is provided -> convert each
+                    elif rel.uselist and isinstance(rel_data, list):
+                        new_list = []
+                        for item in rel_data:
+                            if isinstance(item, dict):
+                                new_list.append(related_model(**item))
+                            elif hasattr(item, '_sa_instance_state'):
+                                new_list.append(item)
+                            else:
+                                raise ValueError(f"Invalid related item for relationship '{rel_name}': {item}")
+                        obj_data[rel_name] = new_list
+                    # If a single related primary key is provided, leave it (FK column should be used instead)
+                    else:
+                        # leave as-is; let SQLAlchemy or FK column handle it
+                        pass
             
             objects.append(cls(**obj_data))
 
@@ -99,6 +113,7 @@ class Base:  # noqa: F811
         cls, request: Request, session: AsyncSession, data_list: List[dict]
     ):
         from components.generator.utils.get_user_from_request import get_user_id
+        from sqlalchemy.inspection import inspect
 
         if not data_list:
             raise ValueError("No data provided for update.")
@@ -141,8 +156,94 @@ class Base:  # noqa: F811
             obj_id = data.pop("id")
             instance = existing_objs_map[obj_id]
 
+            # Inspect mapper to handle nested relationship payloads (dicts/lists)
+            mapper = inspect(type(instance))
+
             for key, value in data.items():
-                if hasattr(instance, key):
+                if not hasattr(instance, key):
+                    continue
+
+                # If this key is a relationship, convert dicts/lists into model instances
+                if key in mapper.relationships:
+                    rel = mapper.relationships[key]
+                    related_model = rel.mapper.class_
+
+                    # Handle to-one relationships
+                    if not rel.uselist:
+                        if value is None:
+                            setattr(instance, key, None)
+
+                        # If a dict is provided, try to reuse existing record when 'id' present
+                        elif isinstance(value, dict):
+                            if value.get("id"):
+                                # try to fetch existing related record
+                                res = await session.execute(select(related_model).where(related_model.id == value["id"]))
+                                related_obj = res.scalars().one_or_none()
+                                if related_obj:
+                                    # update fields provided in the dict on the related object
+                                    for r_key, r_val in value.items():
+                                        if r_key == "id":
+                                            continue
+                                        if hasattr(related_obj, r_key):
+                                            setattr(related_obj, r_key, r_val)
+                                    setattr(instance, key, related_obj)
+                                else:
+                                    new_obj = related_model(**value)
+                                    session.add(new_obj)
+                                    setattr(instance, key, new_obj)
+
+                            else:
+                                new_obj = related_model(**value)
+                                session.add(new_obj)
+                                setattr(instance, key, new_obj)
+
+                        elif hasattr(value, "_sa_instance_state"):
+                            setattr(instance, key, value)
+                        else:
+                            # If a primary key or scalar is provided, let the FK column handle it
+                            setattr(instance, key, value)
+
+                    # Handle to-many relationships
+                    else:
+                        if value is None:
+                            setattr(instance, key, None)
+                        elif isinstance(value, list):
+                            new_list = []
+                            for item in value:
+                                if isinstance(item, dict):
+                                    if item.get("id"):
+                                        res = await session.execute(select(related_model).where(related_model.id == item["id"]))
+                                        related_obj = res.scalars().one_or_none()
+                                        if related_obj:
+                                            # update provided fields on the related object
+                                            for r_key, r_val in item.items():
+                                                if r_key == "id":
+                                                    continue
+                                                if hasattr(related_obj, r_key):
+                                                    setattr(related_obj, r_key, r_val)
+                                            new_list.append(related_obj)
+                                        else:
+                                            new_item = related_model(**item)
+                                            session.add(new_item)
+                                            new_list.append(new_item)
+                                    else:
+                                        new_item = related_model(**item)
+                                        session.add(new_item)
+                                        new_list.append(new_item)
+                                elif hasattr(item, "_sa_instance_state"):
+                                    new_list.append(item)
+                                else:
+                                    raise ValueError(
+                                        f"Invalid related item for relationship '{key}': {item}"
+                                    )
+                            setattr(instance, key, new_list)
+                        else:
+                            raise ValueError(
+                                f"Invalid value for relationship '{key}': must be list or None"
+                            )
+
+                else:
+                    # Not a relationship - assign directly
                     setattr(instance, key, value)
 
             # Set audit field
