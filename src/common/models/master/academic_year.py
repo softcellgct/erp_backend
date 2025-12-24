@@ -18,6 +18,9 @@ class AcademicYear(Base):
     semester_periods = relationship(
         "SemesterPeriod", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
     )
+    financial_years = relationship(
+        "FinancialYear", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
+    )
 
 
 class SemesterPeriod(Base):

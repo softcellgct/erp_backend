@@ -2,7 +2,7 @@
 Pydantic Schemas for Admission Management System
 """
 from uuid import UUID
-from pydantic import BaseModel, Field, validator, EmailStr
+from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from datetime import date, datetime
 from enum import Enum

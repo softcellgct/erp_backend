@@ -148,3 +148,35 @@ sem_period_crud = create_crud_routes(
 sem_period_router.include_router(
     sem_period_crud, prefix="/semester-periods", tags=["Semester Periods"]
 )
+
+# Hostel master
+from common.models.master.hostel import Hostel
+from common.schemas.master.hostel_schemas import (
+    HostelCreate,
+    HostelUpdate,
+    HostelResponse,
+)
+
+hostel_router = APIRouter()
+
+hostel_crud = create_crud_routes(
+    Hostel,
+    HostelCreate,
+    HostelUpdate,
+    HostelResponse,
+    HostelResponse,
+    decorators=[is_superadmin],
+)
+hostel_router.include_router(hostel_crud, prefix="/hostels", tags=["Hostels"])
+
+# Simple list endpoint for hostels
+@hostel_router.get("/list", response_model=list[HostelResponse], tags=["Hostels"])  # type: ignore
+@is_superadmin
+async def list_hostels(institution_id: str | None = None, db: AsyncSession = Depends(get_db_session)):
+    stmt = None
+    from sqlalchemy import select
+    stmt = select(Hostel)
+    if institution_id:
+        stmt = stmt.where(Hostel.institution_id == institution_id)
+    res = await db.execute(stmt)
+    return res.scalars().all()

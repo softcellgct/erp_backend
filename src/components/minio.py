@@ -31,5 +31,6 @@ def ensure_bucket(bucket_name):
             logger.info(f"Bucket '{bucket_name}' already exists.✅")
     except S3Error as e:
         raise HTTPException(
-            status_code=500, detail=f"Failed to access or create bucket: {str(e)}"
+            status_code=500, detail=f"Failed to access or create bucket: {
+                str(e)}"
         )

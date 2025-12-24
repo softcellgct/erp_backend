@@ -132,4 +132,6 @@ app.log
 
 src/alembic/versions/
 
+*.md
+
 tests/
