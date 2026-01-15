@@ -92,6 +92,7 @@ class AdmissionStudent(Base):
 
     # Degree & Branch Details
     campus = Column(String(200), nullable=True)  # Institution name
+    institution_id = Column(String(50), nullable=True)  # Added by manual migration
     department = Column(String(200), nullable=True)
     course = Column(String(200), nullable=True)  # Degree
     year = Column(String(20), nullable=True)  # Year of study

@@ -7,7 +7,7 @@ from .auth.user import (
     Role,
 )
 
-from common.models.master.academic_year import AcademicYear,SemesterPeriod
+from common.models.master.academic_year import AcademicYear,SemesterPeriod,AcademicYearDepartment
 
 from common.models.gate.visitor_model import (
     Visitor,
@@ -29,8 +29,13 @@ from common.models.billing.application_fees import (
     Invoice,
     InvoiceLineItem,
     Payment,
+    Payment,
     InvoiceStatusHistory,
 )
+from common.models.billing.cash_counter import CashCounter
+from common.models.billing.demand import DemandBatch, DemandItem
+from common.models.billing.fee_structure import FeeStructure, FeeStructureItem
+from common.models.billing.fee_subhead import FeeSubHead
 
 __all__ = [
     "Institution", 
@@ -41,6 +46,7 @@ __all__ = [
     "Module", 
     "AcademicYear", 
     "SemesterPeriod",
+    "AcademicYearDepartment",
     "Visitor",
     "VendorVisitor",
     "AdmissionVisitor",
@@ -61,4 +67,10 @@ __all__ = [
     "InvoiceLineItem",
     "Payment",
     "InvoiceStatusHistory",
+    "CashCounter",
+    "DemandBatch",
+    "DemandItem",
+    "FeeStructure",
+    "FeeStructureItem",
+    "FeeSubHead",
 ]

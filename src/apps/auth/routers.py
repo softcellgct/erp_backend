@@ -7,6 +7,7 @@ from common.models.auth.user import User, Module, Screen
 from common.schemas.auth.role_schemas import RoleCreateSchema
 from common.schemas.auth.user_schemas import (
     LoginSchema,
+    CashCounterLoginSchema,
     UserCreateSchema,
     PermissionAssignSchema,
     UserResponseSchema,
@@ -112,6 +113,16 @@ async def user_login(
     db: AsyncSession = Depends(get_db_session),
 ):
     return await UserService(db).login(request, login_data)
+
+
+@auth_router.post("/cash-counter-login")
+@public_route
+async def user_cash_counter_login(
+    request: Request,
+    login_data: CashCounterLoginSchema,
+    db: AsyncSession = Depends(get_db_session),
+):
+    return await UserService(db).cash_counter_login(request, login_data)
 
 
 @auth_router.get("/role-permissions")

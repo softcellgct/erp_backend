@@ -102,7 +102,7 @@ class BillingService:
             await db.rollback()
             raise e
 
-    async def apply_payment(self, db: AsyncSession, invoice_id: UUID, payload: PaymentCreate):
+    async def apply_payment(self, db: AsyncSession, invoice_id: UUID, payload: PaymentCreate, counter_id: UUID | None = None):
         try:
             data = payload.dict(exclude_unset=True)
             # idempotency: check existing transaction_id
@@ -122,6 +122,7 @@ class BillingService:
 
             payment = Payment(
                 invoice_id=invoice.id,
+                cash_counter_id=counter_id,
                 amount=data["amount"],
                 payment_method=data["payment_method"],
                 transaction_id=transaction_id,
@@ -226,6 +227,17 @@ class BillingService:
         """Create a demand batch (draft)."""
         from common.models.billing.demand import DemandBatch
         data = payload.dict(exclude_unset=True)
+        
+        # Ensure filters are JSON serializable (convert UUIDs to strings)
+        if "filters" in data and isinstance(data["filters"], dict):
+            new_filters = {}
+            for k, v in data["filters"].items():
+                if isinstance(v, UUID):
+                    new_filters[k] = str(v)
+                else:
+                    new_filters[k] = v
+            data["filters"] = new_filters
+
         batch = DemandBatch(**data)
         db.add(batch)
         await db.commit()
@@ -233,23 +245,93 @@ class BillingService:
         return batch
 
     async def _students_matching_filters(self, db: AsyncSession, filters: dict | None, institution_id=None):
-        """Return list of AdmissionStudent ids matching simple filters."""
+        """Return list of AdmissionStudent ids matching filters."""
         from common.models.admission.admission_entry import AdmissionStudent
         stmt = select(AdmissionStudent)
         if institution_id:
-            stmt = stmt.where(AdmissionStudent.campus == institution_id)
+            stmt = stmt.where(AdmissionStudent.campus == str(institution_id))  # Note: mapping campus to institution
+        
         if not filters:
             res = await db.execute(stmt)
             return [s.id for s in res.scalars().all()]
-        # apply known filters
+
+        # Apply dictionary filters
         if filters.get("department"):
-            stmt = stmt.where(AdmissionStudent.department == filters.get("department"))
+            stmt = stmt.where(AdmissionStudent.department.ilike(f"%{filters.get('department')}%"))
         if filters.get("course"):
-            stmt = stmt.where(AdmissionStudent.course == filters.get("course"))
-        if filters.get("year"):
-            stmt = stmt.where(AdmissionStudent.year == filters.get("year"))
+            stmt = stmt.where(AdmissionStudent.course.ilike(f"%{filters.get('course')}%"))
+        if filters.get("batch"):
+            # assuming 'year' maps to batch or we need a batch field. Model has 'year'.
+            stmt = stmt.where(AdmissionStudent.year.ilike(f"%{filters.get('batch')}%"))
+        if filters.get("admission_quota"):
+            stmt = stmt.where(AdmissionStudent.admission_quota == filters.get("admission_quota"))
+        if filters.get("category"):
+            stmt = stmt.where(AdmissionStudent.category == filters.get("category"))
+        if filters.get("gender"):
+            stmt = stmt.where(AdmissionStudent.gender == filters.get("gender"))
+        if filters.get("quota_type"):
+            stmt = stmt.where(AdmissionStudent.quota_type.ilike(f"%{filters.get('quota_type')}%"))
+        if filters.get("special_quota"):
+            stmt = stmt.where(AdmissionStudent.special_quota.ilike(f"%{filters.get('special_quota')}%"))
+        if filters.get("scholarships"):
+            stmt = stmt.where(AdmissionStudent.scholarships.ilike(f"%{filters.get('scholarships')}%"))
+        if filters.get("boarding_place"):
+            stmt = stmt.where(AdmissionStudent.boarding_place.ilike(f"%{filters.get('boarding_place')}%"))
+        
+        # Pydantic model dump handling (if passing schema dict)
+        # The service calls this with `batch.filters` which is JSON/dict.
+
         res = await db.execute(stmt)
         return [s.id for s in res.scalars().all()]
+
+    async def preview_demand_batch(self, db: AsyncSession, payload) -> dict:
+        """Preview the demand creation: count students and calculate total."""
+        from common.models.admission.admission_entry import AdmissionStudent
+        data = payload.dict(exclude_unset=True)
+        filters = data.get("filters", {})
+        if hasattr(filters, "dict"):
+            filters = filters.dict(exclude_unset=True)
+        
+        student_ids = await self._students_matching_filters(db, filters, data.get("institution_id"))
+        
+        if not student_ids:
+            return {"student_count": 0, "total_amount": 0.0, "message": "No students found matching criteria", "sample_students": []}
+
+        # Calculate amount per student
+        stmt = select(FeeStructure).where(FeeStructure.id == data["fee_structure_id"])
+        res = await db.execute(stmt)
+        fs = res.scalar_one_or_none()
+        if not fs:
+            raise ValueError("FeeStructure not found")
+        
+        per_student_total = 0.0
+        for it in fs.items:
+            if it.amount_by_year:
+                per_student_total += sum([float(v) for v in it.amount_by_year.values()])
+            else:
+                per_student_total += float(it.amount or 0)
+        
+        total = per_student_total * len(student_ids)
+
+        # Get sample students
+        stmt = select(AdmissionStudent).where(AdmissionStudent.id.in_(student_ids[:5]))
+        res = await db.execute(stmt)
+        samples = []
+        for s in res.scalars():
+            samples.append({
+                "id": str(s.id),
+                "name": s.name,
+                "course": s.course,
+                "department": s.department,
+                "admission_quota": s.admission_quota
+            })
+
+        return {
+            "student_count": len(student_ids),
+            "total_amount": total,
+            "message": f"Found {len(student_ids)} students. Total estimated demand: {total}",
+            "sample_students": samples
+        }
 
     async def generate_demands_for_batch(self, db: AsyncSession, batch_id: UUID, dry_run: bool = False):
         """Generate demands for a batch; if dry_run, return counts and totals only."""
@@ -471,6 +553,24 @@ class BillingService:
         await db.commit()
         await db.refresh(pr)
         return pr
+
+
+    async def create_cash_counter(self, db: AsyncSession, payload):
+        from common.models.billing.cash_counter import CashCounter
+        data = payload.dict(exclude_unset=True)
+        cc = CashCounter(**data)
+        db.add(cc)
+        await db.commit()
+        await db.refresh(cc)
+        return cc
+
+    async def list_cash_counters(self, db: AsyncSession, institution_id: UUID | None = None):
+        from common.models.billing.cash_counter import CashCounter
+        stmt = select(CashCounter)
+        if institution_id:
+            stmt = stmt.where(CashCounter.institution_id == institution_id)
+        res = await db.execute(stmt)
+        return res.scalars().all()
 
 
 billing_service = BillingService()

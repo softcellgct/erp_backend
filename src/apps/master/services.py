@@ -168,8 +168,25 @@ class MasterService:
 
 
     async def create_academic_year(self, data: AcademicYearSchema):
-        academic_year = AcademicYear(**data.model_dump())
+        data_dict = data.model_dump()
+        department_configs = data_dict.pop("department_configs", None)
+        
+        academic_year = AcademicYear(**data_dict)
         self.db.add(academic_year)
+        await self.db.flush() # Flush to get the ID
+
+        if department_configs:
+            from common.models.master.academic_year import AcademicYearDepartment
+            for config in department_configs:
+                # config is a dict because of model_dump
+                dept_fee = AcademicYearDepartment(
+                    academic_year_id=academic_year.id,
+                    department_id=config["department_id"],
+                    application_fee=config["application_fee"],
+                    is_active=config["is_active"]
+                )
+                self.db.add(dept_fee)
+        
         await self.db.commit()
         await self.db.refresh(academic_year)
         return academic_year
@@ -187,11 +204,39 @@ class MasterService:
         return academic_year
 
     async def update_academic_year(self, academic_year_id: UUID, data: AcademicYearSchema):
+        data_dict = data.model_dump(exclude_unset=True)
+        department_configs = data_dict.pop("department_configs", None)
+
         result = await self.db.execute(
-            update(AcademicYear).where(AcademicYear.id == academic_year_id).values(**data.model_dump(exclude_unset=True))
+            update(AcademicYear).where(AcademicYear.id == academic_year_id).values(**data_dict)
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Academic Year not found")
+
+        if department_configs is not None:
+             from common.models.master.academic_year import AcademicYearDepartment
+             # For each config, check if it exists for this year and department
+             for config in department_configs:
+                 # Check if exists
+                 stmt = select(AcademicYearDepartment).where(
+                     AcademicYearDepartment.academic_year_id == academic_year_id,
+                     AcademicYearDepartment.department_id == config["department_id"]
+                 )
+                 res = await self.db.execute(stmt)
+                 existing_dept = res.scalar_one_or_none()
+
+                 if existing_dept:
+                     existing_dept.application_fee = config["application_fee"]
+                     existing_dept.is_active = config["is_active"]
+                 else:
+                     new_dept = AcademicYearDepartment(
+                         academic_year_id=academic_year_id,
+                         department_id=config["department_id"],
+                         application_fee=config["application_fee"],
+                         is_active=config["is_active"]
+                     )
+                     self.db.add(new_dept)
+
         await self.db.commit()
         return await self.get_academic_year(academic_year_id)
     

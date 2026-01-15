@@ -130,7 +130,7 @@ keys.json
 logs/
 app.log
 
-src/alembic/versions/
+
 
 *.md
 

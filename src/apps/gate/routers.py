@@ -68,6 +68,7 @@ visitor_router.include_router(
 
 
 from .services import admission_crud
+from components.utils.query_builder import SafeQueryBuilder
 
 admission_visitor_router = APIRouter(
     prefix="/admission-visitors",
@@ -110,7 +111,20 @@ async def get_admission_visitor(
 async def get_all_admission_visitors(
     request: Request,
     db: AsyncSession = Depends(get_db_session),
-    query = QueryBuilder(AdmissionVisitor),
+    query = SafeQueryBuilder(
+        AdmissionVisitor,
+        searchable_fields=[
+            "student_name",
+            "gate_pass_no",
+            "mobile_number",
+            "parent_or_guardian_name",
+            "aadhar_number",
+            "native_place",
+            "vehicle_number",
+            "reference_type",
+        ],
+    ),
+
 ):
     visitors = await admission_crud.get_all(db, query)
     return visitors

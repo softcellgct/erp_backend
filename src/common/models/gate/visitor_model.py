@@ -197,7 +197,14 @@ class AdmissionVisitor(Base):
 
     vehicle_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
+    institution_id: Mapped[UUID] = mapped_column(
+        ForeignKey("institutions.id"), nullable=False
+    )
+
     # Relationship
+    institution: Mapped["Institution"] = relationship(
+        "Institution", foreign_keys=[institution_id]
+    )
     consultancy_reference: Mapped["ConsultancyReference"] = relationship(
         "ConsultancyReference", uselist=False
     )

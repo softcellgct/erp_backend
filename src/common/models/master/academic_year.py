@@ -1,7 +1,11 @@
 from datetime import date
 from uuid import UUID
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from common.models.auth.user import Department, Institution
 from components.db.base_model import Base
-from sqlalchemy import Date, ForeignKey, String, Boolean
+from sqlalchemy import Date, ForeignKey, String, Boolean, Float
 from sqlalchemy.orm import Mapped,relationship,mapped_column
 
 class AcademicYear(Base):
@@ -14,12 +18,15 @@ class AcademicYear(Base):
     admission_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"))
 
-    institution = relationship("Institution", back_populates="academic_years", lazy="selectin")
+    institution: Mapped["Institution"] = relationship("Institution", back_populates="academic_years", lazy="selectin")
     semester_periods = relationship(
         "SemesterPeriod", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
     )
     financial_years = relationship(
         "FinancialYear", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
+    )
+    available_departments = relationship(
+        "AcademicYearDepartment", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
     )
 
 
@@ -42,3 +49,17 @@ class SemesterPeriod(Base):
     academic_year = relationship(
         "AcademicYear", back_populates="semester_periods", lazy="selectin"
     )
+
+class AcademicYearDepartment(Base):
+    __tablename__ = "academic_year_departments"
+    
+    academic_year_id: Mapped[UUID] = mapped_column(ForeignKey("academic_years.id", ondelete="CASCADE"), nullable=False, index=True)
+    department_id: Mapped[UUID] = mapped_column(ForeignKey("departments.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # Configuration fields
+    application_fee: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False) # Soft delete/disable for this year
+    
+    # Relationships
+    academic_year = relationship("AcademicYear", back_populates="available_departments")
+    department = relationship("Department", lazy="selectin")

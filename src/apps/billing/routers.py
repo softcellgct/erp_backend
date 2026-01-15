@@ -200,6 +200,7 @@ async def search_fee_subheads(query: str | None = None, fee_head_id: str | None 
 from common.schemas.billing.demand_schemas import (
     DemandBatchCreate,
     DemandBatchResponse,
+    DemandPreviewResponse,
 )
 
 
@@ -210,8 +211,26 @@ from common.schemas.billing.demand_schemas import (
 )
 async def create_demand_batch(payload: DemandBatchCreate, db: AsyncSession = Depends(get_db_session)):
     try:
+        # Create the batch record
         batch = await billing_service.create_demand_batch(db, payload)
+        # Automatically generate demands (async in a real app, strict await here)
+        await billing_service.generate_demands_for_batch(db, batch.id)
         return batch
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/demands/preview",
+    response_model=DemandPreviewResponse,
+    tags=["Billing - Demands"],
+)
+async def preview_demand_creation(
+    payload: DemandBatchCreate, db: AsyncSession = Depends(get_db_session)
+):
+    try:
+        res = await billing_service.preview_demand_batch(db, payload)
+        return res
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -342,6 +361,22 @@ recall_crud = create_crud_routes(
 )
 router.include_router(recall_crud, prefix="/payments/recall", tags=["Billing - Recall"])
 
+# --- Cash Counters ---
+from common.models.billing.cash_counter import CashCounter
+from common.schemas.billing.cash_counter_schemas import (
+    CashCounterCreate,
+    CashCounterUpdate,
+    CashCounterResponse,
+)
+
+cash_counter_crud = create_crud_routes(
+    model=CashCounter,
+    CreateSchema=CashCounterCreate,
+    UpdateSchema=CashCounterUpdate,
+    AllResponseSchema=CashCounterResponse,
+)
+router.include_router(cash_counter_crud, prefix="/cash-counters", tags=["Billing - Cash Counters"])
+
 @router.post("/payments/recall/{recall_id}/process", tags=["Billing - Recall"])
 async def process_recall(recall_id: str, approve: bool = False, processor_id: str | None = None, db: AsyncSession = Depends(get_db_session)):
     try:
@@ -391,10 +426,14 @@ async def get_invoice(
     tags=["Billing - Fee Heads"],
 )
 async def apply_payment(
-    invoice_id: str, payload: PaymentCreate, db: AsyncSession = Depends(get_db_session)
+    request: Request, invoice_id: str, payload: PaymentCreate, db: AsyncSession = Depends(get_db_session)
 ):
     try:
-        payment = await billing_service.apply_payment(db, invoice_id, payload)
+        counter_id = None
+        if hasattr(request, "state") and hasattr(request.state, "auth_payload"):
+             counter_id = request.state.auth_payload.get("counter_id")
+
+        payment = await billing_service.apply_payment(db, invoice_id, payload, counter_id=counter_id)
         return payment
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))

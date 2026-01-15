@@ -4,6 +4,7 @@ from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
     from common.models.master.academic_year import AcademicYear
+    from common.models.billing.cash_counter import CashCounter
 from components.db.base_model import Base
 from sqlalchemy import (
     ForeignKey,
@@ -54,7 +55,7 @@ class Invoice(Base):
         ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True
     )
     student_id: Mapped[UUID] = mapped_column(
-        ForeignKey("admission_students.id", "CASCADE"), nullable=False, index=True
+        ForeignKey("admission_students.id", ondelete="CASCADE"), nullable=False, index=True
     )
     invoice_number: Mapped[str] = mapped_column(String(100), unique=True, index=True)
     amount: Mapped[float] = mapped_column(Float(precision=2), nullable=False)
@@ -103,6 +104,7 @@ class Payment(Base):
     __tablename__ = "payments"
 
     invoice_id: Mapped[UUID] = mapped_column(ForeignKey("invoices.id", ondelete="CASCADE"), nullable=False, index=True)
+    cash_counter_id: Mapped[Optional[UUID]] = mapped_column(ForeignKey("cash_counters.id", ondelete="SET NULL"), nullable=True)
     amount: Mapped[float] = mapped_column(Float(precision=2), nullable=False)
     payment_method: Mapped[str] = mapped_column(String(50), nullable=False)
     transaction_id: Mapped[str | None] = mapped_column(String(100), nullable=True, unique=True)
@@ -112,6 +114,7 @@ class Payment(Base):
 
     # Relationships
     invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="payments")
+    cash_counter: Mapped["CashCounter"] = relationship("CashCounter")
 
     def __repr__(self):
         return f"<Payment(id={self.id}, invoice_id={self.invoice_id}, amount={self.amount})>"

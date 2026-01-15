@@ -28,6 +28,7 @@ class OtherReferenceCreate(BaseModel):
 
 
 class AdmissionVisitorBase(BaseModel):
+    institution_id: UUID
     student_name: str = Field(..., max_length=255)
     mobile_number: str
     parent_or_guardian_name: Optional[str] = Field(None, max_length=255)
@@ -49,6 +50,7 @@ class AdmissionVisitorCreate(AdmissionVisitorBase):
 
 class AdmissionVisitorUpdate(BaseModel):
     id: UUID
+    institution_id: Optional[UUID] = None
     student_name: Optional[str] = Field(None, max_length=255)
     mobile_number: Optional[str] = None
     parent_or_guardian_name: Optional[str] = Field(None, max_length=255)

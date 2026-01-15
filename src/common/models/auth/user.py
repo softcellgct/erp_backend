@@ -18,14 +18,14 @@ class Role(Base):
         "RolePermission",
         back_populates="role",
         lazy="selectin",
-        foreign_keys="[RolePermission.role_id]",
+        foreign_keys="RolePermission.role_id",
         cascade="all, delete-orphan",
     )
     users: Mapped[list["User"]] = relationship(
         "User",
         back_populates="role",
         lazy="selectin",
-        foreign_keys="[User.role_id]",
+        foreign_keys="User.role_id",
         cascade="all, delete-orphan",
     )
 
@@ -46,6 +46,7 @@ def insert_initial_values(target, connection, **kwargs):  # Add **kwargs
             {"name": "teacher", "description": "Teacher with standard access"},
             {"name": "staff", "description": "Staff member with limited access"},
             {"name": "student", "description": "Student with limited access"},
+            {"name": "cashier", "description": "Cash Counter Staff"},
         ]
         connection.execute(insert(Role), initial_roles)
         logger.info("Inserted initial roles into the roles table.")
@@ -206,7 +207,7 @@ class Screen(Base):
     role_permissions: Mapped[list["RolePermission"]] = relationship(
         "RolePermission",
         back_populates="screen",
-        foreign_keys="[RolePermission.screen_id]",
+        foreign_keys="RolePermission.screen_id",
     )
 
 

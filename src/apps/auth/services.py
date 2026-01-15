@@ -7,6 +7,7 @@ from common.models.auth.user import Module, RolePermission, Screen, User, Role
 from common.schemas.auth.role_schemas import RoleCreateSchema
 from common.schemas.auth.user_schemas import (
     LoginSchema,
+    CashCounterLoginSchema,
     PermissionAssignSchema,
     UserCreateSchema,
 )
@@ -101,6 +102,61 @@ class UserService:
                 data={"id": str(user.id), "type": "access"},
                 expires_delta=timedelta(days=1),
             )
+            request.state.user = user
+            return {
+                "detail": f"Welcome, {user.username}",
+                "access_token": access_token,
+                "token_type": "bearer",
+            }
+        except Exception as e:
+            raise e
+
+    async def cash_counter_login(self, request: Request, login_data: CashCounterLoginSchema):
+        try:
+            from common.models.billing.cash_counter import CashCounter
+            
+            # 1. Verify credentials
+            query = select(User).where(
+                or_(
+                    User.user_code == login_data.identifier,
+                    User.email == login_data.identifier,
+                )
+            ).options(selectinload(User.role))
+            result = await self.db.execute(query)
+            user = result.scalar_one_or_none()
+            
+            if not user or not verify_password(login_data.password, user.password):
+                raise HTTPException(
+                    status_code=401, detail="Invalid user code or password"
+                )
+            
+            # 2. Verify Role
+            if not user.role or user.role.name != "cashier":
+                raise HTTPException(
+                    status_code=403, detail="Access denied. Only cashiers can log in here."
+                )
+
+            # 3. Verify Counter
+            counter_query = select(CashCounter).where(CashCounter.id == login_data.counter_id)
+            counter_result = await self.db.execute(counter_query)
+            counter = counter_result.scalar_one_or_none()
+            
+            if not counter:
+                 raise HTTPException(status_code=400, detail="Invalid Cash Counter ID")
+            
+            if not counter.is_active:
+                 raise HTTPException(status_code=400, detail="Cash Counter is not active")
+
+            # 4. Generate Token with counter_id
+            access_token = create_access_token(
+                data={
+                    "id": str(user.id), 
+                    "type": "access",
+                    "counter_id": str(counter.id)
+                },
+                expires_delta=timedelta(days=1),
+            )
+            
             request.state.user = user
             return {
                 "detail": f"Welcome, {user.username}",

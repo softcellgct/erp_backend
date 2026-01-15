@@ -34,6 +34,9 @@ class LoginSchema(BaseModel):
     identifier: str
     password: str
 
+class CashCounterLoginSchema(LoginSchema):
+    counter_id: UUID
+
 class PermissionAssignSchema(BaseModel):
     role_id: UUID
     screen_id: UUID

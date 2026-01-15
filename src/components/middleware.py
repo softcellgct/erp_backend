@@ -140,6 +140,7 @@ class PermissionMiddleware(BaseHTTPMiddleware):
                     status_code=status.HTTP_401_UNAUTHORIZED,
                 )
 
+            request.state.auth_payload = payload
             return user, None
 
 
