@@ -12,6 +12,7 @@ class UserCreateSchema(BaseModel):
     role_id: UUID
 
 class UserUpdateSchema(BaseModel):
+    id: UUID
     email : Optional[EmailStr] | None = None
     user_code: Optional[str] | None = None
     username: Optional[str] | None = None

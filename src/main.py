@@ -18,7 +18,7 @@ from components.db.db import (
     sync_engine,
 )
 
-app = FastAPI(swagger_ui_parameters={"persistAuthorization": True})
+app = FastAPI(swagger_ui_parameters={"persistAuthorization": True},title="ERP_Backend")
 
 app.add_middleware(PermissionMiddleware)
 

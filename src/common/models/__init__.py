@@ -8,6 +8,7 @@ from .auth.user import (
 )
 
 from common.models.master.academic_year import AcademicYear,SemesterPeriod,AcademicYearDepartment
+from common.models.master.hostel import Hostel
 
 from common.models.gate.visitor_model import (
     Visitor,
@@ -36,6 +37,10 @@ from common.models.billing.cash_counter import CashCounter
 from common.models.billing.demand import DemandBatch, DemandItem
 from common.models.billing.fee_structure import FeeStructure, FeeStructureItem
 from common.models.billing.fee_subhead import FeeSubHead
+from common.models.billing.transport import TransportRoute, TransportBus, TransportFeeStructure
+from common.models.billing.hostel import HostelRoom, HostelFeeStructure
+from common.models.billing.concession import Concession, ConcessionAudit
+from common.models.meta.models import Caste, Religion, Community
 
 __all__ = [
     "Institution", 
@@ -47,6 +52,7 @@ __all__ = [
     "AcademicYear", 
     "SemesterPeriod",
     "AcademicYearDepartment",
+    "Hostel",
     "Visitor",
     "VendorVisitor",
     "AdmissionVisitor",
@@ -73,4 +79,14 @@ __all__ = [
     "FeeStructure",
     "FeeStructureItem",
     "FeeSubHead",
+    "TransportRoute",
+    "TransportBus",
+    "TransportFeeStructure",
+    "HostelRoom",
+    "HostelFeeStructure",
+    "Concession",
+    "ConcessionAudit",
+    "Caste",
+    "Religion",
+    "Community",
 ]

@@ -24,6 +24,7 @@ from .master.files.routers import router as file_router
 from .admission.routers import consultancy_router, admission_entry_router,admission_router
 from .billing.routers import router as billing_router
 from .meta.routers import religion_router, community_router, caste_router
+from .master.routers import hostel_router
 
 ROUTERS = [
     (auth_router, "/api"),
@@ -50,4 +51,5 @@ ROUTERS = [
     (admission_entry_router, "/api/admission"),
     (admission_router, "/api/admission/admitted")
     ,(billing_router, "/api/billing")
+    ,(hostel_router, "/api/master")
 ]

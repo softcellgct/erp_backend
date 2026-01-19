@@ -9,7 +9,7 @@ class FeeSubHead(Base):
 
     fee_head_id: Mapped[UUID] = mapped_column(ForeignKey("fee_heads.id", ondelete="CASCADE"), nullable=False, index=True)
     institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True)
-    batch: Mapped[str] = mapped_column(String(100), nullable=True, index=True)
+    # batch: Mapped[str] = mapped_column(String(100), nullable=True, index=True)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

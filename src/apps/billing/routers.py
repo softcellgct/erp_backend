@@ -437,3 +437,54 @@ async def apply_payment(
         return payment
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+# --- Application Fee Collection ---
+from common.schemas.billing.application_fee_schema import (
+    ApplicationFeePaymentRequest,
+    ApplicationFeeTransactionResponse,
+)
+
+@router.post(
+    "/application-fee/pay",
+    response_model=ApplicationFeeTransactionResponse,
+    tags=["Billing - Application Fees"],
+)
+async def pay_application_fee(
+    request: Request,
+    payload: ApplicationFeePaymentRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        # Extract user/counter from request state if available (simulated here)
+        user_id = None
+        # if hasattr(request, "state") and hasattr(request.state, "user"):
+        #     user_id = request.state.user.id
+        
+        transaction = await billing_service.collect_application_fee(db, payload, user_id=user_id)
+        return transaction
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get(
+    "/application-fee/transactions",
+    response_model=list[ApplicationFeeTransactionResponse],
+    tags=["Billing - Application Fees"],
+)
+async def list_application_fee_transactions(
+    db: AsyncSession = Depends(get_db_session),
+    academic_year_id: str | None = None,
+    department_id: str | None = None,
+    receipt_number: str | None = None,
+):
+    try:
+        transactions = await billing_service.get_application_fee_transactions(
+            db, 
+            academic_year_id=academic_year_id, 
+            department_id=department_id,
+            receipt_number=receipt_number
+        )
+        return transactions
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))

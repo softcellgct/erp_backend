@@ -1,4 +1,5 @@
 from uuid import UUID
+from sqlalchemy.orm import sessionmaker, joinedload
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -172,7 +173,7 @@ class BillingService:
         # Deactivate others
         await db.execute(
             update(FinancialYear)
-            .where(FinancialYear.institution_id == fy.institution_id, FinancialYear.id != financial_year_id)
+            .where(FinancialYear.id != financial_year_id)
             .values(active=False)
         )
         # Activate this one
@@ -571,6 +572,123 @@ class BillingService:
             stmt = stmt.where(CashCounter.institution_id == institution_id)
         res = await db.execute(stmt)
         return res.scalars().all()
+
+
+    # --- Application Fee Collection ---
+    async def collect_application_fee(self, db: AsyncSession, payload, user_id: UUID | None = None):
+        """
+        Collect application fee from a student.
+        Validates the fee amount against the AcademicYearDepartment configuration.
+        """
+        from common.models.billing.application_fees import ApplicationTransaction, PaymentStatusEnum
+        from common.models.master.academic_year import AcademicYearDepartment
+        import uuid
+        
+        data = payload.dict(exclude_unset=True)
+        academic_year_id = data["academic_year_id"]
+        department_id = data["department_id"]
+        
+        # 1. Fetch configured fee
+        stmt = select(AcademicYearDepartment).where(
+            AcademicYearDepartment.academic_year_id == academic_year_id,
+            AcademicYearDepartment.department_id == department_id
+        )
+        res = await db.execute(stmt)
+        config = res.scalar_one_or_none()
+        
+        if not config or not config.is_active:
+            raise ValueError("Application fees not configured or active for this department/year.")
+        
+        # 2. Validate amount (Optional: Strict check or allow override?)
+        # For now, we'll enforce the configured fee if it's not zero, or ensure payload matches.
+        # Let's assume the frontend sends what it sees, but we double-check.
+        # If payload amount is missing, use config.
+        # If payload amount is present, it must match config (unless we allow partial/overpayment, sticking to strict for now).
+        # note: schema requires 'amount', but we haven't added amount to schema yet! 
+        # Wait, the schema I defined earlier didn't have amount! Let's check schema.
+        # Schema `ApplicationFeePaymentRequest` usually should rely on backend config or explicit amount.
+        # Let's assume we use the Configured Amount as the Truth. 
+        
+        fee_amount = config.application_fee
+        
+        # 3. Generate Receipt Number
+        # Format: APP-{Year}-{DeptCode}-{Seq} or simple APP-{UUID}
+        # Let's use simple APP-{Date}-{Seq} for now
+        from datetime import datetime
+        today_str = datetime.utcnow().strftime("%Y%m%d")
+        
+        # get count for today to generate seq
+        # (This is a simple implementation, might need better concurrency handling in high load)
+        stmt_count = select(ApplicationTransaction).where(
+            ApplicationTransaction.receipt_number.like(f"APP-{today_str}-%")
+        )
+        # We need simpler counting, maybe just count all
+        # To avoid complex query, let's just use UUID or Timestamp for safety or simple seq
+        # Let's try simple sequence
+        # We can also just use a random hex for receipt to be safe
+        receipt_suffix = uuid.uuid4().hex[:6].upper()
+        receipt_number = f"APP-{today_str}-{receipt_suffix}"
+        
+        transaction = ApplicationTransaction(
+            student_name=data["student_name"],
+            student_mobile=data["student_mobile"],
+            academic_year_id=academic_year_id,
+            department_id=department_id,
+            amount=fee_amount, # Using configured amount
+            payment_mode=data["payment_mode"],
+            cash_counter_id=data.get("cash_counter_id"),
+            created_by=user_id,
+            receipt_number=receipt_number,
+            payment_status=PaymentStatusEnum.PAID,
+            remarks=data.get("remarks")
+        )
+        
+        db.add(transaction)
+        await db.commit()
+        await db.refresh(transaction)
+        return transaction
+
+    async def get_application_fee_transactions(
+        self, 
+        db: AsyncSession, 
+        academic_year_id: UUID | None = None,
+        department_id: UUID | None = None,
+        receipt_number: str | None = None
+    ):
+        from common.models.billing.application_fees import ApplicationTransaction
+        
+        stmt = select(ApplicationTransaction).options(
+            joinedload(ApplicationTransaction.department),
+            joinedload(ApplicationTransaction.academic_year)
+        ).order_by(ApplicationTransaction.transaction_date.desc())
+        
+        if academic_year_id:
+            stmt = stmt.where(ApplicationTransaction.academic_year_id == academic_year_id)
+        if department_id:
+            stmt = stmt.where(ApplicationTransaction.department_id == department_id)
+        if receipt_number:
+            stmt = stmt.where(ApplicationTransaction.receipt_number.ilike(f"%{receipt_number}%"))
+            
+        res = await db.execute(stmt)
+        txs = res.scalars().all()
+        
+        # Enrich info manually if needed (schema has optional fields)
+        # The joinedload above fetches relations, so we can map them in response model or schema
+        
+        result_list = []
+        for tx in txs:
+            # Manually map if Pydantic doesn't auto-resolve relation fields to strings
+            # Schema `ApplicationFeeTransactionResponse` has `department_name` etc.
+            # We can rely on Pydantic's `from_attributes` interacting with the ORM object if relations are loaded
+            # But let's be explicit to be safe
+            tx_dict = tx.__dict__.copy() 
+            if tx.department:
+                tx_dict['department_name'] = tx.department.name
+            if tx.academic_year:
+                tx_dict['academic_year_name'] = tx.academic_year.year_name
+            result_list.append(tx_dict)
+            
+        return result_list
 
 
 billing_service = BillingService()

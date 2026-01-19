@@ -1,5 +1,6 @@
 import enum
 from uuid import UUID
+import uuid
 from typing import Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -135,4 +136,42 @@ class InvoiceStatusHistory(Base):
 
     def __repr__(self):
         return f"<InvoiceStatusHistory(id={self.id}, invoice_id={self.invoice_id}, from='{self.from_status}', to='{self.to_status}')>"
+
+
+class ApplicationTransaction(Base):
+    __tablename__ = "application_transactions"
+
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    
+    # Student Details (Captured at time of payment)
+    student_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    student_mobile: Mapped[str] = mapped_column(String(20), nullable=False)
+    
+    # Configuration Links
+    academic_year_id: Mapped[UUID] = mapped_column(ForeignKey("academic_years.id", ondelete="CASCADE"), nullable=False, index=True)
+    department_id: Mapped[UUID] = mapped_column(ForeignKey("departments.id", ondelete="CASCADE"), nullable=False, index=True)
+    
+    # Payment Details
+    amount: Mapped[float] = mapped_column(Float(precision=2), nullable=False)
+    payment_mode: Mapped[str] = mapped_column(String(50), nullable=False) # Cash, UPI, Card
+    transaction_date: Mapped[DateTime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    
+    # Counter & Staff
+    cash_counter_id: Mapped[Optional[UUID]] = mapped_column(ForeignKey("cash_counters.id", ondelete="SET NULL"), nullable=True)
+    created_by: Mapped[Optional[UUID]] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    
+    # Receipt Info
+    receipt_number: Mapped[str] = mapped_column(String(100), unique=True, index=True, nullable=False)
+    payment_status: Mapped[PaymentStatusEnum] = mapped_column(SAEnum(PaymentStatusEnum), default=PaymentStatusEnum.PAID, nullable=False)
+    
+    remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
+    
+    # Relationships
+    academic_year: Mapped["AcademicYear"] = relationship("AcademicYear")
+    department: Mapped["Department"] = relationship("Department") # Assuming Department is imported or available via string
+    cash_counter: Mapped["CashCounter"] = relationship("CashCounter")
+    creator: Mapped["User"] = relationship("User", foreign_keys=[created_by])
+
+    def __repr__(self):
+        return f"<ApplicationTransaction(id={self.id}, receipt='{self.receipt_number}', student='{self.student_name}')>"
     
