@@ -2,6 +2,7 @@
 Pydantic Schemas for Admission Management System
 """
 from uuid import UUID
+from common.models.admission.admission_entry import AdmissionStatusEnum
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from datetime import date, datetime
@@ -94,6 +95,9 @@ class PGDetailsBase(BaseModel):
 
 class AdmissionStudentBase(BaseModel):
     """Base schema for admission student"""
+    # Enquiry Number
+    enquiry_number: Optional[str] = None
+    
     # Gate Pass and Reference
     gate_pass_number: Optional[str] = None
     reference_type: Optional[str] = None
@@ -146,7 +150,7 @@ class AdmissionStudentBase(BaseModel):
     scholarships: Optional[str] = Field(None, max_length=200)
     boarding_place: Optional[str] = Field(None, max_length=200)
 
-    status: Optional[str] = None
+    status: Optional[AdmissionStatusEnum] = None
 
     @validator('aadhaar_number')
     def validate_aadhaar(cls, v):
@@ -195,6 +199,15 @@ class PGDetailsCreate(PGDetailsBase):
 
 class AdmissionStudentCreate(AdmissionStudentBase):
     """Schema for creating admission student with nested academic details"""
+    sslc_details: Optional[SSLCDetailsCreate] = None
+    hsc_details: Optional[HSCDetailsCreate] = None
+    diploma_details: Optional[DiplomaDetailsCreate] = None
+    pg_details: Optional[PGDetailsCreate] = None
+
+
+class AdmissionStudentGrantAdmission(AdmissionStudentBase):
+    """Schema for granting admission with visitor_id"""
+    visitor_id: Optional[UUID] = None  # Admission visitor ID for granting admission
     sslc_details: Optional[SSLCDetailsCreate] = None
     hsc_details: Optional[HSCDetailsCreate] = None
     diploma_details: Optional[DiplomaDetailsCreate] = None
@@ -255,6 +268,7 @@ class PGDetailsUpdate(BaseModel):
 
 class AdmissionStudentUpdate(BaseModel):
     """Schema for updating admission student"""
+    id: UUID
     gate_pass_number: Optional[str] = None
     reference_type: Optional[str] = None
     name: Optional[str] = Field(None, min_length=1, max_length=200)
@@ -291,7 +305,7 @@ class AdmissionStudentUpdate(BaseModel):
     special_quota: Optional[str] = Field(None, max_length=100)
     scholarships: Optional[str] = Field(None, max_length=200)
     boarding_place: Optional[str] = Field(None, max_length=200)
-    status: Optional[str] = None
+    status: Optional[AdmissionStatusEnum] = None
 
     sslc_details: Optional[SSLCDetailsUpdate] = None
     hsc_details: Optional[HSCDetailsUpdate] = None

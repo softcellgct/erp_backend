@@ -5,7 +5,7 @@ from fastapi import HTTPException
 from uuid import UUID
 
 from common.models.master.academic_year import AcademicYear
-from common.schemas.master.academic_year import AcademicYearSchema
+from common.schemas.master.academic_year import AcademicYearSchema, AcademicYearDepartmentCreate
 
 
 class MasterService:
@@ -249,3 +249,39 @@ class MasterService:
         await self.db.commit()
         return {"message": "Academic Year deactivated"}
 
+
+    async def assign_department_to_academic_year(self, academic_year_id: UUID, data: AcademicYearDepartmentCreate):
+        # Verify academic year exists
+        academic_year = await self.get_academic_year(academic_year_id)
+        
+        # Verify department exists
+        await self.get_department(data.department_id)
+
+        from common.models.master.academic_year import AcademicYearDepartment
+        
+        # Check if assignment already exists
+        stmt = select(AcademicYearDepartment).where(
+            AcademicYearDepartment.academic_year_id == academic_year_id,
+            AcademicYearDepartment.department_id == data.department_id
+        )
+        result = await self.db.execute(stmt)
+        existing_assignment = result.scalar_one_or_none()
+
+        if existing_assignment:
+            # Update existing assignment
+            existing_assignment.application_fee = data.application_fee
+            existing_assignment.is_active = data.is_active
+            await self.db.commit()
+            return existing_assignment
+        else:
+            # Create new assignment
+            new_assignment = AcademicYearDepartment(
+                academic_year_id=academic_year_id,
+                department_id=data.department_id,
+                application_fee=data.application_fee,
+                is_active=data.is_active
+            )
+            self.db.add(new_assignment)
+            await self.db.commit()
+            await self.db.refresh(new_assignment)
+            return new_assignment

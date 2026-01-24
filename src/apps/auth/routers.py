@@ -1,10 +1,10 @@
 from typing import List
 from uuid import UUID
+from common.models.auth import user
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from apps.auth.services import RoleService, UserService, PermissionService
+from apps.auth.services import UserService, PermissionService
 from common.models.auth.user import User, Module, Screen
-from common.schemas.auth.role_schemas import RoleCreateSchema
 from common.schemas.auth.user_schemas import (
     LoginSchema,
     CashCounterLoginSchema,
@@ -86,6 +86,20 @@ from components.middleware import is_superadmin, public_route
 
 users_router = APIRouter(tags=["Auth - Users"])
 
+@users_router.post(
+    "/users",
+    response_model=UserResponseSchema,
+    name="Create User",
+    description="Create a new user in the system.",
+)
+@is_superadmin
+async def create_user(
+    request: Request,
+    user_data: UserCreateSchema,
+    db: AsyncSession = Depends(get_db_session),
+):
+    return await UserService(db).create_user(user_data)
+
 user_crud = create_crud_routes(
     User,
     UserCreateSchema,
@@ -94,7 +108,11 @@ user_crud = create_crud_routes(
     UserResponseSchema,
     decorators=[is_superadmin],
 )
-users_router.include_router(user_crud, prefix="/users", tags=["User"])
+
+users_router.include_router(
+    user_crud, prefix="/users", tags=["Auth - Users"]
+)
+
 
 
 # ===========================================================

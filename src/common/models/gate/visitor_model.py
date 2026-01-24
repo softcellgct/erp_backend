@@ -1,3 +1,4 @@
+from common.models.admission.admission_entry import AdmissionStatusEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import (
     String,
@@ -199,6 +200,11 @@ class AdmissionVisitor(Base):
 
     institution_id: Mapped[UUID] = mapped_column(
         ForeignKey("institutions.id"), nullable=False
+    )
+    status: Mapped[AdmissionStatusEnum] = mapped_column(
+        SQLEnum(AdmissionStatusEnum, native_enum=False),
+        default=AdmissionStatusEnum.APPLIED,
+        nullable=False,
     )
 
     # Relationship

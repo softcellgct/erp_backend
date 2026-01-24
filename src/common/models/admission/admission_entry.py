@@ -10,6 +10,7 @@ from sqlalchemy import (
     Text,
     ForeignKey,
     DateTime,
+    func,
 )
 from datetime import datetime
 from sqlalchemy.orm import relationship
@@ -59,6 +60,9 @@ class AdmissionStatusEnum(str, enum.Enum):
 
 class AdmissionStudent(Base):
     __tablename__ = "admission_students"
+
+    # Enquiry Number
+    enquiry_number = Column(String(50), unique=True, index=True, nullable=False)
 
     # Gate Pass and Reference
     gate_pass_number = Column(String(50), unique=True, index=True, nullable=True)
@@ -150,6 +154,54 @@ class AdmissionStudent(Base):
 
     def __repr__(self):
         return f"<AdmissionStudent(id={self.id}, name='{self.name}', gate_pass='{self.gate_pass_number}')>"
+
+    @classmethod
+    async def create(cls, request, session, data_list):
+        """Override create to automatically generate application numbers"""
+        from components.generator.utils.get_user_from_request import get_user_id
+        from sqlalchemy.inspection import inspect
+
+        if not data_list:
+            raise ValueError("No data provided to create records.")
+
+        objects = []
+        for data in data_list:
+            user_id = await get_user_id(request)
+            obj_data = data.dict() if hasattr(data, "dict") else data
+            obj_data["created_by"] = user_id
+            
+            # Generate enquiry number if not provided
+            if not obj_data.get("enquiry_number"):
+                from apps.admission.services import generate_enquiry_number
+                obj_data["enquiry_number"] = await generate_enquiry_number(session, obj_data.get("institution_id"))
+            
+            # Handle nested relationships - convert dicts/lists to model instances
+            mapper = inspect(cls)
+            for rel_name, rel in mapper.relationships.items():
+                if rel_name in obj_data and obj_data[rel_name] is not None:
+                    rel_data = obj_data[rel_name]
+                    related_model = rel.mapper.class_
+                    # If a single related object is provided as a dict -> create instance
+                    if not rel.uselist and isinstance(rel_data, dict):
+                        obj_data[rel_name] = related_model(**rel_data)
+                    # If a list of related objects is provided -> convert each
+                    elif rel.uselist and isinstance(rel_data, list):
+                        new_list = []
+                        for item in rel_data:
+                            if isinstance(item, dict):
+                                new_list.append(related_model(**item))
+                            elif hasattr(item, '_sa_instance_state'):
+                                new_list.append(item)
+                            else:
+                                raise ValueError(f"Invalid related item for relationship '{rel_name}': {item}")
+                        obj_data[rel_name] = new_list
+            
+            objects.append(cls(**obj_data))
+
+        session.add_all(objects)
+        await session.commit()
+
+        return len(objects)
 
 
 class SSLCDetails(Base):

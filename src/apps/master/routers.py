@@ -9,9 +9,12 @@ from common.schemas.auth.role_schemas import (
     RoleUpdateSchema,
 )
 from common.schemas.master.academic_year import (
+
     AcademicYearResponse,
     AcademicYearSchema,
     UpdateAcademicYearSchema,
+    AcademicYearDepartmentCreate,
+    AcademicYearDepartmentResponse,
 )
 from components.db.db import get_db_session
 from components.generator.routes import create_crud_routes
@@ -135,6 +138,22 @@ academic_year_router.include_router(
     academic_year_crud, prefix="/academic-years", tags=["Academic Years"]
 )
 
+
+@academic_year_router.post(
+    "/academic-years/{academic_year_id}/departments",
+    response_model=AcademicYearDepartmentResponse,
+    tags=["Academic Years"],
+)
+@is_superadmin
+async def assign_department_to_academic_year(
+    academic_year_id: str,
+    data: AcademicYearDepartmentCreate,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Assign a department to an academic year with configuration (fee, status).
+    """
+    return await MasterService(db).assign_department_to_academic_year(academic_year_id, data)
 
 sem_period_router = APIRouter()
 

@@ -12,7 +12,7 @@ class AcademicYearSchema(BaseModel):
     status: bool
     admission_active: bool
     institution_id: UUID
-    # department_configs: Optional[list["AcademicYearDepartmentCreate"]] = []
+    department_configs: Optional[list["AcademicYearDepartmentCreate"]] = []
 
     class Config:
         from_attributes = True
@@ -49,7 +49,7 @@ class UpdateAcademicYearSchema(BaseModel):
     status: Optional[bool] = None
     admission_active: Optional[bool] = None
     institution_id: Optional[UUID] = None
-    # department_configs: Optional[list[AcademicYearDepartmentCreate]] = None
+    department_configs: Optional[list[AcademicYearDepartmentCreate]] = None
 
     class Config:
         from_attributes = True
