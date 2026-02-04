@@ -1,10 +1,10 @@
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from common.models.auth.user import Institution, Department, Course, Class
+from common.models.master.institution import Institution, Department, Course, Class
 from fastapi import HTTPException
 from uuid import UUID
 
-from common.models.master.academic_year import AcademicYear
+from common.models.master.annual_task import AcademicYear
 from common.schemas.master.academic_year import AcademicYearSchema, AcademicYearDepartmentCreate
 
 
@@ -176,7 +176,7 @@ class MasterService:
         await self.db.flush() # Flush to get the ID
 
         if department_configs:
-            from common.models.master.academic_year import AcademicYearDepartment
+            from common.models.master.annual_task import AcademicYearDepartment
             for config in department_configs:
                 # config is a dict because of model_dump
                 dept_fee = AcademicYearDepartment(
@@ -214,7 +214,7 @@ class MasterService:
             raise HTTPException(status_code=404, detail="Academic Year not found")
 
         if department_configs is not None:
-             from common.models.master.academic_year import AcademicYearDepartment
+             from common.models.master.annual_task import AcademicYearDepartment
              # For each config, check if it exists for this year and department
              for config in department_configs:
                  # Check if exists
@@ -257,7 +257,7 @@ class MasterService:
         # Verify department exists
         await self.get_department(data.department_id)
 
-        from common.models.master.academic_year import AcademicYearDepartment
+        from common.models.master.annual_task import AcademicYearDepartment
         
         # Check if assignment already exists
         stmt = select(AcademicYearDepartment).where(

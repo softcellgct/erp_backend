@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     DateTime,
     func,
+    UUID,
 )
 from datetime import datetime
 from sqlalchemy.orm import relationship
@@ -58,11 +59,21 @@ class AdmissionStatusEnum(str, enum.Enum):
     ON_HOLD = "On Hold"
 
 
+class AdmissionTypeEnum(str, enum.Enum):
+    GENERAL = "General"
+    LATERAL = "Lateral"
+    TRANSFER = "Transfer"
+    DIRECT = "Direct"
+    MANAGEMENT = "Management"
+    COUNSELING = "Counseling"
+
+
 class AdmissionStudent(Base):
     __tablename__ = "admission_students"
 
     # Enquiry Number
     enquiry_number = Column(String(50), unique=True, index=True, nullable=False)
+    application_number = Column(String(50), unique=True, index=True, nullable=True)
 
     # Gate Pass and Reference
     gate_pass_number = Column(String(50), unique=True, index=True, nullable=True)
@@ -96,11 +107,16 @@ class AdmissionStudent(Base):
 
     # Degree & Branch Details
     campus = Column(String(200), nullable=True)  # Institution name
-    institution_id = Column(String(50), nullable=True)  # Added by manual migration
-    department = Column(String(200), nullable=True)
-    course = Column(String(200), nullable=True)  # Degree
+    institution_id = Column(UUID(as_uuid=True), ForeignKey("institutions.id"), nullable=True, index=True)
+    department_id = Column(UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True, index=True)
+    course_id = Column(UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True, index=True)
     year = Column(String(20), nullable=True)  # Year of study
     branch = Column(String(200), nullable=True)
+
+    # Relationships linked to Foreign Keys
+    institution = relationship("Institution")
+    department = relationship("Department")
+    course = relationship("Course")
 
     # Previous Academic Level
     previous_academic_level = Column(Enum(PreviousAcademicLevelEnum), nullable=True)
@@ -118,6 +134,10 @@ class AdmissionStudent(Base):
     special_quota = Column(String(100), nullable=True)  # 7.5%, First Graduate, etc.
     scholarships = Column(String(200), nullable=True)
     boarding_place = Column(String(200), nullable=True)
+    admission_type = Column(Enum(AdmissionTypeEnum), nullable=True, default=AdmissionTypeEnum.GENERAL)
+    academic_year_id = Column(
+        UUID(as_uuid=True), ForeignKey("academic_years.id"), nullable=True, index=True
+    )
     status = Column(
         Enum(AdmissionStatusEnum), default=AdmissionStatusEnum.APPLIED, nullable=False
     )

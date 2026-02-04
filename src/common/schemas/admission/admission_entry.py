@@ -2,7 +2,7 @@
 Pydantic Schemas for Admission Management System
 """
 from uuid import UUID
-from common.models.admission.admission_entry import AdmissionStatusEnum
+from common.models.admission.admission_entry import AdmissionStatusEnum, AdmissionTypeEnum
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from datetime import date, datetime
@@ -130,8 +130,9 @@ class AdmissionStudentBase(BaseModel):
     
     # Degree & Branch Details
     campus: Optional[str] = Field(None, max_length=200)  # Institution name
-    department: Optional[str] = Field(None, max_length=200)
-    course: Optional[str] = Field(None, max_length=200)  # Degree
+    institution_id: Optional[UUID] = None
+    department_id: Optional[UUID] = None
+    course_id: Optional[UUID] = None
     year: Optional[str] = Field(None, max_length=20)  # Year of study
     branch: Optional[str] = Field(None, max_length=200)
     
@@ -149,6 +150,9 @@ class AdmissionStudentBase(BaseModel):
     special_quota: Optional[str] = Field(None, max_length=100)
     scholarships: Optional[str] = Field(None, max_length=200)
     boarding_place: Optional[str] = Field(None, max_length=200)
+    admission_type: Optional[AdmissionTypeEnum] = None
+    academic_year_id: Optional[UUID] = None
+    application_number: Optional[str] = Field(None, max_length=20)
 
     status: Optional[AdmissionStatusEnum] = None
 
@@ -292,8 +296,9 @@ class AdmissionStudentUpdate(BaseModel):
     parent_address: Optional[str] = None
     permanent_address: Optional[str] = None
     campus: Optional[str] = Field(None, max_length=200)
-    department: Optional[str] = Field(None, max_length=200)
-    course: Optional[str] = Field(None, max_length=200)
+    institution_id: Optional[UUID] = None
+    department_id: Optional[UUID] = None
+    course_id: Optional[UUID] = None
     year: Optional[str] = Field(None, max_length=20)
     branch: Optional[str] = Field(None, max_length=200)
     previous_academic_level: Optional[PreviousAcademicLevelEnum] = None
@@ -305,12 +310,25 @@ class AdmissionStudentUpdate(BaseModel):
     special_quota: Optional[str] = Field(None, max_length=100)
     scholarships: Optional[str] = Field(None, max_length=200)
     boarding_place: Optional[str] = Field(None, max_length=200)
+    admission_type: Optional[AdmissionTypeEnum] = None
+    academic_year_id: Optional[UUID] = None
+
     status: Optional[AdmissionStatusEnum] = None
 
     sslc_details: Optional[SSLCDetailsUpdate] = None
     hsc_details: Optional[HSCDetailsUpdate] = None
     diploma_details: Optional[DiplomaDetailsUpdate] = None
     pg_details: Optional[PGDetailsUpdate] = None
+
+
+class BookAdmissionRequest(BaseModel):
+    pass
+
+class UpdateCourseRequest(BaseModel):
+    course_id: UUID
+    fee_structure_id: UUID
+    department_id: Optional[UUID] = None # Optional if inferred or explicit
+    # We might need institution_id if transferring campus, but let's stick to course for now.
 
 
 # ========================

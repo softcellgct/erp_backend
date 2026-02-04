@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy import create_engine as create_sync_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import AsyncSession
-from common.models.auth.user import RolePermission
+from common.models.master.screen import RolePermission
 from components.settings import settings
 from typing import AsyncGenerator
 from sqlalchemy_utils import create_database, database_exists
@@ -96,7 +96,8 @@ def get_sync_session():
 
 
 async def create_roles_and_users():
-    from common.models.auth.user import User,Module,Role,Screen
+    from common.models.master.screen import Module, Screen
+    from common.models.master.user import Role, User
     from sqlalchemy.future import select
     from components.utils.password_utils import get_password_hash
 

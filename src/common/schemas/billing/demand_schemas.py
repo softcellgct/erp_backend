@@ -66,3 +66,10 @@ class DemandItemResponse(DemandItemBase):
 
     class Config:
         from_attributes = True
+
+
+class BulkMiscellaneousFeeRequest(BaseModel):
+    student_ids: List[UUID]
+    fee_head_id: Optional[UUID] = None
+    amount: float
+    description: str

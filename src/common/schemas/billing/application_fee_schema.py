@@ -6,7 +6,7 @@ from typing import Optional
 class ApplicationFeePaymentRequest(BaseModel):
     student_name: str = Field(..., min_length=1, max_length=255)
     student_mobile: str = Field(..., min_length=10, max_length=15, pattern=r"^\+?[0-9]+$")
-    department_id: UUID
+    course_id: UUID
     academic_year_id: UUID
     payment_mode: str = Field(..., description="Cash, UPI, Card, etc.")
     remarks: Optional[str] = None
@@ -23,7 +23,7 @@ class ApplicationFeeTransactionResponse(BaseModel):
     amount: float
     transaction_date: datetime
     payment_status: str
-    department_name: Optional[str] = None # Enriched response
+    course_name: Optional[str] = None # Enriched response
     academic_year_name: Optional[str] = None # Enriched response
 
     class Config:

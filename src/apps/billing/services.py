@@ -1,5 +1,5 @@
 from uuid import UUID
-from sqlalchemy.orm import sessionmaker, joinedload
+from sqlalchemy.orm import sessionmaker, joinedload, selectinload
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,6 +44,186 @@ class BillingService:
             except Exception:
                 next_seq = 1
         return f"{prefix}{next_seq:04d}"
+
+    async def generate_application_number(self, db: AsyncSession, institution_id: UUID) -> str:
+        """
+        Generate a unique application number.
+        Format: APP-{INST_CODE}-{YYYY}-{SEQ}
+        """
+        from datetime import datetime
+        from sqlalchemy import text
+        
+        year = datetime.utcnow().year
+        inst_code = institution_id.hex[:6].upper()
+        prefix = f"APP-{inst_code}-{year}-"
+        
+        # Find last sequence
+        # We need to query AdmissionStudent.application_number
+        result = await db.execute(
+            text("SELECT application_number FROM admission_students WHERE application_number LIKE :prefix ORDER BY application_number DESC LIMIT 1"),
+            {"prefix": f"{prefix}%"},
+        )
+        last_app_num = result.scalar_one_or_none()
+        
+        if not last_app_num:
+            next_seq = 1
+        else:
+            try:
+                # APP-CODE-YYYY-XXXX
+                seq = last_app_num.split("-")[-1]
+                next_seq = int(seq) + 1
+            except Exception:
+                next_seq = 1
+                
+        return f"{prefix}{next_seq:04d}"
+
+    async def handle_course_change(self, db: AsyncSession, student_id: UUID, new_fee_structure_id: UUID):
+        """
+        Handle course/department change:
+        1. Void (delete) all PENDING demands for the student.
+        2. Assign new fees based on the new fee structure.
+        """
+        from common.models.billing.demand import DemandItem
+        
+        # 1. Delete PENDING demands
+        # We only delete demands that are NOT linked to an invoice or are pending.
+        # Ideally, we should check status="pending" and invoice_id IS NULL.
+        stmt = select(DemandItem).where(
+            DemandItem.student_id == student_id,
+            DemandItem.status == "pending",
+            DemandItem.invoice_id.is_(None)
+        )
+        res = await db.execute(stmt)
+        pending_demands = res.scalars().all()
+        
+        for demand in pending_demands:
+            await db.delete(demand)
+            
+        await db.flush()
+        
+        # 2. Assign new fees
+        await self.assign_course_fees(db, student_id, new_fee_structure_id)
+        
+        await db.commit()
+
+    async def assign_course_fees(self, db: AsyncSession, student_id: UUID, fee_structure_id: UUID):
+        """
+        Assign configured course fees to a student by creating future demands.
+        """
+        from common.models.billing.demand import DemandItem
+        from common.models.admission.admission_entry import AdmissionStudent
+        
+        # 1. Fetch Fee Structure
+        # 1. Fetch Fee Structure
+        stmt = select(FeeStructure).options(selectinload(FeeStructure.items).selectinload(FeeStructureItem.fee_head)).where(FeeStructure.id == fee_structure_id)
+        res = await db.execute(stmt)
+        fs = res.scalar_one_or_none()
+        if not fs:
+            raise ValueError("Fee Structure not found")
+            
+        # 2. Iterate items and create demands
+        created_demands = []
+        for item in fs.items:
+            # Handle amount_by_year
+            if item.amount_by_year:
+                for year_label, year_amount in item.amount_by_year.items():
+                    amount = float(year_amount)
+                    if amount > 0:
+                        di = DemandItem(
+                            batch_id=None, # Not part of a batch? Or maybe we should denote it? 
+                            # If batch_id is nullable (it is not in the model!), we might have an issue.
+                            # Checking model: batch_id is mapped_column(ForeignKey... nullable=False)!
+                            # Ref check: DemandBatch model exists.
+                            # We might need a "System Batch" or make batch_id nullable.
+                            # Looking at previous code `create_student_demand` passed `batch_id=None`?
+                            # Let's check DemandItem model again.
+                            # Model line 26: batch_id: Mapped[UUID] = mapped_column(..., nullable=False)
+                            # Previous code in `create_student_demand` (line 405) sets `batch_id=None`.
+                            # This would fail DB constraint if not handled.
+                            # I must check if I missed a migration making it nullable or if there is a default.
+                            # OR I should create a dummy batch for this student assignment.
+                            student_id=student_id,
+                            fee_structure_id=fs.id,
+                            fee_structure_item_id=item.id,
+                            amount=amount,
+                            description=f"{item.fee_head.name} - {year_label}" if item.fee_head else f"Fee - {year_label}"
+                        )
+                        db.add(di)
+                        created_demands.append(di)
+            else:
+                amount = float(item.amount)
+                if amount > 0:
+                     di = DemandItem(
+                        student_id=student_id,
+                        fee_structure_id=fs.id,
+                        fee_structure_item_id=item.id,
+                        amount=amount,
+                        description=item.fee_head.name if item.fee_head else "Fee"
+                    )
+                     db.add(di)
+                     created_demands.append(di)
+        
+        # Hack for batch_id:
+        # If batch_id is required, we must link it. 
+        # Ideally, "Book Admission" is an event, similar to a batch.
+        # Let's create a specialized batch for this student or find a better way.
+        # Or I modify the model to allow nullable batch_id (which makes sense for ad-hoc demands).
+        # I recall I saw `batch_id=None` in existing code.
+        # Let's check `DemandItem` model in file `src/common/models/billing/demand.py`.
+        # It says `nullable=False`.
+        # So `create_student_demand` in existing service WOULD FAIL?
+        # Maybe I should fix that too.
+        # I'll create a migration to make batch_id nullable.
+        
+        return created_demands
+
+    async def assign_application_fee(self, db: AsyncSession, student_id: UUID):
+        """
+        Assign application fee demand if configured for the student's course/year.
+        """
+        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.master.annual_task import AcademicYearCourse
+        from common.models.billing.application_fees import FeeHead
+        from common.models.billing.demand import DemandItem
+        
+        # 1. Fetch Student
+        stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+        res = await db.execute(stmt)
+        student = res.scalar_one_or_none()
+        if not student:
+            raise ValueError("Student not found")
+            
+        if not student.course_id or not student.academic_year_id:
+            return None # No course/year assigned
+            
+        # 2. Fetch Config
+        stmt = select(AcademicYearCourse).where(
+            AcademicYearCourse.academic_year_id == student.academic_year_id,
+            AcademicYearCourse.course_id == student.course_id
+        )
+        res = await db.execute(stmt)
+        config = res.scalar_one_or_none()
+        
+        if config and config.application_fee and config.application_fee > 0:
+            # 3. Find 'Application Fee' Head
+            stmt_head = select(FeeHead).where(
+                FeeHead.institution_id == student.institution_id,
+                FeeHead.name.ilike("Application Fee")
+            )
+            res_head = await db.execute(stmt_head)
+            fee_head = res_head.scalars().first()
+            
+            # Create Demand
+            di = DemandItem(
+                student_id=student_id,
+                fee_head_id=fee_head.id if fee_head else None,
+                amount=config.application_fee,
+                description="Application Fee"
+            )
+            db.add(di)
+            # await db.flush() # Caller will commit
+            return di
+        return None
 
     async def create_invoice(self, db: AsyncSession, payload: InvoiceCreate):
         try:
@@ -96,12 +276,77 @@ class BillingService:
 
             await db.commit()
 
+
             stmt = select(Invoice).where(Invoice.id == invoice.id)
             result = await db.execute(stmt)
             return result.scalar_one()
         except Exception as e:
             await db.rollback()
             raise e
+
+    async def create_invoice_from_demands(self, db: AsyncSession, demands: list):
+        """
+        Create an invoice from a list of DemandItems.
+        All demands must belong to the same student.
+        """
+        from common.models.billing.application_fees import Invoice, InvoiceLineItem, PaymentStatusEnum
+        from datetime import date
+        
+        if not demands:
+            return None
+            
+        # Validate all demands belong to same student
+        student_id = demands[0].student_id
+        institution_id = None
+        
+        # We need institution_id. Ideally demand has it, or we fetch from student.
+        # DemandItem doesn't have institution_id. We fetch it from student.
+        from common.models.admission.admission_entry import AdmissionStudent
+        stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+        res = await db.execute(stmt)
+        student = res.scalar_one_or_none()
+        if not student:
+            raise ValueError("Student not found for demands")
+        institution_id = student.institution_id
+        
+        total_amount = sum([d.amount for d in demands])
+        
+        invoice_number = await self._generate_invoice_number(db, institution_id)
+        
+        invoice = Invoice(
+            institution_id=institution_id,
+            student_id=student_id,
+            invoice_number=invoice_number,
+            amount=total_amount,
+            paid_amount=0.0,
+            balance_due=total_amount,
+            status=PaymentStatusEnum.PENDING,
+            issue_date=date.today(),
+            due_date=date.today()
+        )
+        db.add(invoice)
+        await db.flush()
+        
+        for d in demands:
+            # Create Line Item
+            line = InvoiceLineItem(
+                invoice_id=invoice.id,
+                fee_head_id=d.fee_head_id,
+                description=d.description,
+                amount=d.amount,
+                net_amount=d.amount
+            )
+            db.add(line)
+            
+            # Link demand to invoice
+            d.invoice_id = invoice.id
+            # d.status = "invoiced" # If demand has status? It has 'status' field (default pending).
+            d.status = "invoiced"
+            db.add(d)
+            
+        await db.commit()
+        await db.refresh(invoice)
+        return invoice
 
     async def apply_payment(self, db: AsyncSession, invoice_id: UUID, payload: PaymentCreate, counter_id: UUID | None = None):
         try:
@@ -581,23 +826,23 @@ class BillingService:
         Validates the fee amount against the AcademicYearDepartment configuration.
         """
         from common.models.billing.application_fees import ApplicationTransaction, PaymentStatusEnum
-        from common.models.master.academic_year import AcademicYearDepartment
+        from common.models.master.annual_task import AcademicYearCourse
         import uuid
         
         data = payload.dict(exclude_unset=True)
         academic_year_id = data["academic_year_id"]
-        department_id = data["department_id"]
+        course_id = data["course_id"]
         
         # 1. Fetch configured fee
-        stmt = select(AcademicYearDepartment).where(
-            AcademicYearDepartment.academic_year_id == academic_year_id,
-            AcademicYearDepartment.department_id == department_id
+        stmt = select(AcademicYearCourse).where(
+            AcademicYearCourse.academic_year_id == academic_year_id,
+            AcademicYearCourse.course_id == course_id
         )
         res = await db.execute(stmt)
         config = res.scalar_one_or_none()
         
         if not config or not config.is_active:
-            raise ValueError("Application fees not configured or active for this department/year.")
+            raise ValueError("Application fees not configured or active for this course/year.")
         
         # 2. Validate amount (Optional: Strict check or allow override?)
         # For now, we'll enforce the configured fee if it's not zero, or ensure payload matches.
@@ -617,7 +862,64 @@ class BillingService:
         from datetime import datetime
         today_str = datetime.utcnow().strftime("%Y%m%d")
         
+
         # get count for today to generate seq
+        
+    async def get_student_dues_by_application_number(self, db: AsyncSession, application_number: str):
+        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.billing.application_fees import Invoice, PaymentStatusEnum
+        
+        # 1. Find Student
+        # We search by application_number OR enquiry_number to be safe? 
+        # Request asked for application_number.
+        stmt = select(AdmissionStudent).options(
+            selectinload(AdmissionStudent.department),
+            selectinload(AdmissionStudent.course)
+        ).where(AdmissionStudent.application_number == application_number)
+        res = await db.execute(stmt)
+        student = res.scalar_one_or_none()
+        
+        if not student:
+            # Fallback try enquiry_number just in case
+             stmt = select(AdmissionStudent).options(
+                selectinload(AdmissionStudent.department),
+                selectinload(AdmissionStudent.course)
+             ).where(AdmissionStudent.enquiry_number == application_number)
+             res = await db.execute(stmt)
+             student = res.scalar_one_or_none()
+             
+        if not student:
+            raise ValueError("Student not found")
+            
+        # 2. Fetch Invoices not fully paid
+        # We want PENDING, PARTIAL, OVERDUE. Basically anything not PAID or CANCELLED?
+        # Or maybe even PAID ones for history?
+        # Usually 'dues' implies outstanding. But 'Cash Counter' might want to see history.
+        # Let's return all non-cancelled for now so they can see context.
+        stmt = select(Invoice).where(
+            Invoice.student_id == student.id,
+            Invoice.status != PaymentStatusEnum.CANCELLED
+        ).options(
+            selectinload(Invoice.line_items),
+            selectinload(Invoice.payments),
+            selectinload(Invoice.status_history)
+        ).order_by(Invoice.issue_date.desc())
+        
+        res = await db.execute(stmt)
+        invoices = res.scalars().all()
+        
+        # 3. Construct Response
+        return {
+            "student_id": student.id,
+
+            "application_number": student.application_number,
+            "name": student.name,
+            "department": student.department.name if student.department else None,
+            "course": student.course.title if student.course else None,
+            "batch": student.year,
+            "invoices": invoices
+        }
+
         # (This is a simple implementation, might need better concurrency handling in high load)
         stmt_count = select(ApplicationTransaction).where(
             ApplicationTransaction.receipt_number.like(f"APP-{today_str}-%")
@@ -633,7 +935,7 @@ class BillingService:
             student_name=data["student_name"],
             student_mobile=data["student_mobile"],
             academic_year_id=academic_year_id,
-            department_id=department_id,
+            course_id=course_id,
             amount=fee_amount, # Using configured amount
             payment_mode=data["payment_mode"],
             cash_counter_id=data.get("cash_counter_id"),
@@ -652,20 +954,20 @@ class BillingService:
         self, 
         db: AsyncSession, 
         academic_year_id: UUID | None = None,
-        department_id: UUID | None = None,
+        course_id: UUID | None = None,
         receipt_number: str | None = None
     ):
         from common.models.billing.application_fees import ApplicationTransaction
         
         stmt = select(ApplicationTransaction).options(
-            joinedload(ApplicationTransaction.department),
+            joinedload(ApplicationTransaction.course),
             joinedload(ApplicationTransaction.academic_year)
         ).order_by(ApplicationTransaction.transaction_date.desc())
         
         if academic_year_id:
             stmt = stmt.where(ApplicationTransaction.academic_year_id == academic_year_id)
-        if department_id:
-            stmt = stmt.where(ApplicationTransaction.department_id == department_id)
+        if course_id:
+            stmt = stmt.where(ApplicationTransaction.course_id == course_id)
         if receipt_number:
             stmt = stmt.where(ApplicationTransaction.receipt_number.ilike(f"%{receipt_number}%"))
             
@@ -682,8 +984,8 @@ class BillingService:
             # We can rely on Pydantic's `from_attributes` interacting with the ORM object if relations are loaded
             # But let's be explicit to be safe
             tx_dict = tx.__dict__.copy() 
-            if tx.department:
-                tx_dict['department_name'] = tx.department.name
+            if tx.course:
+                tx_dict['course_name'] = tx.course.title 
             if tx.academic_year:
                 tx_dict['academic_year_name'] = tx.academic_year.year_name
             result_list.append(tx_dict)

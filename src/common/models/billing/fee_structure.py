@@ -11,9 +11,9 @@ import enum
 
 from common.models.master.admission.admission_type import AdmissionType
 from common.models.master.admission.quota import Quota
-from common.models.master.academic_year import AcademicYear, SemesterPeriod
+from common.models.master.annual_task import AcademicYear, SemesterPeriod
 from common.models.billing.financial_year import FinancialYear
-from common.models.auth.user import Course, Department
+from common.models.master.institution import Course, Department
 
 class GenderEnum(str, enum.Enum):
     MALE = "Male"

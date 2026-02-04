@@ -1,9 +1,8 @@
 from typing import List
+from uuid import UUID
 from components.db.base_model import Base
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import String, ForeignKey
-from uuid import UUID
-
 
 class Religion(Base):
     __tablename__ = "religions"
@@ -30,6 +29,6 @@ class Caste(Base):
         nullable=False,
     )
 
-    community: Mapped[Community] = relationship(
+    community: Mapped["Community"] = relationship(
         "Community", back_populates="castes", lazy="selectin"
     )

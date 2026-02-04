@@ -2,7 +2,23 @@ from typing import Optional
 from uuid import UUID
 from pydantic import BaseModel, EmailStr
 
+# Role Schemas
+class RoleCreateSchema(BaseModel):
+    name: str
+    description: str
 
+class RoleUpdateSchema(BaseModel):
+    id: Optional[UUID] = None
+    name: Optional[str] = None
+    description: Optional[str] = None
+
+class RoleResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str
+
+
+# User Schemas
 class UserCreateSchema(BaseModel):
     email : EmailStr
     user_code: str
@@ -36,7 +52,7 @@ class LoginSchema(BaseModel):
     password: str
 
 class CashCounterLoginSchema(LoginSchema):
-    counter_id: UUID
+    pass
 
 class PermissionAssignSchema(BaseModel):
     role_id: UUID

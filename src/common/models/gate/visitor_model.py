@@ -18,7 +18,7 @@ import enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from common.models.auth.user import Institution, Department
+    from common.models.master.institution import Institution, Department
 
 
 class VisitorType(str, enum.Enum):

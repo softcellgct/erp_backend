@@ -21,6 +21,7 @@ from common.schemas.admission.admission_entry import (
 from common.models.gate.visitor_model import AdmissionVisitor
 from apps.admission.services import generate_enquiry_number
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from uuid import UUID
 
 consultancy_router = APIRouter()
@@ -46,6 +47,36 @@ admission_entry_crud_router = create_crud_routes(
     AdmissionStudentResponse,
     AdmissionStudentResponse
 )
+
+
+# Custom GET endpoint with eager loading
+@admission_entry_router.get(
+    "/admission-students/{id}",
+    response_model=AdmissionStudentResponse,
+    name="Get Admission Student",
+    tags=["Admission - Admission Students"]
+)
+async def get_admission_student(
+    id: UUID,
+    db: AsyncSession = Depends(get_db_session)
+):
+    query = select(AdmissionStudent).options(
+        selectinload(AdmissionStudent.sslc_details),
+        selectinload(AdmissionStudent.hsc_details),
+        selectinload(AdmissionStudent.diploma_details),
+        selectinload(AdmissionStudent.pg_details),
+    ).where(AdmissionStudent.id == id)
+    
+    result = await db.execute(query)
+    student = result.scalar_one_or_none()
+    
+    if not student:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Admission student with ID {id} not found"
+        )
+        
+    return student
 
 admission_entry_router.include_router(
     admission_entry_crud_router, prefix="/admission-students", tags=["Admission - Admission Students"]
@@ -169,3 +200,86 @@ async def get_applied_admission_students(
         select(AdmissionStudent).where(AdmissionStudent.status == "APPLIED")
     )
     return result.scalars().all()
+
+
+# Import schemas
+from common.schemas.admission.admission_entry import BookAdmissionRequest, UpdateCourseRequest
+from apps.billing.services import billing_service
+
+@admission_router.post(
+    "/admission-students/{student_id}/book-admission",
+    tags=["Admission - Admission Students"],
+    summary="Book Admission (Generate App No & Assign Fees)"
+)
+async def book_admission(
+    student_id: UUID,
+    db: AsyncSession = Depends(get_db_session)
+):
+    # 1. Fetch Student
+    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+    res = await db.execute(stmt)
+    student = res.scalar_one_or_none()
+    
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+        
+    if student.application_number:
+        raise HTTPException(status_code=400, detail="Admission already booked (App Number exists)")
+        
+    try:
+        # 2. Generate App Number
+        app_num = await billing_service.generate_application_number(db, student.institution_id)
+        student.application_number = app_num
+        student.status = AdmissionStatusEnum.FEE_PENDING # Or ADMISSION_GRANTED?
+        
+        # # 3. Assign Fees
+        # await billing_service.assign_course_fees(db, student_id, payload.fee_structure_id)
+        
+
+        # 4. Assign Application Fee (if configured)
+        demand = await billing_service.assign_application_fee(db, student_id)
+        if demand:
+            # Auto-Invoice the application fee for Cash Counter availability
+            await billing_service.create_invoice_from_demands(db, [demand])
+        
+        await db.commit()
+        await db.refresh(student)
+        return student
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@admission_router.post(
+    "/admission-students/{student_id}/update-course",
+    tags=["Admission - Admission Students"],
+    summary="Update Course & Re-assign Fees"
+)
+async def update_course_and_fees(
+    student_id: UUID,
+    payload: UpdateCourseRequest,
+    db: AsyncSession = Depends(get_db_session)
+):
+    # 1. Fetch Student
+    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+    res = await db.execute(stmt)
+    student = res.scalar_one_or_none()
+    
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+        
+    try:
+        # 2. Update Student Course/Department
+        student.course_id = payload.course_id
+        if payload.department_id:
+            student.department_id = payload.department_id
+            
+        # 3. Handle Fee Logic
+        await billing_service.handle_course_change(db, student_id, payload.fee_structure_id)
+        
+        await db.commit()
+        await db.refresh(student)
+        return student
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))

@@ -2,6 +2,8 @@ from uuid import UUID
 from components.db.base_model import Base
 from sqlalchemy import String, Boolean, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import event
+from components.utils.password_utils import get_password_hash
 
 class CashCounter(Base):
     __tablename__ = "cash_counters"
@@ -13,9 +15,15 @@ class CashCounter(Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+    password: Mapped[str] = mapped_column(nullable=False)
 
     # Relationships
     # payments: Mapped[list["Payment"]] = relationship("Payment", back_populates="cash_counter")
 
     def __repr__(self):
         return f"<CashCounter(id={self.id}, name='{self.name}', code='{self.code}')>"
+
+
+@event.listens_for(CashCounter, "before_insert")
+def hash_password(mapper, connection, target):
+    target.password = get_password_hash(target.password)

@@ -23,12 +23,14 @@ class DemandBatch(Base):
 class DemandItem(Base):
     __tablename__ = "demand_items"
 
-    batch_id: Mapped[UUID] = mapped_column(ForeignKey("demand_batches.id", ondelete="CASCADE"), nullable=False, index=True)
+    batch_id: Mapped[UUID | None] = mapped_column(ForeignKey("demand_batches.id", ondelete="CASCADE"), nullable=True, index=True)
     student_id: Mapped[UUID] = mapped_column(ForeignKey("admission_students.id", ondelete="CASCADE"), nullable=False, index=True)
     fee_structure_id: Mapped[UUID] = mapped_column(ForeignKey("fee_structures.id", ondelete="SET NULL"), nullable=True, index=True)
     fee_structure_item_id: Mapped[UUID] = mapped_column(ForeignKey("fee_structure_items.id", ondelete="SET NULL"), nullable=True, index=True)
     amount: Mapped[float] = mapped_column(Numeric(12,2), nullable=False)
     status: Mapped[str] = mapped_column(String(50), default="pending", nullable=False)
     invoice_id: Mapped[UUID | None] = mapped_column(ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True)
+    description: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    fee_head_id: Mapped[UUID | None] = mapped_column(ForeignKey("fee_heads.id", ondelete="SET NULL"), nullable=True)
 
     batch = relationship("DemandBatch", back_populates="demands", lazy="selectin")

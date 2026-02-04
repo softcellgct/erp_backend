@@ -5,11 +5,7 @@ from .gate.routers import (
     admission_visitor_router,
 )
 from .auth.routers import (
-    users_router,
     auth_router,
-    permissions_router,
-    module_router,
-    screen_router,
 )
 from .master.routers import (
     institution_router,
@@ -19,6 +15,10 @@ from .master.routers import (
     academic_year_router,
     sem_period_router,
     role_router,
+    user_router as users_router,
+    permissions_router,
+    module_router,
+    screen_router,
 )
 from .master.files.routers import router as file_router
 from .admission.routers import consultancy_router, admission_entry_router,admission_router
@@ -28,7 +28,7 @@ from .master.routers import hostel_router
 
 ROUTERS = [
     (auth_router, "/api"),
-    (users_router, "/api"),
+    (users_router, "/api/users"),
     (role_router, "/api"),
     (permissions_router, "/api"),
     (gate_router, "/api"),

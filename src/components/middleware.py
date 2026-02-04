@@ -7,7 +7,7 @@ from sqlalchemy.orm import selectinload
 from starlette.routing import Match
 from starlette.middleware.base import BaseHTTPMiddleware
 from functools import wraps
-from common.models.auth.user import User
+from common.models.master.user import User
 from components.db.db import get_db_session
 from components.settings import settings
 from logs.logging import logger
@@ -125,23 +125,44 @@ class PermissionMiddleware(BaseHTTPMiddleware):
                 status_code=status.HTTP_401_UNAUTHORIZED,
             )
 
-        # Fetch user from DB
+        identity_type = payload.get("identity_type", "user")
+
+        # Fetch user or cash counter from DB
         async for session in get_db_session():
-            query = await session.execute(
-                select(User).where(User.id == user_id).options(selectinload(User.role))
-            )
-            user = query.scalar_one_or_none()
+            if identity_type == "cash_counter":
+                from common.models.billing.cash_counter import CashCounter
+                stmt = select(CashCounter).where(CashCounter.id == user_id)
+                res = await session.execute(stmt)
+                cc = res.scalar_one_or_none()
+                
+                if not cc:
+                     return None, JSONResponse(
+                        content={
+                            "detail": "The cash counter associated with the provided token could not be found."
+                        },
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                    )
+                request.state.auth_payload = payload
+                request.state.cash_counter = cc
+                request.state.user = None # Explicitly set to None for clarity
+                return cc, None
 
-            if not user:
-                return None, JSONResponse(
-                    content={
-                        "detail": "The user associated with the provided token could not be found. Please ensure you are using a valid token or contact support for assistance."
-                    },
-                    status_code=status.HTTP_401_UNAUTHORIZED,
+            else:
+                query = await session.execute(
+                    select(User).where(User.id == user_id).options(selectinload(User.role))
                 )
+                user = query.scalar_one_or_none()
 
-            request.state.auth_payload = payload
-            return user, None
+                if not user:
+                    return None, JSONResponse(
+                        content={
+                            "detail": "The user associated with the provided token could not be found. Please ensure you are using a valid token or contact support for assistance."
+                        },
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                    )
+
+                request.state.auth_payload = payload
+                return user, None
 
 
 def public_route(func):

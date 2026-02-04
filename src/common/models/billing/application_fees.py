@@ -149,7 +149,7 @@ class ApplicationTransaction(Base):
     
     # Configuration Links
     academic_year_id: Mapped[UUID] = mapped_column(ForeignKey("academic_years.id", ondelete="CASCADE"), nullable=False, index=True)
-    department_id: Mapped[UUID] = mapped_column(ForeignKey("departments.id", ondelete="CASCADE"), nullable=False, index=True)
+    course_id: Mapped[UUID] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), nullable=False, index=True)
     
     # Payment Details
     amount: Mapped[float] = mapped_column(Float(precision=2), nullable=False)
@@ -168,7 +168,7 @@ class ApplicationTransaction(Base):
     
     # Relationships
     academic_year: Mapped["AcademicYear"] = relationship("AcademicYear")
-    department: Mapped["Department"] = relationship("Department") # Assuming Department is imported or available via string
+    course: Mapped["Course"] = relationship("Course") # Assuming Course is imported or available via string
     cash_counter: Mapped["CashCounter"] = relationship("CashCounter")
     creator: Mapped["User"] = relationship("User", foreign_keys=[created_by])
 

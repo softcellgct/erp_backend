@@ -1,3 +1,4 @@
+from fastapi import APIRouter
 from common.models.meta.models import Religion, Community, Caste
 from common.schemas.meta.religion_schemas import (
     ReligionCreate,
@@ -11,9 +12,10 @@ from common.schemas.meta.community_schemas import (
 )
 from common.schemas.meta.caste_schemas import CasteCreate, CasteUpdate, CasteResponse
 from components.generator.routes import create_crud_routes
-from fastapi import APIRouter
 
-
+# =====================================================
+# Religion CRUD Routes
+# =====================================================
 religion_router = APIRouter()
 
 religion_crud = create_crud_routes(

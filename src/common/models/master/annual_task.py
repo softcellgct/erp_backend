@@ -3,7 +3,8 @@ from uuid import UUID
 from typing import TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:
-    from common.models.auth.user import Department, Institution
+    from common.models.master.institution import Course, Institution
+    from common.models.master.admission.admission_type import AdmissionType
 from components.db.base_model import Base
 from sqlalchemy import Date, ForeignKey, String, Boolean, Float
 from sqlalchemy.orm import Mapped,relationship,mapped_column
@@ -25,8 +26,8 @@ class AcademicYear(Base):
     # financial_years = relationship(
     #     "FinancialYear", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
     # )
-    available_departments = relationship(
-        "AcademicYearDepartment", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
+    available_courses = relationship(
+        "AcademicYearCourse", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
     )
 
 
@@ -50,16 +51,18 @@ class SemesterPeriod(Base):
         "AcademicYear", back_populates="semester_periods", lazy="selectin"
     )
 
-class AcademicYearDepartment(Base):
-    __tablename__ = "academic_year_departments"
+class AcademicYearCourse(Base):
+    __tablename__ = "academic_year_courses"
     
     academic_year_id: Mapped[UUID] = mapped_column(ForeignKey("academic_years.id", ondelete="CASCADE"), nullable=False, index=True)
-    department_id: Mapped[UUID] = mapped_column(ForeignKey("departments.id", ondelete="CASCADE"), nullable=False, index=True)
+    course_id: Mapped[UUID] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), nullable=False, index=True)
+    # admission_type_id: Mapped[UUID | None] = mapped_column(ForeignKey("admission_types.id", ondelete="SET NULL"), nullable=True, index=True)
     
     # Configuration fields
     application_fee: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False) # Soft delete/disable for this year
     
     # Relationships
-    academic_year = relationship("AcademicYear", back_populates="available_departments")
-    department = relationship("Department", lazy="selectin")
+    academic_year = relationship("AcademicYear", back_populates="available_courses")
+    course = relationship("Course", lazy="selectin")
+    # admission_type = relationship("AdmissionType", lazy="selectin")
