@@ -4,7 +4,7 @@ Pydantic Schemas for Admission Management System
 from uuid import UUID
 from common.models.admission.admission_entry import AdmissionStatusEnum
 from pydantic import BaseModel, Field, validator
-from typing import Optional, List
+from typing import Optional, List, Union
 from datetime import date, datetime
 from enum import Enum
 
@@ -143,13 +143,13 @@ class AdmissionStudentBase(BaseModel):
     
     # Category and Quota
     # Category and Quota
-    admission_quota_id: Optional[UUID] = None
+    admission_quota_id: Optional[Union[UUID, str]] = None
     category: Optional[CategoryEnum] = None
     quota_type: Optional[str] = Field(None, max_length=50)
     special_quota: Optional[str] = Field(None, max_length=100)
     scholarships: Optional[str] = Field(None, max_length=200)
     boarding_place: Optional[str] = Field(None, max_length=200)
-    admission_type_id: Optional[UUID] = None
+    admission_type_id: Optional[Union[UUID, str]] = None
     academic_year_id: Optional[UUID] = None
     application_number: Optional[str] = Field(None, max_length=20)
 
@@ -304,13 +304,13 @@ class AdmissionStudentUpdate(BaseModel):
     previous_academic_level: Optional[PreviousAcademicLevelEnum] = None
     has_vehicle: Optional[bool] = None
     vehicle_number: Optional[str] = Field(None, max_length=20)
-    admission_quota_id: Optional[UUID] = None
+    admission_quota_id: Optional[Union[UUID, str]] = None
     category: Optional[CategoryEnum] = None
     quota_type: Optional[str] = Field(None, max_length=50)
     special_quota: Optional[str] = Field(None, max_length=100)
     scholarships: Optional[str] = Field(None, max_length=200)
     boarding_place: Optional[str] = Field(None, max_length=200)
-    admission_type_id: Optional[UUID] = None
+    admission_type_id: Optional[Union[UUID, str]] = None
     academic_year_id: Optional[UUID] = None
 
     status: Optional[AdmissionStatusEnum] = None

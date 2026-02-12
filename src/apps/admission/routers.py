@@ -10,19 +10,31 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from components.generator.routes import create_crud_routes
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.inspection import inspect
+from fastapi_pagination import add_pagination, Page
+from fastapi_pagination.ext.sqlalchemy import paginate
+from fastapi_querybuilder.dependencies import QueryBuilder
+from fastapi import Request
 
 from common.models.admission.admission_entry import AdmissionStudent, AdmissionStatusEnum
+from common.models.admission.lead_followup import LeadFollowUp
 from common.schemas.admission.admission_entry import (
     AdmissionStudentCreate,
     AdmissionStudentResponse,
     AdmissionStudentUpdate,
     AdmissionStudentGrantAdmission,
 )
+from common.schemas.admission.lead_followup import (
+    LeadFollowUpCreate,
+    LeadFollowUpResponse,
+    LeadFollowUpUpdate,
+)
 from common.models.gate.visitor_model import AdmissionVisitor
 from apps.admission.services import generate_enquiry_number
-from sqlalchemy import select
+from sqlalchemy import select, desc
 from sqlalchemy.orm import selectinload
 from uuid import UUID
+from typing import List
+
 
 consultancy_router = APIRouter()
 
@@ -188,6 +200,87 @@ async def create_admission_student(
         )
 
 
+lead_followup_router = APIRouter()
+
+lead_followup_crud_router = create_crud_routes(
+    LeadFollowUp,
+    LeadFollowUpCreate,
+    LeadFollowUpUpdate,
+    LeadFollowUpResponse,
+)
+
+@lead_followup_router.get(
+    "/student/{student_id}",
+    response_model=List[LeadFollowUpResponse],
+    tags=["Admission - Lead Follow-up"]
+)
+async def get_student_followup_history(
+    student_id: UUID,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """Get follow-up history for a specific student."""
+    query = select(LeadFollowUp).where(LeadFollowUp.student_id == student_id).order_by(desc(LeadFollowUp.created_at))
+    result = await db.execute(query)
+    return result.scalars().all()
+
+lead_followup_router.include_router(
+    lead_followup_crud_router, prefix="/records", tags=["Admission - Lead Follow-up"]
+)
+
+
+@lead_followup_router.get(
+    "/leads",
+    response_model=Page[AdmissionStudentResponse],
+    tags=["Admission - Lead Follow-up"],
+    summary="Get Lead Students (excluding Admitted/Paid)"
+)
+async def get_lead_students(
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+    query=QueryBuilder(AdmissionStudent)
+):
+    """
+    Get all admission students who are in the 'lead' stage.
+    Excludes students who have paid the full application fee (indicating admission).
+    """
+    from common.models.billing.application_fees import Invoice, InvoiceLineItem, PaymentStatusEnum, FeeHead
+    
+    # 1. Find 'Application Fee' Head ID(s)
+    stmt_head = select(FeeHead.id).where(FeeHead.name.ilike("%Application Fee%"))
+    res_head = await db.execute(stmt_head)
+    fee_head_ids = res_head.scalars().all()
+    
+    paid_student_ids = []
+    if fee_head_ids:
+        # Finding students with PAID invoices for Application Fee
+        stmt_paid = (
+            select(Invoice.student_id)
+            .join(InvoiceLineItem, Invoice.id == InvoiceLineItem.invoice_id)
+            .where(
+                Invoice.status == PaymentStatusEnum.PAID,
+                InvoiceLineItem.fee_head_id.in_(fee_head_ids)
+            )
+        )
+        res_paid = await db.execute(stmt_paid)
+        paid_student_ids = res_paid.scalars().all()
+    
+    # 2. Add filters to the query builder query
+    # Exclude terminal/irrelevant statuses
+    # We include ADMISSION_GRANTED and others as they are still active leads/unconfirmed admissions
+    query = query.where(
+        AdmissionStudent.status.not_in([
+            AdmissionStatusEnum.REJECTED,
+            AdmissionStatusEnum.WITHDRAWN,
+            AdmissionStatusEnum.ENROLLED
+        ])
+    )
+    
+    # 3. Exclude paid students
+    if paid_student_ids:
+        query = query.where(AdmissionStudent.id.not_in(paid_student_ids))
+        
+    return await paginate(db, query)
+
 
 admission_router = APIRouter()
 
@@ -284,3 +377,8 @@ async def update_course_and_fees(
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+
+
+add_pagination(admission_router)
+add_pagination(lead_followup_router)
+add_pagination(admission_entry_router)

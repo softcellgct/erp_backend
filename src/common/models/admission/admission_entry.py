@@ -15,6 +15,7 @@ from sqlalchemy import (
     func,
     UUID,
     JSON,
+    select
 )
 from datetime import datetime
 from sqlalchemy.orm import relationship
@@ -207,6 +208,22 @@ class AdmissionStudent(Base):
             if not obj_data.get("enquiry_number"):
                 from apps.admission.services import generate_enquiry_number
                 obj_data["enquiry_number"] = await generate_enquiry_number(session, obj_data.get("institution_id"))
+            
+            # Resolve admission_quota_id if it's a string
+            if isinstance(obj_data.get("admission_quota_id"), str):
+                from common.models.master.admission_masters import SeatQuota
+                quota_result = await session.execute(
+                    select(SeatQuota.id).where(SeatQuota.name == obj_data["admission_quota_id"])
+                )
+                obj_data["admission_quota_id"] = quota_result.scalar_one_or_none()
+
+            # Resolve admission_type_id if it's a string
+            if isinstance(obj_data.get("admission_type_id"), str):
+                from common.models.master.admission_masters import AdmissionType
+                type_result = await session.execute(
+                    select(AdmissionType.id).where(AdmissionType.name == obj_data["admission_type_id"])
+                )
+                obj_data["admission_type_id"] = type_result.scalar_one_or_none()
             
             # Handle nested relationships - convert dicts/lists to model instances
             mapper = inspect(cls)
