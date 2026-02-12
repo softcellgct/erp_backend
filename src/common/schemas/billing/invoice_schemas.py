@@ -16,9 +16,13 @@ class InvoiceLineItemCreate(InvoiceLineItemBase):
     pass
 
 
+
+from common.schemas.billing.fee_head_schemas import FeeHeadResponse
+
 class InvoiceLineItemResponse(InvoiceLineItemBase):
     id: UUID
     invoice_id: UUID
+    fee_head: Optional[FeeHeadResponse] = None
 
     class Config:
         from_attributes = True

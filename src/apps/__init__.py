@@ -19,6 +19,7 @@ from .master.routers import (
     permissions_router,
     module_router,
     screen_router,
+    admission_masters_router
 )
 from .master.files.routers import router as file_router
 from .admission.routers import consultancy_router, admission_entry_router,admission_router
@@ -52,4 +53,5 @@ ROUTERS = [
     (admission_router, "/api/admission/admitted")
     ,(billing_router, "/api/billing")
     ,(hostel_router, "/api/master")
+    ,(admission_masters_router, "/api/master")
 ]

@@ -18,6 +18,7 @@ from .screen import (
     module_router,
     screen_router
 )
+from .admission_masters import router as admission_masters_router
 
 # Import remaining routers from the old file until refactored
 # role_router moved to new .user module

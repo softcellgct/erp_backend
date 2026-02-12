@@ -9,8 +9,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import JSON, Integer, Date, Enum as SAEnum
 import enum
 
-from common.models.master.admission.admission_type import AdmissionType
-from common.models.master.admission.quota import Quota
+from common.models.master.admission_masters import AdmissionType, SeatQuota
 from common.models.master.annual_task import AcademicYear, SemesterPeriod
 from common.models.billing.financial_year import FinancialYear
 from common.models.master.institution import Course, Department
@@ -38,7 +37,7 @@ class FeeStructure(Base):
     # New Fields based on UI
     semester_period_id: Mapped[UUID | None] = mapped_column(ForeignKey("semester_periods.id", ondelete="SET NULL"), nullable=True, index=True)  # Fee Period
     admission_type_id: Mapped[UUID | None] = mapped_column(ForeignKey("admission_types.id", ondelete="SET NULL"), nullable=True, index=True)
-    quota_id: Mapped[UUID | None] = mapped_column(ForeignKey("quotas.id", ondelete="SET NULL"), nullable=True, index=True)
+    quota_id: Mapped[UUID | None] = mapped_column(ForeignKey("seat_quotas.id", ondelete="SET NULL"), nullable=True, index=True)
     gender: Mapped[GenderEnum] = mapped_column(SAEnum(GenderEnum, name="gender_enum_v2", values_callable=lambda obj: [e.value for e in obj]), default=GenderEnum.ALL, nullable=False)
     
     degree_id: Mapped[UUID | None] = mapped_column(ForeignKey("courses.id", ondelete="SET NULL"), nullable=True, index=True)
@@ -59,7 +58,7 @@ class FeeStructure(Base):
     # New relationships
     semester_period = relationship("SemesterPeriod", lazy="selectin")
     admission_type = relationship("AdmissionType", lazy="selectin")
-    quota = relationship("Quota", lazy="selectin")
+    quota = relationship("SeatQuota", lazy="selectin")
     degree = relationship("Course", lazy="selectin")
     department = relationship("Department", lazy="selectin")
 

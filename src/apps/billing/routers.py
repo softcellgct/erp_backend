@@ -259,6 +259,90 @@ async def create_student_demand(student_id: str, fee_structure_id: str, db: Asyn
         raise HTTPException(status_code=400, detail=str(e))
 
 
+@router.post(
+    "/demands/year",
+    tags=["Billing - Demands"],
+    summary="Create year-specific demands for multiple students"
+)
+async def create_year_specific_demand(
+    payload: dict,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    Create demand items for multiple students for a specific year only.
+    This is useful when you want to raise demands year by year instead of all at once.
+    
+    Request body:
+        {
+            "student_ids": ["uuid1", "uuid2"],
+            "fee_structure_id": "uuid",
+            "year": "1"
+        }
+    
+    Returns:
+        Created count, total amount, and success message
+    """
+    from common.schemas.billing.demand_year_schema import CreateYearDemandRequest, CreateYearDemandResponse
+    from uuid import UUID
+    
+    try:
+        # Extract and validate data
+        student_ids_str = payload.get("student_ids", [])
+        fee_structure_id_str = payload.get("fee_structure_id")
+        year = payload.get("year")
+        
+        if not student_ids_str or not fee_structure_id_str or not year:
+            raise ValueError("Missing required fields: student_ids, fee_structure_id, or year")
+        
+        # Convert string IDs to UUIDs
+        student_uuids = [UUID(sid) for sid in student_ids_str]
+        fs_uuid = UUID(fee_structure_id_str)
+        
+        result = await billing_service.create_year_specific_demand(
+            db, student_uuids, fs_uuid, year
+        )
+        return CreateYearDemandResponse(**result)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/demands/check-status",
+    tags=["Billing - Demands"],
+    summary="Check if demands exist for students/year"
+)
+async def check_demand_status(
+    payload: dict,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    Check status for list of students.
+    Payload: { student_ids: [], fee_structure_id: str, year: str }
+    Returns: { status: { student_id: bool } }
+    """
+    from uuid import UUID
+    try:
+        student_ids_str = payload.get("student_ids", [])
+        fee_structure_id_str = payload.get("fee_structure_id")
+        year = payload.get("year")
+        
+        if not fee_structure_id_str or not year:
+            return {"status": {}}
+            
+        student_uuids = [UUID(sid) for sid in student_ids_str]
+        fs_uuid = UUID(fee_structure_id_str)
+        
+        status_map = await billing_service.check_year_demand_status(
+            db, student_uuids, fs_uuid, year
+        )
+        return {"status": status_map}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+
 from common.schemas.billing.demand_schemas import BulkMiscellaneousFeeRequest
 
 @router.post(

@@ -1,3 +1,4 @@
+import os
 from pydantic_settings import BaseSettings
 
 
@@ -14,7 +15,7 @@ class Settings(BaseSettings):
     minio_bucket: str
 
     class Config:
-        env_file = "/home/backend/backend/src/.env"
+        env_file = os.path.join(os.path.dirname(__file__), "..", ".env")
 
 
 settings = Settings()

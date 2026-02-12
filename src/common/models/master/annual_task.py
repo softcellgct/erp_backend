@@ -1,68 +1,56 @@
 from datetime import date
 from uuid import UUID
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, List
+from components.db.base_model import Base
+from sqlalchemy import String, Date, Boolean, ForeignKey, Float, Integer
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
     from common.models.master.institution import Course, Institution
-    from common.models.master.admission.admission_type import AdmissionType
-from components.db.base_model import Base
-from sqlalchemy import Date, ForeignKey, String, Boolean, Float
-from sqlalchemy.orm import Mapped,relationship,mapped_column
 
 class AcademicYear(Base):
     __tablename__ = "academic_years"
-
-    year_name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
+    
+    year_name: Mapped[str] = mapped_column(String(50), nullable=False)
     from_date: Mapped[date] = mapped_column(Date, nullable=False)
     to_date: Mapped[date] = mapped_column(Date, nullable=False)
-    status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
-    admission_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"))
-
-    institution: Mapped["Institution"] = relationship("Institution", back_populates="academic_years", lazy="selectin")
-    semester_periods = relationship(
-        "SemesterPeriod", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
+    status: Mapped[bool] = mapped_column(Boolean, default=True) # General active status
+    admission_active: Mapped[bool] = mapped_column(Boolean, default=False) # For admission purposes
+    institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id"))
+    
+    # Relationships
+    institution: Mapped["Institution"] = relationship("Institution", back_populates="academic_years")
+    
+    available_courses: Mapped[List["AcademicYearCourse"]] = relationship(
+        "AcademicYearCourse", back_populates="academic_year", cascade="all, delete-orphan"
     )
-    # financial_years = relationship(
-    #     "FinancialYear", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
-    # )
-    available_courses = relationship(
-        "AcademicYearCourse", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
-    )
-
-
-class SemesterPeriod(Base):
-    __tablename__ = "semester_periods"
-
-    name: Mapped[str] = mapped_column(String(100), nullable=False)  # e.g., "Odd Sem - 2010"
-    short_name: Mapped[str] = mapped_column(String(50), nullable=False)  # e.g., "Odd Sem"
-    type: Mapped[str] = mapped_column(String(20), default="Semester", nullable=False)  # e.g., "Semester" from dropdown
-    from_date: Mapped[date] = mapped_column(Date, nullable=False)
-    to_date: Mapped[date] = mapped_column(Date, nullable=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)  # Checkbox for "Is Sem-period active"
-
-    # Foreign key to AcademicYear, ensuring cascade delete if AcadYear is removed
-    academic_year_id: Mapped[UUID] = mapped_column(
-        ForeignKey("academic_years.id", ondelete="CASCADE"), nullable=False
-    )
-
-    # Relationship back to AcademicYear for easy querying (e.g., semester_periods = academic_year.semester_periods)
-    academic_year = relationship(
-        "AcademicYear", back_populates="semester_periods", lazy="selectin"
+    
+    semester_periods: Mapped[List["SemesterPeriod"]] = relationship(
+        "SemesterPeriod", back_populates="academic_year", cascade="all, delete-orphan"
     )
 
 class AcademicYearCourse(Base):
     __tablename__ = "academic_year_courses"
     
-    academic_year_id: Mapped[UUID] = mapped_column(ForeignKey("academic_years.id", ondelete="CASCADE"), nullable=False, index=True)
-    course_id: Mapped[UUID] = mapped_column(ForeignKey("courses.id", ondelete="CASCADE"), nullable=False, index=True)
-    # admission_type_id: Mapped[UUID | None] = mapped_column(ForeignKey("admission_types.id", ondelete="SET NULL"), nullable=True, index=True)
-    
-    # Configuration fields
-    application_fee: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False) # Soft delete/disable for this year
+    academic_year_id: Mapped[UUID] = mapped_column(ForeignKey("academic_years.id"), nullable=False)
+    course_id: Mapped[UUID] = mapped_column(ForeignKey("courses.id"), nullable=False)
+    application_fee: Mapped[float] = mapped_column(Float, default=0.0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     
     # Relationships
-    academic_year = relationship("AcademicYear", back_populates="available_courses")
-    course = relationship("Course", lazy="selectin")
-    # admission_type = relationship("AdmissionType", lazy="selectin")
+    academic_year: Mapped["AcademicYear"] = relationship("AcademicYear", back_populates="available_courses")
+    course: Mapped["Course"] = relationship("Course") 
+
+class SemesterPeriod(Base):
+    __tablename__ = "semester_periods"
+    
+    name: Mapped[str] = mapped_column(String(100), nullable=False)
+    short_name: Mapped[str] = mapped_column(String(50), nullable=False)
+    type: Mapped[str] = mapped_column(String(20), default="Semester") # Semester / Trimester / Year
+    from_date: Mapped[date] = mapped_column(Date, nullable=False)
+    to_date: Mapped[date] = mapped_column(Date, nullable=False)
+    academic_year_id: Mapped[UUID] = mapped_column(ForeignKey("academic_years.id"), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    
+    # Relationships
+    academic_year: Mapped["AcademicYear"] = relationship("AcademicYear", back_populates="semester_periods")

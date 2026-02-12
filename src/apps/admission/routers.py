@@ -141,7 +141,7 @@ async def create_admission_student(
             enquiry_number = await generate_enquiry_number(db)
         
         # Create new admission student record with enquiry number
-        student_data = payload.dict()
+        student_data = payload.dict(exclude_unset=True)
         
         # Remove non-model fields
         student_data.pop('visitor_id', None)  # Remove visitor_id from payload
@@ -232,8 +232,9 @@ async def book_admission(
         student.application_number = app_num
         student.status = AdmissionStatusEnum.FEE_PENDING # Or ADMISSION_GRANTED?
         
-        # # 3. Assign Fees
-        # await billing_service.assign_course_fees(db, student_id, payload.fee_structure_id)
+        # 3. Assign Fees (Auto-resolve if not provided)
+        # We pass None for fee_structure_id to let the service find it based on student details
+        await billing_service.assign_course_fees(db, student_id, fee_structure_id=None)
         
 
         # 4. Assign Application Fee (if configured)

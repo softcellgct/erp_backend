@@ -1,5 +1,6 @@
 import enum
 from components.db.base_model import Base
+from common.models.master.admission_masters import AdmissionType, SeatQuota
 from sqlalchemy import (
     Column,
     String,
@@ -11,7 +12,9 @@ from sqlalchemy import (
     ForeignKey,
     DateTime,
     func,
+    func,
     UUID,
+    JSON,
 )
 from datetime import datetime
 from sqlalchemy.orm import relationship
@@ -126,7 +129,8 @@ class AdmissionStudent(Base):
     vehicle_number = Column(String(20), nullable=True)
 
     # Category and Quota
-    admission_quota = Column(Enum(AdmissionQuotaEnum), nullable=True)
+    # Category and Quota
+    admission_quota_id = Column(UUID(as_uuid=True), ForeignKey("seat_quotas.id"), nullable=True, index=True)
     category = Column(Enum(CategoryEnum), nullable=True)
     quota_type = Column(
         String(50), nullable=True
@@ -134,13 +138,22 @@ class AdmissionStudent(Base):
     special_quota = Column(String(100), nullable=True)  # 7.5%, First Graduate, etc.
     scholarships = Column(String(200), nullable=True)
     boarding_place = Column(String(200), nullable=True)
-    admission_type = Column(Enum(AdmissionTypeEnum), nullable=True, default=AdmissionTypeEnum.GENERAL)
+    admission_type_id = Column(UUID(as_uuid=True), ForeignKey("admission_types.id"), nullable=True, index=True)
+    
     academic_year_id = Column(
         UUID(as_uuid=True), ForeignKey("academic_years.id"), nullable=True, index=True
     )
+    
+    # Documents Checklist
+    documents_submitted = Column(JSON, nullable=True)  # List of document IDs or names
+
     status = Column(
         Enum(AdmissionStatusEnum), default=AdmissionStatusEnum.APPLIED, nullable=False
     )
+
+    # Relationships linked to Foreign Keys
+    admission_quota = relationship("SeatQuota")
+    admission_type = relationship("AdmissionType")
 
     # Relationships
     sslc_details = relationship(

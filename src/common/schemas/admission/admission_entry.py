@@ -2,7 +2,7 @@
 Pydantic Schemas for Admission Management System
 """
 from uuid import UUID
-from common.models.admission.admission_entry import AdmissionStatusEnum, AdmissionTypeEnum
+from common.models.admission.admission_entry import AdmissionStatusEnum
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List
 from datetime import date, datetime
@@ -15,9 +15,7 @@ class GenderEnum(str, Enum):
     OTHER = "Other"
 
 
-class AdmissionQuotaEnum(str, Enum):
-    MANAGEMENT = "Management"
-    GOVERNMENT = "Government"
+
 
 
 class PreviousAcademicLevelEnum(str, Enum):
@@ -144,13 +142,14 @@ class AdmissionStudentBase(BaseModel):
     vehicle_number: Optional[str] = Field(None, max_length=20)
     
     # Category and Quota
-    admission_quota: Optional[AdmissionQuotaEnum] = None
+    # Category and Quota
+    admission_quota_id: Optional[UUID] = None
     category: Optional[CategoryEnum] = None
     quota_type: Optional[str] = Field(None, max_length=50)
     special_quota: Optional[str] = Field(None, max_length=100)
     scholarships: Optional[str] = Field(None, max_length=200)
     boarding_place: Optional[str] = Field(None, max_length=200)
-    admission_type: Optional[AdmissionTypeEnum] = None
+    admission_type_id: Optional[UUID] = None
     academic_year_id: Optional[UUID] = None
     application_number: Optional[str] = Field(None, max_length=20)
 
@@ -207,6 +206,7 @@ class AdmissionStudentCreate(AdmissionStudentBase):
     hsc_details: Optional[HSCDetailsCreate] = None
     diploma_details: Optional[DiplomaDetailsCreate] = None
     pg_details: Optional[PGDetailsCreate] = None
+    documents_submitted: Optional[List[str]] = None
 
 
 class AdmissionStudentGrantAdmission(AdmissionStudentBase):
@@ -304,13 +304,13 @@ class AdmissionStudentUpdate(BaseModel):
     previous_academic_level: Optional[PreviousAcademicLevelEnum] = None
     has_vehicle: Optional[bool] = None
     vehicle_number: Optional[str] = Field(None, max_length=20)
-    admission_quota: Optional[AdmissionQuotaEnum] = None
+    admission_quota_id: Optional[UUID] = None
     category: Optional[CategoryEnum] = None
     quota_type: Optional[str] = Field(None, max_length=50)
     special_quota: Optional[str] = Field(None, max_length=100)
     scholarships: Optional[str] = Field(None, max_length=200)
     boarding_place: Optional[str] = Field(None, max_length=200)
-    admission_type: Optional[AdmissionTypeEnum] = None
+    admission_type_id: Optional[UUID] = None
     academic_year_id: Optional[UUID] = None
 
     status: Optional[AdmissionStatusEnum] = None
@@ -319,6 +319,7 @@ class AdmissionStudentUpdate(BaseModel):
     hsc_details: Optional[HSCDetailsUpdate] = None
     diploma_details: Optional[DiplomaDetailsUpdate] = None
     pg_details: Optional[PGDetailsUpdate] = None
+    documents_submitted: Optional[List[str]] = None
 
 
 class BookAdmissionRequest(BaseModel):

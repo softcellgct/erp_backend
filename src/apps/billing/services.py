@@ -106,47 +106,93 @@ class BillingService:
         
         await db.commit()
 
-    async def assign_course_fees(self, db: AsyncSession, student_id: UUID, fee_structure_id: UUID):
+    async def assign_course_fees(self, db: AsyncSession, student_id: UUID, fee_structure_id: UUID | None = None):
         """
         Assign configured course fees to a student by creating future demands.
+        If fee_structure_id is None, it attempts to find the matching fee structure based on student details.
         """
         from common.models.billing.demand import DemandItem
         from common.models.admission.admission_entry import AdmissionStudent
         
-        # 1. Fetch Fee Structure
-        # 1. Fetch Fee Structure
-        stmt = select(FeeStructure).options(selectinload(FeeStructure.items).selectinload(FeeStructureItem.fee_head)).where(FeeStructure.id == fee_structure_id)
+        # 0. Fetch Student
+        stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
         res = await db.execute(stmt)
-        fs = res.scalar_one_or_none()
-        if not fs:
-            raise ValueError("Fee Structure not found")
+        student = res.scalar_one_or_none()
+        if not student:
+            raise ValueError("Student not found")
+
+        # 1. Automatic Fee Structure Lookup
+        if not fee_structure_id:
+            # Find fee structure matching: Academic Year + Course + Admission Type + Quota + Gender (optional)
+            stmt = select(FeeStructure).where(
+                FeeStructure.admission_year_id == student.academic_year_id,
+                FeeStructure.degree_id == student.course_id,
+                FeeStructure.admission_type_id == student.admission_type_id,
+                FeeStructure.quota_id == student.admission_quota_id,
+                # FeeStructure.quota_id.is_(None) if not student.admission_quota_id else FeeStructure.quota_id == student.admission_quota_id
+                # FeeStructure.admission_type_id.is_(None) if not student.admission_type_id else FeeStructure.admission_type_id == student.admission_type_id
+            )
+            
+            # Filter by Quota (Handle Nulls)
+            if student.admission_quota_id:
+                stmt = stmt.where(FeeStructure.quota_id == student.admission_quota_id)
+            else:
+                 stmt = stmt.where(FeeStructure.quota_id.is_(None))
+
+            # Filter by Admission Type (Handle Nulls)
+            if student.admission_type_id:
+                stmt = stmt.where(FeeStructure.admission_type_id == student.admission_type_id)
+            else:
+                stmt = stmt.where(FeeStructure.admission_type_id.is_(None))
+                
+            
+            # Optional: Add Gender filter if you have specific gender-based fees
+            # if student.gender:
+            #    stmt = stmt.where(or_(FeeStructure.gender == student.gender, FeeStructure.gender == GenderEnum.ALL))
+
+            res = await db.execute(stmt)
+            fs_list = res.scalars().all()
+            
+            if not fs_list:
+                # Fallback: Try finding a generic structure (no quota/type)? 
+                # For now, strict matching.
+                print(f"No fee structure found for Student {student.name} (Type: {student.admission_type_id}, Quota: {student.admission_quota_id})")
+                return [] # Or raise error?
+            
+            # If multiple found, pick the first active one?
+            fs = fs_list[0] # Simplification
+        else:
+            # Fetch explicitly provided Fee Structure
+            stmt = select(FeeStructure).options(selectinload(FeeStructure.items).selectinload(FeeStructureItem.fee_head)).where(FeeStructure.id == fee_structure_id)
+            res = await db.execute(stmt)
+            fs = res.scalar_one_or_none()
+            if not fs:
+                raise ValueError("Fee Structure not found")
             
         # 2. Iterate items and create demands
         created_demands = []
+        # Reload items for the found fs
+        await db.refresh(fs, ["items"])
+        
         for item in fs.items:
             # Handle amount_by_year
             if item.amount_by_year:
                 for year_label, year_amount in item.amount_by_year.items():
                     amount = float(year_amount)
                     if amount > 0:
+                        # Determine Fee Head Name
+                        # We need to load fee_head relationship if not loaded
+                        # await db.refresh(item, ["fee_head"]) 
+                        # Better to eager load in the query above.
+                        
                         di = DemandItem(
-                            batch_id=None, # Not part of a batch? Or maybe we should denote it? 
-                            # If batch_id is nullable (it is not in the model!), we might have an issue.
-                            # Checking model: batch_id is mapped_column(ForeignKey... nullable=False)!
-                            # Ref check: DemandBatch model exists.
-                            # We might need a "System Batch" or make batch_id nullable.
-                            # Looking at previous code `create_student_demand` passed `batch_id=None`?
-                            # Let's check DemandItem model again.
-                            # Model line 26: batch_id: Mapped[UUID] = mapped_column(..., nullable=False)
-                            # Previous code in `create_student_demand` (line 405) sets `batch_id=None`.
-                            # This would fail DB constraint if not handled.
-                            # I must check if I missed a migration making it nullable or if there is a default.
-                            # OR I should create a dummy batch for this student assignment.
+                            batch_id=None, # Allow ad-hoc demand (model must support nullable)
                             student_id=student_id,
                             fee_structure_id=fs.id,
                             fee_structure_item_id=item.id,
                             amount=amount,
-                            description=f"{item.fee_head.name} - {year_label}" if item.fee_head else f"Fee - {year_label}"
+                            fee_head_id=item.fee_head_id,
+                            description=f"{item.fee_head.name} - Year {year_label}" if item.fee_head else f"Fee - Year {year_label}"
                         )
                         db.add(di)
                         created_demands.append(di)
@@ -154,26 +200,16 @@ class BillingService:
                 amount = float(item.amount)
                 if amount > 0:
                      di = DemandItem(
+                        batch_id=None,
                         student_id=student_id,
                         fee_structure_id=fs.id,
                         fee_structure_item_id=item.id,
                         amount=amount,
+                        fee_head_id=item.fee_head_id,
                         description=item.fee_head.name if item.fee_head else "Fee"
                     )
                      db.add(di)
                      created_demands.append(di)
-        
-        # Hack for batch_id:
-        # If batch_id is required, we must link it. 
-        # Ideally, "Book Admission" is an event, similar to a batch.
-        # Let's create a specialized batch for this student or find a better way.
-        # Or I modify the model to allow nullable batch_id (which makes sense for ad-hoc demands).
-        # I recall I saw `batch_id=None` in existing code.
-        # Let's check `DemandItem` model in file `src/common/models/billing/demand.py`.
-        # It says `nullable=False`.
-        # So `create_student_demand` in existing service WOULD FAIL?
-        # Maybe I should fix that too.
-        # I'll create a migration to make batch_id nullable.
         
         return created_demands
 
@@ -619,12 +655,24 @@ class BillingService:
                     amt = sum([float(v) for v in it.amount_by_year.values()])
                 else:
                     amt = float(it.amount or 0)
+                
+                # Build description with fee head and subhead names
+                fee_head_name = it.fee_head.name if it.fee_head else "Fee"
+                fee_subhead_name = it.fee_sub_head.name if it.fee_sub_head else ""
+                
+                if fee_subhead_name:
+                    description = f"{fee_head_name} - {fee_subhead_name}"
+                else:
+                    description = fee_head_name
+                
                 di = DemandItem(
                     batch_id=batch.id,
                     student_id=sid,
                     fee_structure_id=fs.id,
                     fee_structure_item_id=it.id,
                     amount=amt,
+                    fee_head_id=it.fee_head_id,
+                    description=description,
                 )
                 db.add(di)
                 created += 1
@@ -661,6 +709,115 @@ class BillingService:
                 created.append(di)
         await db.commit()
         return len(created)
+
+    async def create_year_specific_demand(
+        self, db: AsyncSession, student_ids: list[UUID], fee_structure_id: UUID, year: str
+    ) -> dict:
+        """
+        Create demand items for multiple students for a specific year only.
+        Also creates invoices automatically for each student.
+        
+        Args:
+            db: Database session
+            student_ids: List of student UUIDs
+            fee_structure_id: Fee structure UUID
+            year: Year number as string (e.g., "1", "2", "3")
+            
+        Returns:
+            dict with created_count, total_amount, invoice_count, and message
+        """
+        from common.models.billing.demand import DemandItem, DemandBatch
+        from datetime import datetime
+        
+        if not student_ids:
+            raise ValueError("No students provided")
+        
+        # Fetch fee structure
+        stmt = select(FeeStructure).where(FeeStructure.id == fee_structure_id)
+        res = await db.execute(stmt)
+        fs = res.scalar_one_or_none()
+        if not fs:
+            raise ValueError("Fee structure not found")
+        
+        # Get institution_id from first student for the batch
+        from common.models.admission.admission_entry import AdmissionStudent
+        stmt = select(AdmissionStudent.institution_id).where(AdmissionStudent.id == student_ids[0])
+        res = await db.execute(stmt)
+        institution_id = res.scalar_one_or_none()
+        if not institution_id:
+            raise ValueError("Could not determine institution from students")
+        
+        # Create a batch for this operation
+        batch = DemandBatch(
+            name=f"Year {year} Demand - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
+            institution_id=institution_id,
+            fee_structure_id=fee_structure_id,
+            status="generated",
+            generated_at=datetime.utcnow()
+        )
+        db.add(batch)
+        await db.flush()
+        
+        created_count = 0
+        total_amount = 0.0
+        invoice_count = 0
+        
+        # Create demand items for each student
+        for student_id in student_ids:
+            student_demands = []
+            
+            for item in fs.items:
+                # Get amount for the specific year
+                amount = 0.0
+                if item.amount_by_year and year in item.amount_by_year:
+                    amount = float(item.amount_by_year[year])
+                elif not item.amount_by_year:
+                    # If no year breakdown, use the flat amount for Year 1 only
+                    if year == "1":
+                        amount = float(item.amount or 0)
+                
+                # Only create demand if amount > 0
+                if amount > 0:
+                    # Build descriptive name: "Fee Head - Fee Subhead (Year X)"
+                    fee_head_name = item.fee_head.name if item.fee_head else "Fee"
+                    fee_subhead_name = item.fee_sub_head.name if item.fee_sub_head else ""
+                    
+                    if fee_subhead_name:
+                        description = f"{fee_head_name} - {fee_subhead_name} (Year {year})"
+                    else:
+                        description = f"{fee_head_name} (Year {year})"
+                    
+                    demand_item = DemandItem(
+                        batch_id=batch.id,
+                        student_id=student_id,
+                        fee_structure_id=fee_structure_id,
+                        fee_structure_item_id=item.id,
+                        amount=amount,
+                        fee_head_id=item.fee_head_id,
+                        description=description
+                    )
+                    db.add(demand_item)
+                    student_demands.append(demand_item)
+                    created_count += 1
+                    total_amount += amount
+            
+            # Create invoice for this student's demands
+            if student_demands:
+                await db.flush()  # Flush to get demand IDs
+                invoice = await self.create_invoice_from_demands(db, student_demands)
+                if invoice:
+                    invoice_count += 1
+        
+        await db.commit()
+        
+        return {
+            "created_count": created_count,
+            "total_amount": total_amount,
+            "invoice_count": invoice_count,
+            "message": f"Created {created_count} demand items and {invoice_count} invoices for {len(student_ids)} student(s) for Year {year}"
+        }
+
+
 
 
     # --- Hostel & Transport CRUD ---
@@ -992,5 +1149,32 @@ class BillingService:
             
         return result_list
 
+
+
+    async def check_year_demand_status(
+        self, db: AsyncSession, student_ids: list[UUID], fee_structure_id: UUID, year: str
+    ) -> dict[str, bool]:
+        """
+        Check if demands exist for the given students, fee structure, and year.
+        Returns a dict mapping student_id (str) -> bool (True if demand exists).
+        """
+        from common.models.billing.demand import DemandItem
+        
+        if not student_ids:
+            return {}
+            
+        # Check for any demand item matching the fee structure and year description pattern
+        # This assumes the description format "(Year X)" is consistently used for year-specific demands
+        stmt = select(DemandItem.student_id).where(
+            DemandItem.student_id.in_(student_ids),
+            DemandItem.fee_structure_id == fee_structure_id,
+            DemandItem.description.ilike(f"%(Year {year})")
+        ).distinct()
+        
+        res = await db.execute(stmt)
+        existing_student_ids = {str(uid) for uid in res.scalars().all()}
+        
+        # Return status for requested students
+        return {str(sid): (str(sid) in existing_student_ids) for sid in student_ids}
 
 billing_service = BillingService()
