@@ -42,6 +42,27 @@ async def get_institutions_list(
 
 # Department Router
 department_router = APIRouter()
+
+@department_router.get("/departments/list", response_model=List[DepartmentResponse], tags=["Department"])
+@is_superadmin
+async def list_departments_legacy(
+    request: Request,
+    academic_year_id: str | None = None,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """Legacy compatibility endpoint kept for older clients (calls same service)."""
+    return await InstitutionService(db).list_departments(academic_year_id)
+
+@department_router.get("/departments/academic-year", response_model=List[DepartmentResponse], tags=["Department"])
+@is_superadmin
+async def list_departments_by_academic_year(
+    request: Request,
+    academic_year_id: str | None = None,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """Get departments filtered by academic year (avoid collision with /{id})."""
+    return await InstitutionService(db).list_departments(academic_year_id)
+
 department_crud = create_crud_routes(
     Department,
     DepartmentCreate,

@@ -203,7 +203,7 @@ class AdmissionVisitor(Base):
     )
     status: Mapped[AdmissionStatusEnum] = mapped_column(
         SQLEnum(AdmissionStatusEnum, native_enum=False),
-        default=AdmissionStatusEnum.APPLIED,
+        default=AdmissionStatusEnum.ENQUIRY,
         nullable=False,
     )
 

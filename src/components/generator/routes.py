@@ -78,14 +78,15 @@ def create_crud_routes(
     )
     async def read_one(
         request: Request,
-        id: str = Path(
-            ..., description=f"The ID of the {split_name} record to retrieve."
+        id: UUID = Path(
+            ..., description=f"The ID (UUID) of the {split_name} record to retrieve."
         ),
         db: AsyncSession = Depends(get_db_session),
     ):
         """
         Retrieve a single {split_name} record by its ID.
         """
+        # `id` is validated/converted to UUID by FastAPI before calling the service
         data = await model.get_record_by_id(db, id)
         if not data:
             raise HTTPException(

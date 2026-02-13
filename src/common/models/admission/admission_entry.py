@@ -50,17 +50,18 @@ class CategoryEnum(str, enum.Enum):
 
 
 class AdmissionStatusEnum(str, enum.Enum):
-    APPLIED = "Applied"
-    DOCUMENTS_PENDING = "Documents Pending"
-    DOCUMENTS_VERIFIED = "Documents Verified"
-    FEE_PENDING = "Fee Pending"
-    FEE_RECEIVED = "Fee Received"
-    ADMISSION_GRANTED = "Admission Granted"
-    ENROLLED = "Enrolled"
-    WAITLISTED = "Waitlisted"
-    REJECTED = "Rejected"
-    WITHDRAWN = "Withdrawn"
-    ON_HOLD = "On Hold"
+    ENQUIRY = "ENQUIRY"
+    APPLIED = "APPLIED"
+    DOCUMENTS_PENDING = "DOCUMENTS_PENDING"
+    DOCUMENTS_VERIFIED = "DOCUMENTS_VERIFIED"
+    FEE_PENDING = "FEE_PENDING"
+    FEE_RECEIVED = "FEE_RECEIVED"
+    ADMISSION_GRANTED = "ADMISSION_GRANTED"
+    ENROLLED = "ENROLLED"
+    WAITLISTED = "WAITLISTED"
+    REJECTED = "REJECTED"
+    WITHDRAWN = "WITHDRAWN"
+    ON_HOLD = "ON_HOLD"
 
 
 class AdmissionTypeEnum(str, enum.Enum):

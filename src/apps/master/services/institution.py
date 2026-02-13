@@ -30,8 +30,13 @@ class InstitutionService:
         await self.db.refresh(department)
         return department
 
-    async def list_departments(self):
-        result = await self.db.execute(select(Department))
+    async def list_departments(self, academic_year_id: str | None = None):
+        """
+        List departments. For now, returns all active departments regardless of academic_year_id.
+        The academic_year_id parameter is accepted for future filtering support.
+        """
+        # Return all active departments
+        result = await self.db.execute(select(Department).where(Department.is_active == True))
         return result.scalars().all()
 
     async def get_department(self, department_id: UUID):
