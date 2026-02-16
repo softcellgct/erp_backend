@@ -153,7 +153,7 @@ class AdmissionStudentBase(BaseModel):
     academic_year_id: Optional[UUID] = None
     application_number: Optional[str] = Field(None, max_length=20)
 
-    status: Optional[AdmissionStatusEnum] = Field(default=AdmissionStatusEnum.APPLIED)
+    status: Optional[AdmissionStatusEnum] = Field(default=AdmissionStatusEnum.ENQUIRED)
 
     @validator('aadhaar_number')
     def validate_aadhaar(cls, v):
@@ -313,7 +313,7 @@ class AdmissionStudentUpdate(BaseModel):
     admission_type_id: Optional[Union[UUID, str]] = None
     academic_year_id: Optional[UUID] = None
 
-    status: Optional[AdmissionStatusEnum] = Field(default=AdmissionStatusEnum.APPLIED)
+    status: Optional[AdmissionStatusEnum] = Field(default=AdmissionStatusEnum.ENQUIRED)
 
     sslc_details: Optional[SSLCDetailsUpdate] = None
     hsc_details: Optional[HSCDetailsUpdate] = None

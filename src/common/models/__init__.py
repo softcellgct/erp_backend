@@ -2,6 +2,7 @@ from common.models.master.institution import Institution, Department,Hostel,Cour
 from common.models.master.annual_task import AcademicYear, SemesterPeriod, AcademicYearCourse
 from common.models.master.user import User, Role
 from common.models.master.screen import Screen, Module
+from common.models.master.admission_masters import AdmissionType, SeatQuota, DocumentType, AdmissionRequiredCertificates
 from common.models.meta.models import Community, Caste, Religion
 
 
@@ -18,6 +19,7 @@ from common.models.gate.visitor_model import (
 )
 
 from common.models.admission.admission_entry import AdmissionStudent, SSLCDetails, HSCDetails, DiplomaDetails, PGDetails
+from common.models.admission.form_verification import AdmissionFormVerification, SubmittedCertificate
 
 from common.models.admission.consultancy import Consultancy
 from common.models.admission.lead_followup import LeadFollowUp
@@ -66,6 +68,12 @@ __all__ = [
     "HSCDetails",
     "DiplomaDetails",
     "PGDetails",
+    "AdmissionFormVerification",
+    "SubmittedCertificate",
+    "AdmissionType",
+    "SeatQuota",
+    "DocumentType",
+    "AdmissionRequiredCertificates",
     "FeeHead",
     "Invoice",
     "InvoiceLineItem",

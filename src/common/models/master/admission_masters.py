@@ -1,5 +1,5 @@
 from components.db.base_model import Base
-from sqlalchemy import Column, String, Boolean, DateTime
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, UUID
 from datetime import datetime
 from sqlalchemy.orm import relationship
 
@@ -56,3 +56,31 @@ class DocumentType(Base):
 
     def __repr__(self):
         return f"<DocumentType(name='{self.name}')>"
+
+
+class AdmissionRequiredCertificates(Base):
+    """
+    Required Certificates for admission process.
+    Simplified model without academic year and department constraints.
+    """
+    __tablename__ = "admission_required_certificates"
+
+    document_type_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("document_types.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    is_mandatory = Column(Boolean, default=False, nullable=False)
+    description = Column(String(500), nullable=True)
+    is_active = Column(Boolean, default=True)
+
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    document_type = relationship("DocumentType")
+
+    def __repr__(self):
+        return f"<AdmissionRequiredCertificates(document_type_id={self.document_type_id})>"

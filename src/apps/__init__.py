@@ -21,8 +21,10 @@ from .master.routers import (
     screen_router,
     admission_masters_router
 )
+from .master.required_certificates_routers import required_certificates_router
 from .master.files.routers import router as file_router
 from .admission.routers import consultancy_router, admission_entry_router, admission_router, lead_followup_router
+from .admission.verification_routers import verification_router
 from .billing.routers import router as billing_router
 from .meta.routers import religion_router, community_router, caste_router
 from .master.routers import hostel_router
@@ -39,6 +41,7 @@ ROUTERS = [
     (class_router, "/api/master"),
     (academic_year_router, "/api/master"),
     (sem_period_router, "/api/master"),
+    (required_certificates_router, "/api/master"),
     (file_router, "/api/master/files"),
     (person_type_router, "/api/gate"),
     (visitor_router, "/api/gate"),
@@ -52,6 +55,7 @@ ROUTERS = [
     (admission_entry_router, "/api/admission"),
     (admission_router, "/api/admission/admitted"),
     (lead_followup_router, "/api/admission/follow-up"),
+    (verification_router, "/api/admission"),
     (billing_router, "/api/billing"),
     (hostel_router, "/api/master"),
     (admission_masters_router, "/api/master")

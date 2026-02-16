@@ -145,9 +145,9 @@ async def create_admission_student(
             # Generate unique enquiry number
             enquiry_number = await generate_enquiry_number(db, admission_visitor.institution_id)
             
-            # Update admission visitor status to APPLIED (not ADMISSION_GRANTED)
-            # Status flow: ENQUIRY -> APPLIED -> ... -> ADMISSION_GRANTED
-            admission_visitor.status = AdmissionStatusEnum.APPLIED.value
+            # Update admission visitor status to ENQUIRED
+            # Status flow: ENQUIRY -> ENQUIRED -> ... -> BOOKED -> APPLIED
+            admission_visitor.status = AdmissionStatusEnum.ENQUIRED.value
             db.add(admission_visitor)
         else:
             # Generate enquiry number even without visitor_id
@@ -162,9 +162,9 @@ async def create_admission_student(
         # Add enquiry number
         student_data['enquiry_number'] = enquiry_number
         
-        # Ensure status is set to APPLIED by default if not provided
+        # Ensure status is set to ENQUIRED by default if not provided
         if 'status' not in student_data or student_data['status'] is None:
-            student_data['status'] = AdmissionStatusEnum.APPLIED.value
+            student_data['status'] = AdmissionStatusEnum.ENQUIRED.value
         
         # Handle nested relationships - convert dicts to model instances
         mapper = inspect(AdmissionStudent)
@@ -635,7 +635,7 @@ async def book_admission(
         # 2. Generate App Number
         app_num = await billing_service.generate_application_number(db, student.institution_id)
         student.application_number = app_num
-        student.status = AdmissionStatusEnum.FEE_PENDING.value # Or ADMISSION_GRANTED?
+        student.status = AdmissionStatusEnum.BOOKED.value  # Changed to BOOKED status
         
         # 3. Assign Fees (Auto-resolve if not provided)
         # We pass None for fee_structure_id to let the service find it based on student details
@@ -730,6 +730,47 @@ async def grant_admission(
     try:
         # Update status to ADMISSION_GRANTED
         student.status = AdmissionStatusEnum.ADMISSION_GRANTED.value
+        db.add(student)
+        await db.commit()
+        await db.refresh(student)
+        return student
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@admission_router.post(
+    "/admission-students/{student_id}/mark-applied",
+    tags=["Admission - Admission Students"],
+    summary="Mark Student as Applied after Document Submission"
+)
+async def mark_student_applied(
+    student_id: UUID,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    Mark student as APPLIED after all required documents are submitted.
+    This endpoint should be called manually when all documents are collected.
+    Status transition: BOOKED -> APPLIED
+    """
+    # 1. Fetch Student
+    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+    res = await db.execute(stmt)
+    student = res.scalar_one_or_none()
+    
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+    
+    # Check if student is in BOOKED status
+    if student.status != AdmissionStatusEnum.BOOKED.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only students with BOOKED status can be marked as APPLIED. Current status: {student.status}"
+        )
+    
+    try:
+        # Update status to APPLIED
+        student.status = AdmissionStatusEnum.APPLIED.value
         db.add(student)
         await db.commit()
         await db.refresh(student)

@@ -51,12 +51,18 @@ class CategoryEnum(str, enum.Enum):
 
 class AdmissionStatusEnum(str, enum.Enum):
     ENQUIRY = "ENQUIRY"
+    ENQUIRED = "ENQUIRED"
+    BOOKED = "BOOKED"
     APPLIED = "APPLIED"
     DOCUMENTS_PENDING = "DOCUMENTS_PENDING"
     DOCUMENTS_VERIFIED = "DOCUMENTS_VERIFIED"
     FEE_PENDING = "FEE_PENDING"
     FEE_RECEIVED = "FEE_RECEIVED"
     ADMISSION_GRANTED = "ADMISSION_GRANTED"
+    FORM_VERIFICATION_PENDING = "FORM_VERIFICATION_PENDING"
+    FORM_VERIFIED = "FORM_VERIFIED"
+    APPLICATION_RECEIVED = "APPLICATION_RECEIVED"
+    PROVISIONALLY_ALLOTTED = "PROVISIONALLY_ALLOTTED"
     ENROLLED = "ENROLLED"
     WAITLISTED = "WAITLISTED"
     REJECTED = "REJECTED"
@@ -150,7 +156,7 @@ class AdmissionStudent(Base):
     documents_submitted = Column(JSON, nullable=True)  # List of document IDs or names
 
     status = Column(
-        Enum(AdmissionStatusEnum), default=AdmissionStatusEnum.APPLIED, nullable=False
+        Enum(AdmissionStatusEnum), default=AdmissionStatusEnum.ENQUIRED, nullable=False
     )
 
     # Relationships linked to Foreign Keys
@@ -181,6 +187,13 @@ class AdmissionStudent(Base):
     )
     pg_details = relationship(
         "PGDetails",
+        back_populates="student",
+        uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    form_verification = relationship(
+        "AdmissionFormVerification",
         back_populates="student",
         uselist=False,
         cascade="all, delete-orphan",
