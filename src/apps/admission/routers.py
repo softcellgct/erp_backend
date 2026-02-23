@@ -22,6 +22,13 @@ from common.schemas.admission.admission_entry import (
     AdmissionStudentResponse,
     AdmissionStudentUpdate,
     AdmissionStudentGrantAdmission,
+    AssignRollNumberRequest,
+    AssignSectionRequest,
+    ActivateSem1Request,
+    SetFeeStructureLockRequest,
+    BulkAdmissionStatusUpdateRequest,
+    BulkAdmissionStatusUpdateResponse,
+    BulkAdmissionStatusUpdateResult,
 )
 from common.schemas.admission.lead_followup import (
     LeadFollowUpCreate,
@@ -30,10 +37,17 @@ from common.schemas.admission.lead_followup import (
 )
 from common.models.gate.visitor_model import AdmissionVisitor
 from apps.admission.services import generate_enquiry_number
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, and_, or_, cast, String
+from sqlalchemy import func
 from sqlalchemy.orm import selectinload
 from uuid import UUID
 from typing import List
+from datetime import datetime, time
+from common.models.master.institution import Department, Course
+from common.models.master.annual_task import AcademicYear
+
+from common.models.billing.application_fees import Invoice, InvoiceLineItem, PaymentStatusEnum as InvoicePaymentStatus
+from components.generator.utils.get_user_from_request import get_user_id
 
 
 consultancy_router = APIRouter()
@@ -90,8 +104,601 @@ async def get_admission_student(
         
     return student
 
+
+@admission_entry_router.get(
+    "/booked-paid",
+    tags=["Admission - Admission Students"],
+    name="Get Booked Paid Students"
+)
+async def get_booked_paid_students(
+    page: int = 1,
+    size: int = 50,
+    q: str | None = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Return students with status BOOKED or APPLIED (both paid and unpaid invoices).
+    """
+    try:
+        # Base filters: student.status == BOOKED or APPLIED
+        from sqlalchemy import or_
+        filters = [
+            or_(
+                AdmissionStudent.status == AdmissionStatusEnum.BOOKED.value,
+                AdmissionStudent.status == AdmissionStatusEnum.APPLIED.value,
+            )
+        ]
+
+        if q:
+            qfilter = f"%{q}%"
+            filters.append(
+                (AdmissionStudent.name.ilike(qfilter)) | (AdmissionStudent.application_number.ilike(qfilter))
+            )
+
+        # Total count
+        count_stmt = select(func.count(AdmissionStudent.id)).where(*filters)
+        total_res = await db.execute(count_stmt)
+        total = total_res.scalar() or 0
+
+        # Paging
+        offset = (page - 1) * size
+
+        stmt = select(AdmissionStudent).options(
+            selectinload(AdmissionStudent.department),
+            selectinload(AdmissionStudent.course),
+        ).where(*filters).order_by(desc(AdmissionStudent.created_at)).offset(offset).limit(size)
+        res = await db.execute(stmt)
+        students = res.scalars().all()
+
+        items = []
+        for s in students:
+            # Get latest application-fee invoice for this student (paid or unpaid)
+            inv_stmt = select(Invoice).join(InvoiceLineItem).where(
+                Invoice.student_id == s.id,
+                InvoiceLineItem.description.ilike("%Application Fee%"),
+            ).order_by(desc(Invoice.issue_date)).limit(1)
+            inv_res = await db.execute(inv_stmt)
+            inv = inv_res.scalar_one_or_none()
+
+            dept_name = None
+            course_title = None
+            if getattr(s, "department", None):
+                dept_name = getattr(s.department, "name", None)
+            if getattr(s, "course", None):
+                course_title = getattr(s.course, "title", None)
+
+            items.append(
+                {
+                    "id": str(s.id),
+                    "application_number": s.application_number,
+                    "name": s.name,
+                    "department": dept_name,
+                    "course": course_title,
+                    "booking_date": s.created_at.isoformat() if getattr(s, "created_at", None) else None,
+                    "amount_paid": float(inv.paid_amount) if inv and inv.paid_amount is not None else None,
+                    "invoice_id": str(inv.id) if inv else None,
+                    "invoice_status": inv.status if inv else None,
+                    "status": s.status,
+                }
+            )
+
+        pages = (total + size - 1) // size if size > 0 else 1
+
+        return {"items": items, "total": total, "page": page, "pages": pages, "size": size}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@admission_entry_router.get(
+    "/applied",
+    tags=["Admission - Admission Students"],
+    name="Get Applied Students"
+)
+async def get_applied_students(
+    page: int = 1,
+    size: int = 50,
+    q: str | None = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Return students with status APPLIED.
+    """
+    try:
+        filters = [
+            AdmissionStudent.status == AdmissionStatusEnum.APPLIED.value,
+        ]
+
+        if q:
+            qfilter = f"%{q}%"
+            filters.append(
+                (AdmissionStudent.name.ilike(qfilter)) | (AdmissionStudent.application_number.ilike(qfilter))
+            )
+
+        # Total count
+        count_stmt = select(func.count(AdmissionStudent.id)).where(*filters)
+        total_res = await db.execute(count_stmt)
+        total = total_res.scalar() or 0
+
+        # Paging
+        offset = (page - 1) * size
+
+        stmt = select(AdmissionStudent).options(
+            selectinload(AdmissionStudent.department),
+            selectinload(AdmissionStudent.course),
+        ).where(*filters).order_by(desc(AdmissionStudent.created_at)).offset(offset).limit(size)
+        res = await db.execute(stmt)
+        students = res.scalars().all()
+
+        items = []
+        for s in students:
+            dept_name = None
+            course_title = None
+            if getattr(s, "department", None):
+                dept_name = getattr(s.department, "name", None)
+            if getattr(s, "course", None):
+                course_title = getattr(s.course, "title", None)
+
+            items.append(
+                {
+                    "id": str(s.id),
+                    "application_number": s.application_number,
+                    "name": s.name,
+                    "department": dept_name,
+                    "course": course_title,
+                    "enrollment_date": s.created_at.isoformat() if getattr(s, "created_at", None) else None,
+                    "status": s.status,
+                }
+            )
+
+        pages = (total + size - 1) // size if size > 0 else 1
+
+        return {"items": items, "total": total, "page": page, "pages": pages, "size": size}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@admission_entry_router.get(
+    "/admission-students",
+    tags=["Admission - Admission Students"],
+    name="List Admission Students",
+    description="Retrieve paginated admission students with filtering and searching (excludes JSON field searches to avoid PostgreSQL errors)"
+)
+async def list_admission_students(
+    page: int = 1,
+    size: int = 50,
+    search: str | None = None,
+    filters: str | None = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Retrieve paginated admission students with optional search and filtering.
+    Search only applies to: name, enquiry_number, application_number, student_mobile, parent_mobile
+    Filtering uses JSON format: {"status": {"$in": ["APPLIED", "ENROLLED"]}}
+    """
+    try:
+        import json
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        # Build base query
+        query_filters = [AdmissionStudent.deleted_at == None]
+        
+        # Apply search filter (only on important non-JSON fields)
+        if search:
+            search_pattern = f"%{search}%"
+            query_filters.append(
+                or_(
+                    AdmissionStudent.name.ilike(search_pattern),
+                    AdmissionStudent.enquiry_number.ilike(search_pattern),
+                    AdmissionStudent.application_number.ilike(search_pattern),
+                    AdmissionStudent.student_mobile.ilike(search_pattern),
+                    AdmissionStudent.parent_mobile.ilike(search_pattern),
+                    AdmissionStudent.father_name.ilike(search_pattern),
+                )
+            )
+        
+        # Apply JSON filters
+        if filters:
+            try:
+                filter_obj = json.loads(filters)
+
+                def parse_uuid(value):
+                    if not value:
+                        return None
+                    try:
+                        return UUID(str(value))
+                    except Exception:
+                        return None
+
+                def as_datetime_bounds(value, is_start=True):
+                    if value is None:
+                        return None
+                    try:
+                        parsed_date = datetime.fromisoformat(str(value)).date()
+                        return datetime.combine(parsed_date, time.min if is_start else time.max)
+                    except Exception:
+                        return None
+
+                def parse_condition(field_name, operator, raw_value):
+                    string_columns = {
+                        "name": AdmissionStudent.name,
+                        "enquiry_number": AdmissionStudent.enquiry_number,
+                        "application_number": AdmissionStudent.application_number,
+                        "student_mobile": AdmissionStudent.student_mobile,
+                        "parent_mobile": AdmissionStudent.parent_mobile,
+                        "father_name": AdmissionStudent.father_name,
+                    }
+
+                    uuid_columns = {
+                        "institution_id": AdmissionStudent.institution_id,
+                        "department_id": AdmissionStudent.department_id,
+                        "course_id": AdmissionStudent.course_id,
+                        "academic_year_id": AdmissionStudent.academic_year_id,
+                    }
+
+                    date_columns = {
+                        "created_at": AdmissionStudent.created_at,
+                        "updated_at": AdmissionStudent.updated_at,
+                    }
+
+                    if field_name == "status":
+                        status_column = cast(AdmissionStudent.status, String)
+                        if operator == "$in" and isinstance(raw_value, list):
+                            return status_column.in_([str(v) for v in raw_value if v is not None])
+                        if operator == "$eq":
+                            return status_column == str(raw_value)
+                        if operator == "$ne":
+                            return status_column != str(raw_value)
+                        if operator == "$contains":
+                            return status_column.ilike(f"%{raw_value}%")
+                        return None
+
+                    if field_name in string_columns:
+                        column = string_columns[field_name]
+                        value = "" if raw_value is None else str(raw_value)
+                        if operator == "$eq":
+                            return column == value
+                        if operator == "$ne":
+                            return column != value
+                        if operator == "$contains":
+                            return column.ilike(f"%{value}%")
+                        if operator == "$ncontains":
+                            return ~column.ilike(f"%{value}%")
+                        if operator == "$startswith":
+                            return column.ilike(f"{value}%")
+                        if operator == "$endswith":
+                            return column.ilike(f"%{value}")
+                        if operator == "$isempty":
+                            return or_(column.is_(None), column == "")
+                        if operator == "$isnotempty":
+                            return and_(column.is_not(None), column != "")
+                        if operator == "$isanyof":
+                            items = [v.strip() for v in value.split(",") if v.strip()]
+                            return column.in_(items) if items else None
+                        if operator == "$in" and isinstance(raw_value, list):
+                            return column.in_([str(v) for v in raw_value if v is not None])
+                        return None
+
+                    if field_name in uuid_columns:
+                        column = uuid_columns[field_name]
+                        if operator in {"$eq", "$ne"}:
+                            uuid_value = parse_uuid(raw_value)
+                            if not uuid_value:
+                                return None
+                            return column == uuid_value if operator == "$eq" else column != uuid_value
+                        if operator == "$in":
+                            if not isinstance(raw_value, list):
+                                return None
+                            uuid_values = [parse_uuid(v) for v in raw_value]
+                            uuid_values = [value for value in uuid_values if value is not None]
+                            return column.in_(uuid_values) if uuid_values else None
+                        return None
+
+                    if field_name in date_columns:
+                        column = date_columns[field_name]
+                        if operator in {"$eq", "$gte", "$gt", "$lte", "$lt", "$ne"}:
+                            if operator in {"$gte", "$gt", "$eq"}:
+                                dt_value = as_datetime_bounds(raw_value, is_start=True)
+                            else:
+                                dt_value = as_datetime_bounds(raw_value, is_start=False)
+                            if not dt_value:
+                                return None
+                            if operator == "$eq":
+                                return and_(column >= as_datetime_bounds(raw_value, True), column <= as_datetime_bounds(raw_value, False))
+                            if operator == "$ne":
+                                return ~and_(column >= as_datetime_bounds(raw_value, True), column <= as_datetime_bounds(raw_value, False))
+                            if operator == "$gte":
+                                return column >= dt_value
+                            if operator == "$gt":
+                                return column > dt_value
+                            if operator == "$lte":
+                                return column <= dt_value
+                            if operator == "$lt":
+                                return column < dt_value
+                        return None
+
+                    return None
+
+                def parse_filter_tree(node):
+                    if not isinstance(node, dict):
+                        return None
+
+                    if "$and" in node and isinstance(node["$and"], list):
+                        expressions = [parse_filter_tree(item) for item in node["$and"]]
+                        expressions = [expression for expression in expressions if expression is not None]
+                        return and_(*expressions) if expressions else None
+
+                    if "$or" in node and isinstance(node["$or"], list):
+                        expressions = [parse_filter_tree(item) for item in node["$or"]]
+                        expressions = [expression for expression in expressions if expression is not None]
+                        return or_(*expressions) if expressions else None
+
+                    expressions = []
+                    for field_name, raw_condition in node.items():
+                        if isinstance(raw_condition, dict):
+                            for operator, raw_value in raw_condition.items():
+                                parsed = parse_condition(field_name, operator, raw_value)
+                                if parsed is not None:
+                                    expressions.append(parsed)
+                        else:
+                            parsed = parse_condition(field_name, "$eq", raw_condition)
+                            if parsed is not None:
+                                expressions.append(parsed)
+
+                    if not expressions:
+                        return None
+                    if len(expressions) == 1:
+                        return expressions[0]
+                    return and_(*expressions)
+
+                parsed_tree = parse_filter_tree(filter_obj)
+                if parsed_tree is not None:
+                    query_filters.append(parsed_tree)
+
+                # Backward compatibility for older keys
+                created_at_from = filter_obj.get("created_at_from") or filter_obj.get("date_from")
+                if created_at_from:
+                    start_dt = as_datetime_bounds(created_at_from, True)
+                    if start_dt:
+                        query_filters.append(AdmissionStudent.created_at >= start_dt)
+
+                created_at_to = filter_obj.get("created_at_to") or filter_obj.get("date_to")
+                if created_at_to:
+                    end_dt = as_datetime_bounds(created_at_to, False)
+                    if end_dt:
+                        query_filters.append(AdmissionStudent.created_at <= end_dt)
+                        
+                # Add more filter types as needed
+            except json.JSONDecodeError:
+                pass
+        
+        # Count total
+        count_query = select(func.count(AdmissionStudent.id)).where(and_(*query_filters))
+        count_result = await db.execute(count_query)
+        total = count_result.scalar() or 0
+        
+        # Fetch paginated data
+        offset = (page - 1) * size
+        data_query = select(AdmissionStudent).options(
+            selectinload(AdmissionStudent.department),
+            selectinload(AdmissionStudent.course),
+        ).where(and_(*query_filters)).order_by(desc(AdmissionStudent.created_at)).offset(offset).limit(size)
+        
+        result = await db.execute(data_query)
+        students = result.scalars().all()
+        
+        department_ids = {student.department_id for student in students if student.department_id}
+        course_ids = {student.course_id for student in students if student.course_id}
+        academic_year_ids = {student.academic_year_id for student in students if student.academic_year_id}
+
+        department_name_map = {}
+        course_title_map = {}
+        academic_year_name_map = {}
+
+        if department_ids:
+            department_result = await db.execute(
+                select(Department.id, Department.name).where(Department.id.in_(department_ids))
+            )
+            department_name_map = {str(item[0]): item[1] for item in department_result.all()}
+
+        if course_ids:
+            course_result = await db.execute(
+                select(Course.id, Course.title).where(Course.id.in_(course_ids))
+            )
+            course_title_map = {str(item[0]): item[1] for item in course_result.all()}
+
+        if academic_year_ids:
+            year_result = await db.execute(
+                select(AcademicYear.id, AcademicYear.year_name).where(AcademicYear.id.in_(academic_year_ids))
+            )
+            academic_year_name_map = {str(item[0]): item[1] for item in year_result.all()}
+
+        # Convert ORM objects to dictionaries for JSON serialization
+        # Using sqlalchemy's introspection to handle all fields
+        from sqlalchemy.inspection import inspect
+        student_dicts = []
+        for student in students:
+            # Convert ORM object to dictionary, including relationships
+            mapper = inspect(student.__class__)
+            student_dict = {}
+            for column in mapper.columns:
+                value = getattr(student, column.name)
+                # Convert datetime and UUID objects to strings for JSON serialization
+                if hasattr(value, 'isoformat'):  # datetime
+                    student_dict[column.name] = value.isoformat()
+                elif hasattr(value, 'value'):  # Enum
+                    student_dict[column.name] = value.value
+                elif hasattr(value, 'hex'):  # UUID
+                    student_dict[column.name] = str(value)
+                else:
+                    student_dict[column.name] = value
+
+            student_dict["department_name"] = department_name_map.get(str(student.department_id))
+            student_dict["course_title"] = course_title_map.get(str(student.course_id))
+            student_dict["academic_year_name"] = academic_year_name_map.get(str(student.academic_year_id))
+
+            student_dicts.append(student_dict)
+        
+        # Calculate pages (minimum 1 page even if no results)  
+        pages = max(1, (total + size - 1) // size) if size > 0 else 1
+        
+        return {
+            "items": student_dicts,
+            "total": total,
+            "page": page,
+            "size": size,
+            "pages": pages,
+        }
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"Error in list_admission_students: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@admission_entry_router.post(
+    "/admission-students/bulk-status",
+    response_model=BulkAdmissionStatusUpdateResponse,
+    tags=["Admission - Admission Students"],
+    name="Bulk Update Admission Student Status",
+)
+async def bulk_update_admission_student_status(
+    payload: BulkAdmissionStatusUpdateRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    if not payload.student_ids:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="student_ids cannot be empty",
+        )
+
+    if payload.new_status != AdmissionStatusEnum.PROVISIONALLY_ALLOTTED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only PROVISIONALLY_ALLOTTED bulk update is supported",
+        )
+
+    query = select(AdmissionStudent).where(
+        AdmissionStudent.id.in_(payload.student_ids),
+        AdmissionStudent.deleted_at.is_(None),
+    )
+    result = await db.execute(query)
+    students = result.scalars().all()
+    student_map = {student.id: student for student in students}
+
+    updated_count = 0
+    changes_made = 0
+    results: List[BulkAdmissionStatusUpdateResult] = []
+
+    for student_id in payload.student_ids:
+        student = student_map.get(student_id)
+        if not student:
+            results.append(
+                BulkAdmissionStatusUpdateResult(
+                    student_id=student_id,
+                    success=False,
+                    message="Student not found",
+                )
+            )
+            continue
+
+        current_status = student.status.value if hasattr(student.status, "value") else str(student.status)
+
+        if current_status == "PROVISIONALLY_ALLOTTED":
+            if not getattr(student, "is_fee_structure_locked", False):
+                try:
+                    await billing_service.lock_student_fee_structure(db, student.id)
+                    changes_made += 1
+                    results.append(
+                        BulkAdmissionStatusUpdateResult(
+                            student_id=student_id,
+                            success=True,
+                            message="Already in PROVISIONALLY_ALLOTTED status; fee structure locked",
+                        )
+                    )
+                except Exception as exc:
+                    results.append(
+                        BulkAdmissionStatusUpdateResult(
+                            student_id=student_id,
+                            success=False,
+                            message=f"Already provisionally allotted but fee lock failed: {exc}",
+                        )
+                    )
+                continue
+
+            results.append(
+                BulkAdmissionStatusUpdateResult(
+                    student_id=student_id,
+                    success=True,
+                    message="Already in PROVISIONALLY_ALLOTTED status",
+                )
+            )
+            continue
+
+        if current_status != AdmissionStatusEnum.APPLIED.value:
+            results.append(
+                BulkAdmissionStatusUpdateResult(
+                    student_id=student_id,
+                    success=False,
+                    message=f"Invalid transition from {current_status}",
+                )
+            )
+            continue
+
+        try:
+            await billing_service.lock_student_fee_structure(db, student.id)
+        except Exception as exc:
+            results.append(
+                BulkAdmissionStatusUpdateResult(
+                    student_id=student_id,
+                    success=False,
+                    message=f"Fee structure lock failed: {exc}",
+                )
+            )
+            continue
+
+        student.status = AdmissionStatusEnum.PROVISIONALLY_ALLOTTED
+        updated_count += 1
+        changes_made += 1
+        results.append(
+            BulkAdmissionStatusUpdateResult(
+                student_id=student_id,
+                success=True,
+                message="Status updated and fee structure locked",
+            )
+        )
+
+    if changes_made > 0:
+        await db.commit()
+
+    failed_count = len([item for item in results if not item.success])
+
+    return BulkAdmissionStatusUpdateResponse(
+        total_requested=len(payload.student_ids),
+        updated_count=updated_count,
+        failed_count=failed_count,
+        results=results,
+    )
+
+
+# Include only specific CRUD endpoints (excluding auto-generated GET list which causes JSON column search errors)
+# Create a custom CRUD router that doesn't include the problematic list endpoint
+admission_entry_crud_router_no_list = create_crud_routes(
+    AdmissionStudent,
+    AdmissionStudentCreate,
+    AdmissionStudentUpdate,
+    AdmissionStudentResponse,
+    AdmissionStudentResponse
+)
+
+# Remove the GET "" endpoint from the router (the one that uses QueryBuilder)
+admission_entry_crud_router_no_list.routes = [
+    route for route in admission_entry_crud_router_no_list.routes
+    if not (hasattr(route, 'path') and route.path == '' and 'GET' in route.methods)
+]
+
 admission_entry_router.include_router(
-    admission_entry_crud_router, prefix="/admission-students", tags=["Admission - Admission Students"]
+    admission_entry_crud_router_no_list, prefix="/admission-students", tags=["Admission - Admission Students"]
 )
 
 # Custom POST endpoint for granting admission
@@ -673,6 +1280,12 @@ async def update_course_and_fees(
     
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
+
+    if getattr(student, "is_fee_structure_locked", False):
+        raise HTTPException(
+            status_code=400,
+            detail="Fee structure is locked for this student. Course/department change is not allowed.",
+        )
         
     try:
         # 2. Update Student Course/Department
@@ -689,6 +1302,211 @@ async def update_course_and_fees(
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@admission_router.post(
+    "/admission-students/{student_id}/set-fee-structure-lock",
+    response_model=AdmissionStudentResponse,
+    tags=["Admission - Admission Students"],
+    summary="Set and lock final fee structure for student",
+)
+async def set_fee_structure_and_lock(
+    student_id: UUID,
+    payload: SetFeeStructureLockRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db_session),
+):
+    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+    res = await db.execute(stmt)
+    student = res.scalar_one_or_none()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    current_status = student.status.value if hasattr(student.status, "value") else str(student.status)
+    allowed_statuses = {
+        AdmissionStatusEnum.APPLIED.value,
+        AdmissionStatusEnum.PROVISIONALLY_ALLOTTED.value,
+        AdmissionStatusEnum.ENROLLED.value,
+    }
+    if current_status not in allowed_statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Fee structure can be set and locked only for "
+                "APPLIED, PROVISIONALLY_ALLOTTED, or ENROLLED students"
+            ),
+        )
+
+    if student.is_fee_structure_locked and student.fee_structure_id:
+        raise HTTPException(
+            status_code=409,
+            detail="Fee structure is already locked for this student",
+        )
+
+    try:
+        user_id = await get_user_id(request)
+    except Exception:
+        user_id = None
+
+    try:
+        await billing_service.lock_student_fee_structure(
+            db,
+            student_id=student_id,
+            fee_structure_id=payload.fee_structure_id,
+            locked_by=user_id,
+        )
+        await db.commit()
+
+        # Re-fetch with eager loads used by AdmissionStudentResponse
+        # to avoid lazy-load failures during response validation.
+        refreshed_query = (
+            select(AdmissionStudent)
+            .options(
+                selectinload(AdmissionStudent.sslc_details),
+                selectinload(AdmissionStudent.hsc_details),
+                selectinload(AdmissionStudent.diploma_details),
+                selectinload(AdmissionStudent.pg_details),
+            )
+            .where(AdmissionStudent.id == student_id)
+        )
+        refreshed_result = await db.execute(refreshed_query)
+        refreshed_student = refreshed_result.scalar_one_or_none()
+
+        if not refreshed_student:
+            raise HTTPException(status_code=404, detail="Student not found after update")
+
+        return refreshed_student
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@admission_router.post(
+    "/admission-students/{student_id}/assign-roll",
+    tags=["Admission - Admission Students"],
+    summary="Assign Roll Number"
+)
+async def assign_roll_number(
+    student_id: UUID,
+    payload: AssignRollNumberRequest,
+    db: AsyncSession = Depends(get_db_session)
+):
+    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+    res = await db.execute(stmt)
+    student = res.scalar_one_or_none()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    roll_number = payload.roll_number.strip()
+    if not roll_number:
+        raise HTTPException(status_code=400, detail="roll_number cannot be empty")
+
+    duplicate_stmt = select(AdmissionStudent.id).where(
+        AdmissionStudent.id != student_id,
+        AdmissionStudent.institution_id == student.institution_id,
+        AdmissionStudent.roll_number == roll_number,
+    )
+    duplicate_res = await db.execute(duplicate_stmt)
+    if duplicate_res.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Roll number '{roll_number}' is already in use for this institution",
+        )
+
+    student.roll_number = roll_number
+    db.add(student)
+    await db.commit()
+    await db.refresh(student)
+    return student
+
+
+@admission_router.post(
+    "/admission-students/{student_id}/assign-section",
+    tags=["Admission - Admission Students"],
+    summary="Assign Section"
+)
+async def assign_section(
+    student_id: UUID,
+    payload: AssignSectionRequest,
+    db: AsyncSession = Depends(get_db_session)
+):
+    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+    res = await db.execute(stmt)
+    student = res.scalar_one_or_none()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    section = payload.section.strip()
+    if not section:
+        raise HTTPException(status_code=400, detail="section cannot be empty")
+
+    student.section = section
+    db.add(student)
+    await db.commit()
+    await db.refresh(student)
+    return student
+
+
+@admission_router.post(
+    "/admission-students/{student_id}/activate-sem1",
+    tags=["Admission - Admission Students"],
+    summary="Activate Semester 1 and Enroll Student"
+)
+async def activate_sem1(
+    student_id: UUID,
+    payload: ActivateSem1Request,
+    db: AsyncSession = Depends(get_db_session)
+):
+    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+    res = await db.execute(stmt)
+    student = res.scalar_one_or_none()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    if student.status != AdmissionStatusEnum.PROVISIONALLY_ALLOTTED.value:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Only PROVISIONALLY_ALLOTTED students can be activated to Sem1. Current status: {student.status}",
+        )
+
+    roll_number = (payload.roll_number or student.roll_number or "").strip()
+    section = (payload.section or student.section or "").strip()
+
+    if not roll_number or not section:
+        raise HTTPException(
+            status_code=400,
+            detail="roll_number and section are required to activate Sem1",
+        )
+
+    duplicate_stmt = select(AdmissionStudent.id).where(
+        AdmissionStudent.id != student_id,
+        AdmissionStudent.institution_id == student.institution_id,
+        AdmissionStudent.roll_number == roll_number,
+    )
+    duplicate_res = await db.execute(duplicate_stmt)
+    if duplicate_res.scalar_one_or_none():
+        raise HTTPException(
+            status_code=409,
+            detail=f"Roll number '{roll_number}' is already in use for this institution",
+        )
+
+    student.roll_number = roll_number
+    student.section = section
+    student.status = AdmissionStatusEnum.ENROLLED.value
+    student.current_semester = 1
+    student.is_sem1_active = True
+    student.enrolled_at = datetime.utcnow()
+    db.add(student)
+    await db.commit()
+    await db.refresh(student)
+    return student
 
 
 @admission_router.post(
@@ -778,6 +1596,50 @@ async def mark_student_applied(
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@admission_entry_router.patch(
+    "/admission-students/{id}/status",
+    tags=["Admission - Admission Students"],
+    name="Update Admission Student Status"
+)
+async def update_admission_student_status(
+    id: UUID,
+    new_status: AdmissionStatusEnum,
+    db: AsyncSession = Depends(get_db_session)
+):
+    """
+    Update the status of an admission student.
+    """
+    query = select(AdmissionStudent).where(AdmissionStudent.id == id)
+    result = await db.execute(query)
+    student = result.scalar_one_or_none()
+
+    if not student:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Admission student with ID {id} not found"
+        )
+
+    # Validate status transition
+    if student.status != AdmissionStatusEnum.BOOKED.value:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Status can only be changed from BOOKED to APPLIED."
+        )
+
+    if new_status != AdmissionStatusEnum.APPLIED:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid status transition."
+        )
+
+    # Update status
+    student.status = new_status
+    db.add(student)
+    await db.commit()
+
+    return {"message": "Status updated successfully", "id": str(id), "new_status": new_status.value}
 
 
 add_pagination(admission_router)

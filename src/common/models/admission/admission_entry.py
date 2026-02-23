@@ -8,6 +8,7 @@ from sqlalchemy import (
     Enum,
     Float,
     Boolean,
+    Integer,
     Text,
     ForeignKey,
     DateTime,
@@ -159,9 +160,30 @@ class AdmissionStudent(Base):
         Enum(AdmissionStatusEnum), default=AdmissionStatusEnum.ENQUIRED, nullable=False
     )
 
+    # Post-admission details
+    roll_number = Column(String(50), nullable=True, index=True)
+    section = Column(String(20), nullable=True, index=True)
+    current_semester = Column(Integer, nullable=True)
+    is_sem1_active = Column(Boolean, default=False, nullable=False)
+    enrolled_at = Column(DateTime, nullable=True)
+    fee_structure_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("fee_structures.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    is_fee_structure_locked = Column(Boolean, default=False, nullable=False)
+    fee_structure_locked_at = Column(DateTime, nullable=True)
+    fee_structure_locked_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
+        nullable=True,
+    )
+
     # Relationships linked to Foreign Keys
     admission_quota = relationship("SeatQuota")
     admission_type = relationship("AdmissionType")
+    fee_structure = relationship("FeeStructure", lazy="selectin")
 
     # Relationships
     sslc_details = relationship(
@@ -196,6 +218,12 @@ class AdmissionStudent(Base):
         "AdmissionFormVerification",
         back_populates="student",
         uselist=False,
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+    )
+    department_change_requests = relationship(
+        "DepartmentChangeRequest",
+        back_populates="student",
         cascade="all, delete-orphan",
         passive_deletes=True,
     )
@@ -266,6 +294,57 @@ class AdmissionStudent(Base):
         await session.commit()
 
         return len(objects)
+
+    @classmethod
+    async def update(cls, request, session, data_list):
+        """
+        Prevent department/course edits when the student's fee structure is locked.
+        """
+        if not data_list:
+            raise ValueError("No data provided for update.")
+
+        normalized_items = []
+        student_ids = []
+        for data_obj in data_list:
+            data = (
+                data_obj.dict(exclude_unset=True)
+                if hasattr(data_obj, "dict")
+                else data_obj
+            )
+            student_id = data.get("id")
+            if not student_id:
+                raise ValueError("Each object must have an 'id' field.")
+            normalized_items.append(data)
+            student_ids.append(student_id)
+
+        result = await session.execute(
+            select(cls).where(cls.id.in_(student_ids), cls.deleted_at.is_(None))
+        )
+        existing_students = {student.id: student for student in result.scalars().all()}
+
+        def as_str(value):
+            return str(value) if value is not None else None
+
+        for data in normalized_items:
+            student = existing_students.get(data["id"])
+            if not student or not getattr(student, "is_fee_structure_locked", False):
+                continue
+
+            has_dept_change = (
+                "department_id" in data
+                and as_str(data.get("department_id")) != as_str(student.department_id)
+            )
+            has_course_change = (
+                "course_id" in data
+                and as_str(data.get("course_id")) != as_str(student.course_id)
+            )
+
+            if has_dept_change or has_course_change:
+                raise ValueError(
+                    "Fee structure is locked for this student; department/course change is not allowed."
+                )
+
+        return await super().update(request, session, data_list)
 
 
 class SSLCDetails(Base):

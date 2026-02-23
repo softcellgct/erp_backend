@@ -93,6 +93,33 @@ class AnnualTaskService: # Or AcademicService
         return {"message": "Academic Year deactivated"}
 
 
+    async def set_active_academic_year(self, academic_year_id: UUID):
+        """
+        Activate the given academic year and deactivate other academic years
+        for the same institution. This ensures only one active academic year
+        per institution.
+        """
+        # Fetch the academic year
+        stmt = select(AcademicYear).where(AcademicYear.id == academic_year_id)
+        res = await self.db.execute(stmt)
+        ay = res.scalar_one_or_none()
+        if not ay:
+            raise HTTPException(status_code=404, detail="Academic Year not found")
+
+        # Deactivate other academic years for the same institution
+        await self.db.execute(
+            update(AcademicYear)
+            .where(AcademicYear.institution_id == ay.institution_id, AcademicYear.id != academic_year_id)
+            .values(status=False, admission_active=False)
+        )
+
+        # Activate this one
+        ay.status = True
+        await self.db.commit()
+        await self.db.refresh(ay)
+        return ay
+
+
     async def assign_course_to_academic_year(self, academic_year_id: UUID, data: AcademicYearCourseCreate):
         # Verify academic year exists
         await self.get_academic_year(academic_year_id)

@@ -206,6 +206,24 @@ class AdmissionVisitor(Base):
         default=AdmissionStatusEnum.ENQUIRY,
         nullable=False,
     )
+    visit_status: Mapped[VisitStatus] = mapped_column(
+        SQLEnum(VisitStatus, native_enum=False),
+        nullable=False,
+        default=VisitStatus.CHECKED_IN,
+    )
+    check_in_time: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        default=func.now(),
+    )
+    check_out_time: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    check_out_remarks: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+    )
 
     # Relationship
     institution: Mapped["Institution"] = relationship(

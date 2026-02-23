@@ -25,6 +25,7 @@ from .master.required_certificates_routers import required_certificates_router
 from .master.files.routers import router as file_router
 from .admission.routers import consultancy_router, admission_entry_router, admission_router, lead_followup_router
 from .admission.verification_routers import verification_router
+from .admission.department_change_routers import department_change_router
 from .billing.routers import router as billing_router
 from .meta.routers import religion_router, community_router, caste_router
 from .master.routers import hostel_router
@@ -56,6 +57,7 @@ ROUTERS = [
     (admission_router, "/api/admission/admitted"),
     (lead_followup_router, "/api/admission/follow-up"),
     (verification_router, "/api/admission"),
+    (department_change_router, "/api/admission"),
     (billing_router, "/api/billing"),
     (hostel_router, "/api/master"),
     (admission_masters_router, "/api/master")

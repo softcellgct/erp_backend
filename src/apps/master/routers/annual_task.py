@@ -68,6 +68,22 @@ async def get_courses_for_academic_year(
     from uuid import UUID
     return await AnnualTaskService(db).get_courses_for_academic_year(UUID(academic_year_id))
 
+
+
+@academic_year_router.post(
+    "/academic-years/{academic_year_id}/activate",
+    response_model=AcademicYearResponse,
+    tags=["Academic Years"],
+)
+@is_superadmin
+async def activate_academic_year(
+    request: Request,
+    academic_year_id: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    from uuid import UUID
+    return await AnnualTaskService(db).set_active_academic_year(UUID(academic_year_id))
+
 @academic_year_router.put(
     "/academic-years/{academic_year_id}/courses/{course_id}",
     response_model=AcademicYearCourseResponse,

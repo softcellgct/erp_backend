@@ -152,6 +152,11 @@ class AdmissionStudentBase(BaseModel):
     admission_type_id: Optional[Union[UUID, str]] = None
     academic_year_id: Optional[UUID] = None
     application_number: Optional[str] = Field(None, max_length=20)
+    roll_number: Optional[str] = Field(None, max_length=50)
+    section: Optional[str] = Field(None, max_length=20)
+    current_semester: Optional[int] = None
+    is_sem1_active: Optional[bool] = False
+    enrolled_at: Optional[datetime] = None
 
     status: Optional[AdmissionStatusEnum] = Field(default=AdmissionStatusEnum.ENQUIRED)
 
@@ -332,6 +337,23 @@ class UpdateCourseRequest(BaseModel):
     # We might need institution_id if transferring campus, but let's stick to course for now.
 
 
+class AssignRollNumberRequest(BaseModel):
+    roll_number: str = Field(..., min_length=1, max_length=50)
+
+
+class AssignSectionRequest(BaseModel):
+    section: str = Field(..., min_length=1, max_length=20)
+
+
+class ActivateSem1Request(BaseModel):
+    roll_number: Optional[str] = Field(None, min_length=1, max_length=50)
+    section: Optional[str] = Field(None, min_length=1, max_length=20)
+
+
+class SetFeeStructureLockRequest(BaseModel):
+    fee_structure_id: Optional[UUID] = None
+
+
 # ========================
 # Response Schemas
 # ========================
@@ -385,6 +407,10 @@ class AdmissionStudentResponse(AdmissionStudentBase):
     id: UUID
     created_at: datetime
     updated_at: datetime
+    fee_structure_id: Optional[UUID] = None
+    is_fee_structure_locked: Optional[bool] = False
+    fee_structure_locked_at: Optional[datetime] = None
+    fee_structure_locked_by: Optional[UUID] = None
     
     
     # Nested relationships
@@ -403,3 +429,24 @@ class AdmissionStudentListResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class BulkAdmissionStatusUpdateRequest(BaseModel):
+    """Schema for bulk admission student status update"""
+    student_ids: List[UUID] = Field(default_factory=list)
+    new_status: AdmissionStatusEnum
+
+
+class BulkAdmissionStatusUpdateResult(BaseModel):
+    """Schema for each student update result"""
+    student_id: UUID
+    success: bool
+    message: Optional[str] = None
+
+
+class BulkAdmissionStatusUpdateResponse(BaseModel):
+    """Schema for bulk status update response summary"""
+    total_requested: int
+    updated_count: int
+    failed_count: int
+    results: List[BulkAdmissionStatusUpdateResult] = Field(default_factory=list)

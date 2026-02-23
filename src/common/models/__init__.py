@@ -20,7 +20,7 @@ from common.models.gate.visitor_model import (
 
 from common.models.admission.admission_entry import AdmissionStudent, SSLCDetails, HSCDetails, DiplomaDetails, PGDetails
 from common.models.admission.form_verification import AdmissionFormVerification, SubmittedCertificate
-
+from common.models.admission.department_change import DepartmentChangeRequest
 from common.models.admission.consultancy import Consultancy
 from common.models.admission.lead_followup import LeadFollowUp
 from common.models.billing.application_fees import (

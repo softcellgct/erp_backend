@@ -1,7 +1,7 @@
 """
 API Routers for Admission Form Verification
 """
-from fastapi import APIRouter, Depends, HTTPException, status, Request, File, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, status, Request, File, UploadFile, Query
 from sqlalchemy import select, and_
 from sqlalchemy.orm import selectinload
 from datetime import datetime
@@ -503,12 +503,13 @@ async def get_required_certificates(
     name="Submit Certificate",
 )
 async def submit_certificate(
+    request: Request,
     student_id: UUID,
-    required_certificate_id: UUID,
-    file: Optional[UploadFile] = None,
+    required_certificate_id: UUID = Query(...),
+    file: Optional[UploadFile] = File(None),
     remarks: Optional[str] = None,
+    scope: Optional[str] = None,
     db: AsyncSession = Depends(get_db_session),
-    request: Request = Depends(),
 ):
     """
     Submit a certificate for a student with file upload.
@@ -732,10 +733,99 @@ async def mark_provisionally_allotted(
     from common.models.admission.admission_entry import AdmissionStatusEnum
     student.status = AdmissionStatusEnum.PROVISIONALLY_ALLOTTED
 
+    # Lock student's final fee structure at provisional allotment stage.
+    try:
+        from apps.billing.services import billing_service
+
+        await billing_service.lock_student_fee_structure(
+            db,
+            student.id,
+            locked_by=user_id,
+        )
+    except Exception as exc:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Fee structure lock failed: {exc}",
+        )
+
     await db.commit()
     await db.refresh(form_verification)
 
     return form_verification
+
+
+# ========================
+# Update Submitted Certificate Verification Status
+# ========================
+
+
+@verification_router.patch(
+    "/{student_id}/submitted-certificates/{submitted_certificate_id}/verify",
+    response_model=SubmittedCertificateResponse,
+    name="Verify Submitted Certificate",
+)
+async def verify_submitted_certificate(
+    student_id: UUID,
+    submitted_certificate_id: UUID,
+    data: SubmittedCertificateUpdate,
+    db: AsyncSession = Depends(get_db_session),
+    request: Request = Depends(),
+):
+    """
+    Update the verification status of a submitted certificate.
+    """
+    try:
+        user_id = await get_user_id(request)
+    except Exception:
+        user_id = None
+
+    # Get form verification for student
+    fv_query = select(AdmissionFormVerification).where(
+        AdmissionFormVerification.student_id == student_id
+    )
+    result = await db.execute(fv_query)
+    form_verification = result.scalar_one_or_none()
+
+    if not form_verification:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Form verification record not found",
+        )
+
+    # Get the submitted certificate
+    cert_query = select(SubmittedCertificate).where(
+        and_(
+            SubmittedCertificate.id == submitted_certificate_id,
+            SubmittedCertificate.form_verification_id == form_verification.id,
+        )
+    )
+    result = await db.execute(cert_query)
+    submitted_cert = result.scalar_one_or_none()
+
+    if not submitted_cert:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Submitted certificate not found",
+        )
+
+    # Update the certificate status
+    if data.is_verified is not None:
+        submitted_cert.is_verified = data.is_verified
+        if data.is_verified:
+            submitted_cert.verified_at = datetime.utcnow()
+            submitted_cert.verified_by = user_id
+
+    if data.is_received is not None:
+        submitted_cert.is_received = data.is_received
+
+    if data.remarks is not None:
+        submitted_cert.remarks = data.remarks
+
+    await db.commit()
+    await db.refresh(submitted_cert)
+
+    return submitted_cert
 
 
 add_pagination(verification_router)

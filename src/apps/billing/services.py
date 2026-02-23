@@ -77,7 +77,7 @@ class BillingService:
                 
         return f"{prefix}{next_seq:04d}"
 
-    async def handle_course_change(self, db: AsyncSession, student_id: UUID, new_fee_structure_id: UUID):
+    async def handle_course_change(self, db: AsyncSession, student_id: UUID, new_fee_structure_id: UUID | None):
         """
         Handle course/department change:
         1. Void (delete) all PENDING demands for the student.
@@ -106,6 +106,99 @@ class BillingService:
         
         await db.commit()
 
+    async def _resolve_fee_structure_for_student(
+        self,
+        db: AsyncSession,
+        student,
+        fee_structure_id: UUID | None = None,
+    ):
+        """
+        Resolve applicable fee structure for a student.
+        """
+        query = (
+            select(FeeStructure)
+            .options(selectinload(FeeStructure.items).selectinload(FeeStructureItem.fee_head))
+        )
+
+        if fee_structure_id:
+            result = await db.execute(query.where(FeeStructure.id == fee_structure_id))
+            fee_structure = result.scalar_one_or_none()
+            if not fee_structure:
+                raise ValueError("Fee Structure not found")
+            return fee_structure
+
+        query = query.where(
+            FeeStructure.admission_year_id == student.academic_year_id,
+            FeeStructure.degree_id == student.course_id,
+        )
+
+        if student.admission_quota_id:
+            query = query.where(FeeStructure.quota_id == student.admission_quota_id)
+        else:
+            query = query.where(FeeStructure.quota_id.is_(None))
+
+        if student.admission_type_id:
+            query = query.where(FeeStructure.admission_type_id == student.admission_type_id)
+        else:
+            query = query.where(FeeStructure.admission_type_id.is_(None))
+
+        result = await db.execute(query)
+        fee_structures = result.scalars().all()
+        if not fee_structures:
+            return None
+        return fee_structures[0]
+
+    async def lock_student_fee_structure(
+        self,
+        db: AsyncSession,
+        student_id: UUID,
+        fee_structure_id: UUID | None = None,
+        locked_by: UUID | None = None,
+    ) -> UUID:
+        """
+        Set and lock a student's final fee structure.
+        """
+        from datetime import datetime
+        from common.models.admission.admission_entry import AdmissionStudent
+
+        stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+        result = await db.execute(stmt)
+        student = result.scalar_one_or_none()
+        if not student:
+            raise ValueError("Student not found")
+
+        # Idempotent path: already locked with a structure.
+        if student.is_fee_structure_locked and student.fee_structure_id:
+            if fee_structure_id and student.fee_structure_id != fee_structure_id:
+                raise ValueError("Fee structure is already locked with a different value")
+            return student.fee_structure_id
+
+        resolved_fee_structure = None
+        if fee_structure_id:
+            resolved_fee_structure = await self._resolve_fee_structure_for_student(
+                db, student, fee_structure_id
+            )
+        elif student.fee_structure_id:
+            resolved_fee_structure = await self._resolve_fee_structure_for_student(
+                db, student, student.fee_structure_id
+            )
+        else:
+            resolved_fee_structure = await self._resolve_fee_structure_for_student(db, student)
+
+        if not resolved_fee_structure:
+            raise ValueError(
+                "No matching fee structure found for this student. Configure fees before provisional allotment."
+            )
+
+        student.fee_structure_id = resolved_fee_structure.id
+        student.is_fee_structure_locked = True
+        student.fee_structure_locked_at = datetime.utcnow()
+        student.fee_structure_locked_by = locked_by
+        db.add(student)
+        await db.flush()
+
+        return resolved_fee_structure.id
+
     async def assign_course_fees(self, db: AsyncSession, student_id: UUID, fee_structure_id: UUID | None = None):
         """
         Assign configured course fees to a student by creating future demands.
@@ -121,54 +214,18 @@ class BillingService:
         if not student:
             raise ValueError("Student not found")
 
-        # 1. Automatic Fee Structure Lookup
-        if not fee_structure_id:
-            # Find fee structure matching: Academic Year + Course + Admission Type + Quota + Gender (optional)
-            stmt = select(FeeStructure).where(
-                FeeStructure.admission_year_id == student.academic_year_id,
-                FeeStructure.degree_id == student.course_id,
-                FeeStructure.admission_type_id == student.admission_type_id,
-                FeeStructure.quota_id == student.admission_quota_id,
-                # FeeStructure.quota_id.is_(None) if not student.admission_quota_id else FeeStructure.quota_id == student.admission_quota_id
-                # FeeStructure.admission_type_id.is_(None) if not student.admission_type_id else FeeStructure.admission_type_id == student.admission_type_id
+        fs = await self._resolve_fee_structure_for_student(db, student, fee_structure_id)
+        if not fs:
+            print(
+                f"No fee structure found for Student {student.name} "
+                f"(Type: {student.admission_type_id}, Quota: {student.admission_quota_id})"
             )
-            
-            # Filter by Quota (Handle Nulls)
-            if student.admission_quota_id:
-                stmt = stmt.where(FeeStructure.quota_id == student.admission_quota_id)
-            else:
-                 stmt = stmt.where(FeeStructure.quota_id.is_(None))
+            return []
 
-            # Filter by Admission Type (Handle Nulls)
-            if student.admission_type_id:
-                stmt = stmt.where(FeeStructure.admission_type_id == student.admission_type_id)
-            else:
-                stmt = stmt.where(FeeStructure.admission_type_id.is_(None))
-                
-            
-            # Optional: Add Gender filter if you have specific gender-based fees
-            # if student.gender:
-            #    stmt = stmt.where(or_(FeeStructure.gender == student.gender, FeeStructure.gender == GenderEnum.ALL))
+        # Keep latest assigned structure on student for downstream lock/workflows.
+        student.fee_structure_id = fs.id
+        db.add(student)
 
-            res = await db.execute(stmt)
-            fs_list = res.scalars().all()
-            
-            if not fs_list:
-                # Fallback: Try finding a generic structure (no quota/type)? 
-                # For now, strict matching.
-                print(f"No fee structure found for Student {student.name} (Type: {student.admission_type_id}, Quota: {student.admission_quota_id})")
-                return [] # Or raise error?
-            
-            # If multiple found, pick the first active one?
-            fs = fs_list[0] # Simplification
-        else:
-            # Fetch explicitly provided Fee Structure
-            stmt = select(FeeStructure).options(selectinload(FeeStructure.items).selectinload(FeeStructureItem.fee_head)).where(FeeStructure.id == fee_structure_id)
-            res = await db.execute(stmt)
-            fs = res.scalar_one_or_none()
-            if not fs:
-                raise ValueError("Fee Structure not found")
-            
         # 2. Iterate items and create demands
         created_demands = []
         # Reload items for the found fs
@@ -451,10 +508,10 @@ class BillingService:
         fy = res.scalar_one_or_none()
         if not fy:
             raise ValueError("Financial Year not found")
-        # Deactivate others
+        # Deactivate others only for the SAME institution
         await db.execute(
             update(FinancialYear)
-            .where(FinancialYear.id != financial_year_id)
+            .where(FinancialYear.institution_id == fy.institution_id, FinancialYear.id != financial_year_id)
             .values(active=False)
         )
         # Activate this one
@@ -685,8 +742,26 @@ class BillingService:
     async def create_student_demand(self, db: AsyncSession, student_id: UUID, fee_structure_id: UUID, items_overrides: list | None = None):
         """Create demand items for a student using a fee structure. Optional overrides is a list of items with amounts."""
         from common.models.billing.demand import DemandItem
+        from common.models.admission.admission_entry import AdmissionStudent
+
+        student_stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+        student_res = await db.execute(student_stmt)
+        student = student_res.scalar_one_or_none()
+        if not student:
+            raise ValueError("Student not found")
+
+        effective_fee_structure_id = fee_structure_id
+        if student.is_fee_structure_locked:
+            if not student.fee_structure_id:
+                raise ValueError("Student fee structure is locked but not set")
+            if str(student.fee_structure_id) != str(fee_structure_id):
+                raise ValueError(
+                    "Fee structure is locked for this student. Use the locked fee structure for demand creation."
+                )
+            effective_fee_structure_id = student.fee_structure_id
+
         # load structure
-        stmt = select(FeeStructure).where(FeeStructure.id == fee_structure_id)
+        stmt = select(FeeStructure).where(FeeStructure.id == effective_fee_structure_id)
         res = await db.execute(stmt)
         fs = res.scalar_one_or_none()
         if not fs:
@@ -695,7 +770,7 @@ class BillingService:
         if items_overrides:
             for it in items_overrides:
                 amt = it.get("amount") or 0
-                di = DemandItem(batch_id=None, student_id=student_id, fee_structure_id=fee_structure_id, fee_structure_item_id=it.get("fee_structure_item_id"), amount=amt)
+                di = DemandItem(batch_id=None, student_id=student_id, fee_structure_id=effective_fee_structure_id, fee_structure_item_id=it.get("fee_structure_item_id"), amount=amt)
                 db.add(di)
                 created.append(di)
         else:
@@ -704,7 +779,7 @@ class BillingService:
                     amt = sum([float(v) for v in it.amount_by_year.values()])
                 else:
                     amt = float(it.amount or 0)
-                di = DemandItem(batch_id=None, student_id=student_id, fee_structure_id=fee_structure_id, fee_structure_item_id=it.id, amount=amt)
+                di = DemandItem(batch_id=None, student_id=student_id, fee_structure_id=effective_fee_structure_id, fee_structure_item_id=it.id, amount=amt)
                 db.add(di)
                 created.append(di)
         await db.commit()
@@ -731,19 +806,46 @@ class BillingService:
         
         if not student_ids:
             raise ValueError("No students provided")
-        
+
+        from common.models.admission.admission_entry import AdmissionStudent
+
+        students_stmt = select(AdmissionStudent).where(AdmissionStudent.id.in_(student_ids))
+        students_res = await db.execute(students_stmt)
+        students = students_res.scalars().all()
+        student_map = {student.id: student for student in students}
+
+        missing_student_ids = [str(student_id) for student_id in student_ids if student_id not in student_map]
+        if missing_student_ids:
+            raise ValueError(f"Students not found: {', '.join(missing_student_ids)}")
+
+        locked_mismatch_students = []
+        for sid in student_ids:
+            student = student_map[sid]
+            if not student.is_fee_structure_locked:
+                continue
+            if not student.fee_structure_id:
+                raise ValueError(
+                    f"Student {student.name or sid} has fee lock enabled but no fee structure set"
+                )
+            if student.fee_structure_id != fee_structure_id:
+                locked_mismatch_students.append(student.name or str(sid))
+
+        if locked_mismatch_students:
+            mismatched = ", ".join(locked_mismatch_students[:5])
+            raise ValueError(
+                "Fee structure mismatch for locked students: "
+                f"{mismatched}. Use each student's locked fee structure."
+            )
+
         # Fetch fee structure
         stmt = select(FeeStructure).where(FeeStructure.id == fee_structure_id)
         res = await db.execute(stmt)
         fs = res.scalar_one_or_none()
         if not fs:
             raise ValueError("Fee structure not found")
-        
+
         # Get institution_id from first student for the batch
-        from common.models.admission.admission_entry import AdmissionStudent
-        stmt = select(AdmissionStudent.institution_id).where(AdmissionStudent.id == student_ids[0])
-        res = await db.execute(stmt)
-        institution_id = res.scalar_one_or_none()
+        institution_id = student_map[student_ids[0]].institution_id
         if not institution_id:
             raise ValueError("Could not determine institution from students")
         

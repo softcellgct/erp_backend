@@ -253,7 +253,11 @@ async def generate_batch(batch_id: str, dry_run: bool = False, db: AsyncSession 
 )
 async def create_student_demand(student_id: str, fee_structure_id: str, db: AsyncSession = Depends(get_db_session)):
     try:
-        count = await billing_service.create_student_demand(db, student_id, fee_structure_id)
+        from uuid import UUID
+
+        student_uuid = UUID(student_id)
+        fee_structure_uuid = UUID(fee_structure_id)
+        count = await billing_service.create_student_demand(db, student_uuid, fee_structure_uuid)
         return {"created": count}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
