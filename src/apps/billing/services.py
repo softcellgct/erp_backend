@@ -1,6 +1,7 @@
+from datetime import date, datetime, time
 from uuid import UUID
 from sqlalchemy.orm import sessionmaker, joinedload, selectinload
-from sqlalchemy import select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.models.billing.application_fees import (
@@ -562,20 +563,57 @@ class BillingService:
             raise e
 
 
+    def _serialize_filter_value(self, value):
+        if isinstance(value, UUID):
+            return str(value)
+        if isinstance(value, list):
+            return [self._serialize_filter_value(v) for v in value if v not in (None, "", [], {})]
+        return value
+
+    def _normalize_demand_filters(self, filters: dict | None) -> dict:
+        if not filters:
+            return {}
+
+        normalized: dict = {}
+        for key, value in filters.items():
+            if value in (None, "", [], {}):
+                continue
+            normalized[key] = self._serialize_filter_value(value)
+        return normalized
+
+    def _parse_uuid(self, value) -> UUID | None:
+        if value in (None, ""):
+            return None
+        if isinstance(value, UUID):
+            return value
+        try:
+            return UUID(str(value))
+        except Exception:
+            return None
+
+    def _as_list(self, value) -> list:
+        if value in (None, "", [], {}):
+            return []
+        if isinstance(value, list):
+            return [v for v in value if v not in (None, "")]
+        return [value]
+
     async def create_demand_batch(self, db: AsyncSession, payload):
-        """Create a demand batch (draft)."""
+        """Create a demand batch; this can target explicit students or filter-based student groups."""
         from common.models.billing.demand import DemandBatch
+
         data = payload.dict(exclude_unset=True)
-        
-        # Ensure filters are JSON serializable (convert UUIDs to strings)
-        if "filters" in data and isinstance(data["filters"], dict):
-            new_filters = {}
-            for k, v in data["filters"].items():
-                if isinstance(v, UUID):
-                    new_filters[k] = str(v)
-                else:
-                    new_filters[k] = v
-            data["filters"] = new_filters
+        filters = self._normalize_demand_filters(data.get("filters") or {})
+
+        explicit_students = self._as_list(data.pop("apply_to_students", None))
+        if explicit_students:
+            filters["apply_to_students"] = [
+                str(uid) for uid in explicit_students if self._parse_uuid(uid)
+            ]
+
+        data["filters"] = filters or None
+        if not data.get("name"):
+            data["name"] = f"Demand Batch - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}"
 
         batch = DemandBatch(**data)
         db.add(batch)
@@ -583,161 +621,332 @@ class BillingService:
         await db.refresh(batch)
         return batch
 
-    async def _students_matching_filters(self, db: AsyncSession, filters: dict | None, institution_id=None):
-        """Return list of AdmissionStudent ids matching filters."""
+    async def _students_matching_filters(
+        self,
+        db: AsyncSession,
+        filters: dict | None,
+        institution_id: UUID | None = None,
+        apply_to_students: list[UUID] | list[str] | None = None,
+    ):
+        """Return AdmissionStudent IDs matching filters."""
         from common.models.admission.admission_entry import AdmissionStudent
-        stmt = select(AdmissionStudent)
-        if institution_id:
-            stmt = stmt.where(AdmissionStudent.campus == str(institution_id))  # Note: mapping campus to institution
-        
-        if not filters:
-            res = await db.execute(stmt)
-            return [s.id for s in res.scalars().all()]
+        from common.models.master.admission_masters import SeatQuota
+        from common.models.master.institution import Course, Department
 
-        # Apply dictionary filters
-        if filters.get("department"):
-            stmt = stmt.where(AdmissionStudent.department.ilike(f"%{filters.get('department')}%"))
-        if filters.get("course"):
-            stmt = stmt.where(AdmissionStudent.course.ilike(f"%{filters.get('course')}%"))
-        if filters.get("batch"):
-            # assuming 'year' maps to batch or we need a batch field. Model has 'year'.
-            stmt = stmt.where(AdmissionStudent.year.ilike(f"%{filters.get('batch')}%"))
-        if filters.get("admission_quota"):
-            stmt = stmt.where(AdmissionStudent.admission_quota == filters.get("admission_quota"))
-        if filters.get("category"):
-            stmt = stmt.where(AdmissionStudent.category == filters.get("category"))
-        if filters.get("gender"):
-            stmt = stmt.where(AdmissionStudent.gender == filters.get("gender"))
-        if filters.get("quota_type"):
-            stmt = stmt.where(AdmissionStudent.quota_type.ilike(f"%{filters.get('quota_type')}%"))
-        if filters.get("special_quota"):
-            stmt = stmt.where(AdmissionStudent.special_quota.ilike(f"%{filters.get('special_quota')}%"))
-        if filters.get("scholarships"):
-            stmt = stmt.where(AdmissionStudent.scholarships.ilike(f"%{filters.get('scholarships')}%"))
-        if filters.get("boarding_place"):
-            stmt = stmt.where(AdmissionStudent.boarding_place.ilike(f"%{filters.get('boarding_place')}%"))
-        
-        # Pydantic model dump handling (if passing schema dict)
-        # The service calls this with `batch.filters` which is JSON/dict.
+        normalized = self._normalize_demand_filters(filters or {})
+        explicit_students = apply_to_students
+        if explicit_students is None:
+            explicit_students = normalized.pop("apply_to_students", None)
 
+        stmt = select(AdmissionStudent.id).where(AdmissionStudent.deleted_at.is_(None))
+
+        institution_uuid = self._parse_uuid(institution_id)
+        if institution_uuid:
+            stmt = stmt.where(AdmissionStudent.institution_id == institution_uuid)
+
+        explicit_student_ids = [
+            parsed
+            for raw in self._as_list(explicit_students)
+            if (parsed := self._parse_uuid(raw))
+        ]
+        if explicit_student_ids:
+            stmt = stmt.where(AdmissionStudent.id.in_(explicit_student_ids))
+
+        # Admission year
+        admission_year = (
+            normalized.get("admission_year_id")
+            or normalized.get("admission_year")
+            or normalized.get("academic_year_id")
+        )
+        admission_year_uuid = self._parse_uuid(admission_year)
+        if admission_year_uuid:
+            stmt = stmt.where(AdmissionStudent.academic_year_id == admission_year_uuid)
+
+        # Department filters (ID / name)
+        department_ids = []
+        for raw in (
+            self._as_list(normalized.get("department_id"))
+            + self._as_list(normalized.get("department_ids"))
+        ):
+            parsed = self._parse_uuid(raw)
+            if parsed:
+                department_ids.append(parsed)
+
+        department_text = None
+        if not department_ids and normalized.get("department"):
+            maybe_uuid = self._parse_uuid(normalized.get("department"))
+            if maybe_uuid:
+                department_ids.append(maybe_uuid)
+            else:
+                department_text = str(normalized.get("department")).strip()
+
+        if department_ids:
+            stmt = stmt.where(AdmissionStudent.department_id.in_(department_ids))
+        elif department_text:
+            stmt = stmt.join(Department, AdmissionStudent.department_id == Department.id)
+            stmt = stmt.where(Department.name.ilike(f"%{department_text}%"))
+
+        # Degree/Course filters (ID / name)
+        degree_ids = []
+        for raw in (
+            self._as_list(normalized.get("degree_id"))
+            + self._as_list(normalized.get("degree_ids"))
+            + self._as_list(normalized.get("course_id"))
+        ):
+            parsed = self._parse_uuid(raw)
+            if parsed:
+                degree_ids.append(parsed)
+
+        degree_text = None
+        if not degree_ids and normalized.get("course"):
+            maybe_uuid = self._parse_uuid(normalized.get("course"))
+            if maybe_uuid:
+                degree_ids.append(maybe_uuid)
+            else:
+                degree_text = str(normalized.get("course")).strip()
+
+        if degree_ids:
+            stmt = stmt.where(AdmissionStudent.course_id.in_(degree_ids))
+        elif degree_text:
+            stmt = stmt.join(Course, AdmissionStudent.course_id == Course.id)
+            stmt = stmt.where(
+                or_(
+                    Course.title.ilike(f"%{degree_text}%"),
+                    Course.short_name.ilike(f"%{degree_text}%"),
+                    Course.code.ilike(f"%{degree_text}%"),
+                )
+            )
+
+        # Batch/year
+        batch_values = [
+            str(v).strip()
+            for v in (self._as_list(normalized.get("batch")) + self._as_list(normalized.get("batches")))
+            if str(v).strip()
+        ]
+        if batch_values:
+            stmt = stmt.where(AdmissionStudent.year.in_(batch_values))
+
+        # Gender
+        gender_values = [
+            str(v).strip()
+            for v in (self._as_list(normalized.get("gender")) + self._as_list(normalized.get("genders")))
+            if str(v).strip()
+        ]
+        if gender_values:
+            stmt = stmt.where(AdmissionStudent.gender.in_(gender_values))
+
+        # Admission quota by ID or by name
+        quota_ids = []
+        for raw in self._as_list(normalized.get("admission_quota_id")):
+            parsed = self._parse_uuid(raw)
+            if parsed:
+                quota_ids.append(parsed)
+
+        quota_text = None
+        if not quota_ids and normalized.get("admission_quota"):
+            maybe_uuid = self._parse_uuid(normalized.get("admission_quota"))
+            if maybe_uuid:
+                quota_ids.append(maybe_uuid)
+            else:
+                quota_text = str(normalized.get("admission_quota")).strip()
+
+        if quota_ids:
+            stmt = stmt.where(AdmissionStudent.admission_quota_id.in_(quota_ids))
+        elif quota_text:
+            stmt = stmt.join(
+                SeatQuota, AdmissionStudent.admission_quota_id == SeatQuota.id
+            ).where(SeatQuota.name.ilike(f"%{quota_text}%"))
+
+        if normalized.get("category"):
+            stmt = stmt.where(AdmissionStudent.category == normalized.get("category"))
+        if normalized.get("quota_type"):
+            stmt = stmt.where(
+                AdmissionStudent.quota_type.ilike(f"%{normalized.get('quota_type')}%")
+            )
+        if normalized.get("special_quota"):
+            stmt = stmt.where(
+                AdmissionStudent.special_quota.ilike(f"%{normalized.get('special_quota')}%")
+            )
+        if normalized.get("scholarships"):
+            stmt = stmt.where(
+                AdmissionStudent.scholarships.ilike(f"%{normalized.get('scholarships')}%")
+            )
+        if normalized.get("boarding_place"):
+            stmt = stmt.where(
+                AdmissionStudent.boarding_place.ilike(f"%{normalized.get('boarding_place')}%")
+            )
+
+        # Only student IDs are selected here; ordering by non-selected columns breaks on Postgres with DISTINCT.
+        stmt = stmt.distinct()
         res = await db.execute(stmt)
-        return [s.id for s in res.scalars().all()]
+        return list(res.scalars().all())
+
+    def _per_student_fee_total(self, fee_structure: FeeStructure) -> float:
+        total = 0.0
+        for item in fee_structure.items:
+            if item.amount_by_year:
+                total += sum(float(v or 0) for v in item.amount_by_year.values())
+            else:
+                total += float(item.amount or 0)
+        return total
 
     async def preview_demand_batch(self, db: AsyncSession, payload) -> dict:
-        """Preview the demand creation: count students and calculate total."""
+        """Preview demand creation count and amount for explicit students or filter matches."""
         from common.models.admission.admission_entry import AdmissionStudent
-        data = payload.dict(exclude_unset=True)
-        filters = data.get("filters", {})
-        if hasattr(filters, "dict"):
-            filters = filters.dict(exclude_unset=True)
-        
-        student_ids = await self._students_matching_filters(db, filters, data.get("institution_id"))
-        
-        if not student_ids:
-            return {"student_count": 0, "total_amount": 0.0, "message": "No students found matching criteria", "sample_students": []}
 
-        # Calculate amount per student
+        data = payload.dict(exclude_unset=True)
+        filters = self._normalize_demand_filters(data.get("filters") or {})
+        apply_to_students = data.get("apply_to_students")
+
+        student_ids = await self._students_matching_filters(
+            db,
+            filters=filters,
+            institution_id=data.get("institution_id"),
+            apply_to_students=apply_to_students,
+        )
+
+        if not student_ids:
+            return {
+                "student_count": 0,
+                "count": 0,
+                "total_amount": 0.0,
+                "total": 0.0,
+                "message": "No students found matching criteria",
+                "sample_students": [],
+            }
+
         stmt = select(FeeStructure).where(FeeStructure.id == data["fee_structure_id"])
         res = await db.execute(stmt)
         fs = res.scalar_one_or_none()
         if not fs:
             raise ValueError("FeeStructure not found")
-        
-        per_student_total = 0.0
-        for it in fs.items:
-            if it.amount_by_year:
-                per_student_total += sum([float(v) for v in it.amount_by_year.values()])
-            else:
-                per_student_total += float(it.amount or 0)
-        
-        total = per_student_total * len(student_ids)
 
-        # Get sample students
-        stmt = select(AdmissionStudent).where(AdmissionStudent.id.in_(student_ids[:5]))
-        res = await db.execute(stmt)
-        samples = []
-        for s in res.scalars():
-            samples.append({
-                "id": str(s.id),
-                "name": s.name,
-                "course": s.course,
-                "department": s.department,
-                "admission_quota": s.admission_quota
-            })
+        per_student_total = self._per_student_fee_total(fs)
+        total_amount = per_student_total * len(student_ids)
+
+        sample_stmt = (
+            select(AdmissionStudent)
+            .options(
+                selectinload(AdmissionStudent.department),
+                selectinload(AdmissionStudent.course),
+            )
+            .where(AdmissionStudent.id.in_(student_ids[:5]))
+        )
+        sample_res = await db.execute(sample_stmt)
+        sample_students = []
+        for student in sample_res.scalars().all():
+            sample_students.append(
+                {
+                    "id": str(student.id),
+                    "name": student.name,
+                    "batch": student.year,
+                    "gender": student.gender.value if student.gender else None,
+                    "department_id": str(student.department_id) if student.department_id else None,
+                    "department_name": student.department.name if student.department else None,
+                    "degree_id": str(student.course_id) if student.course_id else None,
+                    "degree_name": student.course.title if student.course else None,
+                }
+            )
 
         return {
             "student_count": len(student_ids),
-            "total_amount": total,
-            "message": f"Found {len(student_ids)} students. Total estimated demand: {total}",
-            "sample_students": samples
+            "count": len(student_ids),
+            "total_amount": total_amount,
+            "total": total_amount,
+            "message": f"Found {len(student_ids)} students. Total estimated demand: {total_amount}",
+            "sample_students": sample_students,
         }
 
-    async def generate_demands_for_batch(self, db: AsyncSession, batch_id: UUID, dry_run: bool = False):
-        """Generate demands for a batch; if dry_run, return counts and totals only."""
+    async def generate_demands_for_batch(
+        self, db: AsyncSession, batch_id: UUID, dry_run: bool = False
+    ):
+        """Generate demand items for a batch. Supports explicit students and/or filters."""
         from common.models.billing.demand import DemandBatch, DemandItem
-        stmt = select(DemandBatch).where(DemandBatch.id == batch_id)
-        res = await db.execute(stmt)
-        batch = res.scalar_one_or_none()
+
+        batch_stmt = select(DemandBatch).where(DemandBatch.id == batch_id)
+        batch_res = await db.execute(batch_stmt)
+        batch = batch_res.scalar_one_or_none()
         if not batch:
             raise ValueError("Batch not found")
-        # find students
-        student_ids = await self._students_matching_filters(db, batch.filters, batch.institution_id)
+
+        filters = dict(batch.filters or {})
+        explicit_students = filters.pop("apply_to_students", None)
+
+        student_ids = await self._students_matching_filters(
+            db,
+            filters=filters,
+            institution_id=batch.institution_id,
+            apply_to_students=explicit_students,
+        )
         if not student_ids:
             return {"count": 0, "total": 0.0}
-        # load fee structure
+
         if not batch.fee_structure_id:
             raise ValueError("Batch does not have a fee_structure_id")
-        stmt = select(FeeStructure).where(FeeStructure.id == batch.fee_structure_id)
-        res = await db.execute(stmt)
-        fs = res.scalar_one_or_none()
-        if not fs:
+
+        fee_stmt = select(FeeStructure).where(FeeStructure.id == batch.fee_structure_id)
+        fee_res = await db.execute(fee_stmt)
+        fee_structure = fee_res.scalar_one_or_none()
+        if not fee_structure:
             raise ValueError("FeeStructure not found")
-        # calculate total per student
-        items = fs.items
-        per_student_total = 0.0
-        for it in items:
-            if it.amount_by_year:
-                per_student_total += sum([float(v) for v in it.amount_by_year.values()])
-            else:
-                per_student_total += float(it.amount or 0)
-        total = per_student_total * len(student_ids)
+
+        per_student_total = self._per_student_fee_total(fee_structure)
+        total_amount = per_student_total * len(student_ids)
+
         if dry_run:
-            return {"count": len(student_ids), "total": total}
-        # create DemandItems
+            return {"count": len(student_ids), "total": total_amount}
+
+        # Prevent duplicate rows when a generated batch is re-triggered.
+        existing_count_stmt = select(func.count(DemandItem.id)).where(
+            DemandItem.batch_id == batch.id
+        )
+        existing_count_res = await db.execute(existing_count_stmt)
+        existing_count = existing_count_res.scalar() or 0
+        if batch.status == "generated" and existing_count > 0:
+            return {
+                "created": 0,
+                "existing": existing_count,
+                "count": len(student_ids),
+                "total": total_amount,
+                "message": "Batch is already generated",
+            }
+
         created = 0
-        for sid in student_ids:
-            for it in items:
-                amt = 0.0
-                if it.amount_by_year:
-                    amt = sum([float(v) for v in it.amount_by_year.values()])
+        for student_id in student_ids:
+            for item in fee_structure.items:
+                if item.amount_by_year:
+                    amount = sum(float(v or 0) for v in item.amount_by_year.values())
                 else:
-                    amt = float(it.amount or 0)
-                
-                # Build description with fee head and subhead names
-                fee_head_name = it.fee_head.name if it.fee_head else "Fee"
-                fee_subhead_name = it.fee_sub_head.name if it.fee_sub_head else ""
-                
-                if fee_subhead_name:
-                    description = f"{fee_head_name} - {fee_subhead_name}"
-                else:
-                    description = fee_head_name
-                
-                di = DemandItem(
-                    batch_id=batch.id,
-                    student_id=sid,
-                    fee_structure_id=fs.id,
-                    fee_structure_item_id=it.id,
-                    amount=amt,
-                    fee_head_id=it.fee_head_id,
-                    description=description,
+                    amount = float(item.amount or 0)
+
+                if amount <= 0:
+                    continue
+
+                fee_head_name = item.fee_head.name if item.fee_head else "Fee"
+                fee_subhead_name = item.fee_sub_head.name if item.fee_sub_head else ""
+                description = (
+                    f"{fee_head_name} - {fee_subhead_name}"
+                    if fee_subhead_name
+                    else fee_head_name
                 )
-                db.add(di)
+
+                db.add(
+                    DemandItem(
+                        batch_id=batch.id,
+                        student_id=student_id,
+                        fee_structure_id=fee_structure.id,
+                        fee_structure_item_id=item.id,
+                        amount=amount,
+                        fee_head_id=item.fee_head_id,
+                        description=description,
+                    )
+                )
                 created += 1
+
         batch.status = "generated"
-        from datetime import datetime
         batch.generated_at = datetime.utcnow()
         await db.commit()
-        return {"created": created, "count": len(student_ids), "total": total}
+        return {"created": created, "count": len(student_ids), "total": total_amount}
 
     async def create_student_demand(self, db: AsyncSession, student_id: UUID, fee_structure_id: UUID, items_overrides: list | None = None):
         """Create demand items for a student using a fee structure. Optional overrides is a list of items with amounts."""
@@ -1278,5 +1487,292 @@ class BillingService:
         
         # Return status for requested students
         return {str(sid): (str(sid) in existing_student_ids) for sid in student_ids}
+
+    def _to_start_datetime(self, value: date | None) -> datetime | None:
+        if not value:
+            return None
+        return datetime.combine(value, time.min)
+
+    def _to_end_datetime(self, value: date | None) -> datetime | None:
+        if not value:
+            return None
+        return datetime.combine(value, time.max)
+
+    def _normalize_datetime(self, value: datetime | date | None) -> datetime:
+        if value is None:
+            return datetime.utcnow()
+        if isinstance(value, date) and not isinstance(value, datetime):
+            value = datetime.combine(value, time.min)
+        if value.tzinfo is not None:
+            return value.replace(tzinfo=None)
+        return value
+
+    def _finalize_ledger_entries(
+        self,
+        entries: list[dict],
+        from_dt: datetime | None = None,
+        to_dt: datetime | None = None,
+    ) -> dict:
+        entry_order = {"demand": 0, "invoice": 1, "payment": 2}
+        normalized_entries = [
+            {**entry, "entry_date": self._normalize_datetime(entry.get("entry_date"))}
+            for entry in entries
+        ]
+        ordered = sorted(
+            normalized_entries,
+            key=lambda item: (
+                item["entry_date"],
+                entry_order.get(item.get("entry_type"), 99),
+                str(item.get("source_id") or ""),
+            ),
+        )
+
+        opening_balance = 0.0
+        running_balance = 0.0
+        period_entries: list[dict] = []
+
+        for entry in ordered:
+            debit = float(entry.get("debit") or 0)
+            credit = float(entry.get("credit") or 0)
+            net = debit - credit
+            entry_date = entry["entry_date"]
+
+            if from_dt and entry_date < from_dt:
+                opening_balance += net
+                running_balance = opening_balance
+                continue
+            if to_dt and entry_date > to_dt:
+                continue
+
+            running_balance += net
+            period_entry = {**entry, "running_balance": running_balance}
+            period_entries.append(period_entry)
+
+        total_debit = sum(float(item.get("debit") or 0) for item in period_entries)
+        total_credit = sum(float(item.get("credit") or 0) for item in period_entries)
+        closing_balance = opening_balance + (total_debit - total_credit)
+
+        return {
+            "opening_balance": opening_balance,
+            "total_debit": total_debit,
+            "total_credit": total_credit,
+            "closing_balance": closing_balance,
+            "entries": period_entries,
+        }
+
+    async def _build_ledger(
+        self,
+        db: AsyncSession,
+        institution_id: UUID,
+        student_ids: list[UUID],
+        from_date: date | None = None,
+        to_date: date | None = None,
+        filters: dict | None = None,
+        student_id: UUID | None = None,
+    ) -> dict:
+        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.billing.demand import DemandItem
+
+        if not student_ids:
+            return {
+                "institution_id": institution_id,
+                "student_id": student_id,
+                "from_date": from_date,
+                "to_date": to_date,
+                "filters": filters or {},
+                "opening_balance": 0.0,
+                "total_debit": 0.0,
+                "total_credit": 0.0,
+                "closing_balance": 0.0,
+                "entries": [],
+            }
+
+        start_dt = self._to_start_datetime(from_date)
+        end_dt = self._to_end_datetime(to_date)
+
+        names_stmt = select(AdmissionStudent.id, AdmissionStudent.name).where(
+            AdmissionStudent.id.in_(student_ids)
+        )
+        names_res = await db.execute(names_stmt)
+        student_name_map = {row[0]: row[1] for row in names_res.all()}
+
+        entries: list[dict] = []
+
+        # Debits from demand items.
+        demand_stmt = select(DemandItem).where(
+            DemandItem.deleted_at.is_(None),
+            DemandItem.student_id.in_(student_ids),
+        )
+        if end_dt:
+            demand_stmt = demand_stmt.where(DemandItem.created_at <= end_dt)
+        demand_res = await db.execute(demand_stmt)
+        demands = demand_res.scalars().all()
+
+        linked_invoice_ids = {
+            demand.invoice_id for demand in demands if getattr(demand, "invoice_id", None)
+        }
+
+        for demand in demands:
+            entries.append(
+                {
+                    "entry_date": demand.created_at,
+                    "entry_type": "demand",
+                    "source": "demand_item",
+                    "source_id": demand.id,
+                    "reference": str(demand.batch_id) if demand.batch_id else None,
+                    "description": demand.description or "Demand Raised",
+                    "student_id": demand.student_id,
+                    "student_name": student_name_map.get(demand.student_id),
+                    "debit": float(demand.amount or 0),
+                    "credit": 0.0,
+                }
+            )
+
+        # Debits from direct invoice line items not originated from linked demands.
+        invoice_stmt = (
+            select(Invoice, InvoiceLineItem)
+            .join(InvoiceLineItem, InvoiceLineItem.invoice_id == Invoice.id)
+            .where(
+                Invoice.deleted_at.is_(None),
+                InvoiceLineItem.deleted_at.is_(None),
+                Invoice.student_id.in_(student_ids),
+            )
+        )
+        if linked_invoice_ids:
+            invoice_stmt = invoice_stmt.where(Invoice.id.notin_(list(linked_invoice_ids)))
+        if end_dt:
+            invoice_stmt = invoice_stmt.where(Invoice.created_at <= end_dt)
+
+        invoice_res = await db.execute(invoice_stmt)
+        for invoice, line_item in invoice_res.all():
+            invoice_entry_date = invoice.created_at
+            if not invoice_entry_date and invoice.issue_date:
+                invoice_entry_date = datetime.combine(invoice.issue_date, time.min)
+
+            entries.append(
+                {
+                    "entry_date": invoice_entry_date or datetime.utcnow(),
+                    "entry_type": "invoice",
+                    "source": "invoice_line_item",
+                    "source_id": line_item.id,
+                    "reference": invoice.invoice_number,
+                    "description": line_item.description or "Invoice Charge",
+                    "student_id": invoice.student_id,
+                    "student_name": student_name_map.get(invoice.student_id),
+                    "debit": float(line_item.net_amount or line_item.amount or 0),
+                    "credit": 0.0,
+                }
+            )
+
+        # Credits from payments.
+        payment_stmt = (
+            select(Payment, Invoice)
+            .join(Invoice, Payment.invoice_id == Invoice.id)
+            .where(
+                Payment.deleted_at.is_(None),
+                Invoice.deleted_at.is_(None),
+                Invoice.student_id.in_(student_ids),
+            )
+        )
+        if end_dt:
+            payment_stmt = payment_stmt.where(Payment.payment_date <= end_dt)
+        payment_res = await db.execute(payment_stmt)
+
+        for payment, invoice in payment_res.all():
+            reference = payment.receipt_number or payment.transaction_id or invoice.invoice_number
+            entries.append(
+                {
+                    "entry_date": payment.payment_date,
+                    "entry_type": "payment",
+                    "source": "payment",
+                    "source_id": payment.id,
+                    "reference": reference,
+                    "description": payment.notes or "Payment Received",
+                    "student_id": invoice.student_id,
+                    "student_name": student_name_map.get(invoice.student_id),
+                    "debit": 0.0,
+                    "credit": float(payment.amount or 0),
+                }
+            )
+
+        summary = self._finalize_ledger_entries(entries, from_dt=start_dt, to_dt=end_dt)
+        return {
+            "institution_id": institution_id,
+            "student_id": student_id,
+            "from_date": from_date,
+            "to_date": to_date,
+            "filters": self._normalize_demand_filters(filters or {}),
+            **summary,
+        }
+
+    async def get_general_ledger(
+        self,
+        db: AsyncSession,
+        institution_id: UUID,
+        from_date: date | None = None,
+        to_date: date | None = None,
+        student_id: UUID | None = None,
+        degree_id: UUID | None = None,
+        department_id: UUID | None = None,
+        batch: str | None = None,
+        gender: str | None = None,
+    ) -> dict:
+        filters: dict = {}
+        if degree_id:
+            filters["degree_id"] = degree_id
+        if department_id:
+            filters["department_id"] = department_id
+        if batch:
+            filters["batch"] = batch
+        if gender:
+            filters["gender"] = gender
+
+        explicit_students = [student_id] if student_id else None
+        student_ids = await self._students_matching_filters(
+            db,
+            filters=filters,
+            institution_id=institution_id,
+            apply_to_students=explicit_students,
+        )
+
+        return await self._build_ledger(
+            db=db,
+            institution_id=institution_id,
+            student_ids=student_ids,
+            from_date=from_date,
+            to_date=to_date,
+            filters={**filters, **({"student_id": student_id} if student_id else {})},
+            student_id=student_id,
+        )
+
+    async def get_student_ledger(
+        self,
+        db: AsyncSession,
+        student_id: UUID,
+        from_date: date | None = None,
+        to_date: date | None = None,
+    ) -> dict:
+        from common.models.admission.admission_entry import AdmissionStudent
+
+        student_stmt = select(AdmissionStudent).where(
+            AdmissionStudent.id == student_id,
+            AdmissionStudent.deleted_at.is_(None),
+        )
+        student_res = await db.execute(student_stmt)
+        student = student_res.scalar_one_or_none()
+        if not student:
+            raise ValueError("Student not found")
+        if not student.institution_id:
+            raise ValueError("Student is not mapped to any institution")
+
+        return await self._build_ledger(
+            db=db,
+            institution_id=student.institution_id,
+            student_ids=[student.id],
+            from_date=from_date,
+            to_date=to_date,
+            filters={"student_id": student.id},
+            student_id=student.id,
+        )
 
 billing_service = BillingService()

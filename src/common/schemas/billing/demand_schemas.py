@@ -2,21 +2,33 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class DemandFilterSchema(BaseModel):
-    institution_id: UUID
-    department: Optional[str] = None
-    course: Optional[str] = None
-    batch: Optional[str] = None  # Maps to 'year' or 'batch' field in student/fee structure
-    admission_quota: Optional[str] = None  # Government, Management
-    category: Optional[str] = None  # BC, MBC, SC, etc.
+    # Primary canonical filters (ID-based where possible)
+    admission_year_id: Optional[UUID] = None
+    department_id: Optional[UUID] = None
+    degree_id: Optional[UUID] = None
+    batch: Optional[str] = None
     gender: Optional[str] = None
+    admission_quota_id: Optional[UUID] = None
+    category: Optional[str] = None
     quota_type: Optional[str] = None  # Sports, etc.
     special_quota: Optional[str] = None
     scholarships: Optional[str] = None
     boarding_place: Optional[str] = None  # Hostel logic if needed
+
+    # Optional multi-value variants for broad filter support
+    department_ids: Optional[List[UUID]] = None
+    degree_ids: Optional[List[UUID]] = None
+    batches: Optional[List[str]] = None
+    genders: Optional[List[str]] = None
+
+    # Backward-compatibility keys from older payloads/UI
+    department: Optional[str] = None
+    course: Optional[str] = None
+    admission_quota: Optional[str] = None
 
 
 class DemandItemBase(BaseModel):
@@ -28,19 +40,23 @@ class DemandItemBase(BaseModel):
 
 
 class DemandBatchCreate(BaseModel):
-    name: str
+    name: Optional[str] = None
     institution_id: UUID
     admission_year_id: Optional[UUID] = None
     fee_structure_id: UUID
-    filters: DemandFilterSchema
+    filters: Optional[DemandFilterSchema] = None
     apply_to_students: Optional[List[UUID]] = None
 
 
 class DemandPreviewResponse(BaseModel):
-    student_count: int
-    total_amount: float
+    # canonical keys
+    student_count: int = 0
+    total_amount: float = 0.0
+    # backward-compatible aliases currently used by UI
+    count: int = 0
+    total: float = 0.0
     message: str
-    sample_students: List[Dict[str, Any]] = []
+    sample_students: List[Dict[str, Any]] = Field(default_factory=list)
 
 
 class DemandBatchResponse(BaseModel):

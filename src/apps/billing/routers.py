@@ -1,3 +1,6 @@
+from datetime import date
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from components.db.db import get_db_session
@@ -202,6 +205,7 @@ from common.schemas.billing.demand_schemas import (
     DemandBatchResponse,
     DemandPreviewResponse,
 )
+from common.schemas.billing.ledger_schemas import LedgerResponse
 
 
 @router.post(
@@ -221,6 +225,11 @@ async def create_demand_batch(payload: DemandBatchCreate, db: AsyncSession = Dep
 
 
 @router.post(
+    "/demand-batches/preview",
+    response_model=DemandPreviewResponse,
+    tags=["Billing - Demands"],
+)
+@router.post(
     "/demands/preview",
     response_model=DemandPreviewResponse,
     tags=["Billing - Demands"],
@@ -231,6 +240,62 @@ async def preview_demand_creation(
     try:
         res = await billing_service.preview_demand_batch(db, payload)
         return res
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get(
+    "/ledgers/general",
+    response_model=LedgerResponse,
+    tags=["Billing - Ledger"],
+    summary="General ledger for an institution with optional student filters",
+)
+async def get_general_ledger(
+    institution_id: UUID,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    student_id: UUID | None = None,
+    degree_id: UUID | None = None,
+    department_id: UUID | None = None,
+    batch: str | None = None,
+    gender: str | None = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        return await billing_service.get_general_ledger(
+            db=db,
+            institution_id=institution_id,
+            from_date=from_date,
+            to_date=to_date,
+            student_id=student_id,
+            degree_id=degree_id,
+            department_id=department_id,
+            batch=batch,
+            gender=gender,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get(
+    "/ledgers/students/{student_id}",
+    response_model=LedgerResponse,
+    tags=["Billing - Ledger"],
+    summary="Student-specific ledger",
+)
+async def get_student_ledger(
+    student_id: UUID,
+    from_date: date | None = None,
+    to_date: date | None = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        return await billing_service.get_student_ledger(
+            db=db,
+            student_id=student_id,
+            from_date=from_date,
+            to_date=to_date,
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
