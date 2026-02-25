@@ -32,5 +32,6 @@ class DemandItem(Base):
     invoice_id: Mapped[UUID | None] = mapped_column(ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True)
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     fee_head_id: Mapped[UUID | None] = mapped_column(ForeignKey("fee_heads.id", ondelete="SET NULL"), nullable=True)
+    fee_sub_head_id: Mapped[UUID | None] = mapped_column(ForeignKey("fee_sub_heads.id", ondelete="SET NULL"), nullable=True, index=True)
 
     batch = relationship("DemandBatch", back_populates="demands", lazy="selectin")

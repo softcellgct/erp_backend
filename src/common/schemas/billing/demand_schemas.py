@@ -35,6 +35,8 @@ class DemandItemBase(BaseModel):
     student_id: UUID
     fee_structure_item_id: Optional[UUID] = None
     fee_structure_id: Optional[UUID] = None
+    fee_head_id: Optional[UUID] = None
+    fee_sub_head_id: Optional[UUID] = None
     amount: float
     status: Optional[str] = "pending"
 
@@ -89,3 +91,46 @@ class BulkMiscellaneousFeeRequest(BaseModel):
     fee_head_id: Optional[UUID] = None
     amount: float
     description: str
+
+
+class GeneralDemandResolvedStudent(BaseModel):
+    id: UUID
+    name: str
+    application_number: Optional[str] = None
+    roll_number: Optional[str] = None
+    department: Optional[str] = None
+    course: Optional[str] = None
+    year: Optional[str] = None
+
+
+class ResolveGeneralDemandStudentsRequest(BaseModel):
+    institution_id: UUID
+    identifiers: List[str]
+
+
+class ResolveGeneralDemandStudentsResponse(BaseModel):
+    matched_students: List[GeneralDemandResolvedStudent] = Field(default_factory=list)
+    unmatched_identifiers: List[str] = Field(default_factory=list)
+
+
+class GeneralDemandCreateRequest(BaseModel):
+    institution_id: UUID
+    student_ids: List[UUID] = Field(default_factory=list)
+    identifiers: List[str] = Field(default_factory=list)
+    fee_structure_id: UUID
+    year: str
+    fee_head_id: UUID
+    fee_sub_head_id: UUID
+    amount: Optional[float] = None
+    description: Optional[str] = None
+    avoid_duplicates: bool = True
+
+
+class GeneralDemandCreateResponse(BaseModel):
+    batch_id: UUID
+    resolved_student_count: int
+    created_count: int
+    skipped_count: int
+    unmatched_identifiers: List[str] = Field(default_factory=list)
+    amount_used: float
+    message: str

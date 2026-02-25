@@ -19,6 +19,7 @@ from common.models.billing.financial_year import FinancialYear
 from common.models.billing.fee_structure import FeeStructure, FeeStructureItem
 from common.schemas.billing.fee_structure_schemas import FeeStructureCreate
 from sqlalchemy import update
+from logs.logging import logger
 
 
 class BillingService:
@@ -128,26 +129,57 @@ class BillingService:
                 raise ValueError("Fee Structure not found")
             return fee_structure
 
+        if not student.academic_year_id or not student.course_id:
+            return None
+
         query = query.where(
+            FeeStructure.institution_id == student.institution_id,
             FeeStructure.admission_year_id == student.academic_year_id,
             FeeStructure.degree_id == student.course_id,
         )
-
-        if student.admission_quota_id:
-            query = query.where(FeeStructure.quota_id == student.admission_quota_id)
-        else:
-            query = query.where(FeeStructure.quota_id.is_(None))
-
-        if student.admission_type_id:
-            query = query.where(FeeStructure.admission_type_id == student.admission_type_id)
-        else:
-            query = query.where(FeeStructure.admission_type_id.is_(None))
-
         result = await db.execute(query)
         fee_structures = result.scalars().all()
         if not fee_structures:
             return None
-        return fee_structures[0]
+
+        def score(fs: FeeStructure) -> int:
+            total = 0
+
+            if student.admission_quota_id:
+                if fs.quota_id == student.admission_quota_id:
+                    total += 4
+                elif fs.quota_id is None:
+                    total += 2
+                else:
+                    return -1
+            else:
+                total += 2 if fs.quota_id is None else 1
+
+            if student.admission_type_id:
+                if fs.admission_type_id == student.admission_type_id:
+                    total += 4
+                elif fs.admission_type_id is None:
+                    total += 2
+                else:
+                    return -1
+            else:
+                total += 2 if fs.admission_type_id is None else 1
+
+            return total
+
+        ranked = sorted(
+            fee_structures,
+            key=lambda fs: (
+                score(fs),
+                fs.updated_at or fs.created_at,
+            ),
+            reverse=True,
+        )
+
+        best = ranked[0]
+        if score(best) < 0:
+            return None
+        return best
 
     async def lock_student_fee_structure(
         self,
@@ -217,9 +249,14 @@ class BillingService:
 
         fs = await self._resolve_fee_structure_for_student(db, student, fee_structure_id)
         if not fs:
-            print(
-                f"No fee structure found for Student {student.name} "
-                f"(Type: {student.admission_type_id}, Quota: {student.admission_quota_id})"
+            logger.warning(
+                "No fee structure found for student %s (institution=%s, year=%s, course=%s, type=%s, quota=%s)",
+                student.name,
+                student.institution_id,
+                student.academic_year_id,
+                student.course_id,
+                student.admission_type_id,
+                student.admission_quota_id,
             )
             return []
 
@@ -250,6 +287,7 @@ class BillingService:
                             fee_structure_item_id=item.id,
                             amount=amount,
                             fee_head_id=item.fee_head_id,
+                            fee_sub_head_id=item.fee_sub_head_id,
                             description=f"{item.fee_head.name} - Year {year_label}" if item.fee_head else f"Fee - Year {year_label}"
                         )
                         db.add(di)
@@ -264,6 +302,7 @@ class BillingService:
                         fee_structure_item_id=item.id,
                         amount=amount,
                         fee_head_id=item.fee_head_id,
+                        fee_sub_head_id=item.fee_sub_head_id,
                         description=item.fee_head.name if item.fee_head else "Fee"
                     )
                      db.add(di)
@@ -597,6 +636,358 @@ class BillingService:
         if isinstance(value, list):
             return [v for v in value if v not in (None, "")]
         return [value]
+
+    def _normalize_identifier(self, value: str | None) -> str | None:
+        if value is None:
+            return None
+        normalized = str(value).strip().casefold()
+        return normalized or None
+
+    def _amount_for_year_from_item(self, item: FeeStructureItem, year: str) -> float:
+        if item.amount_by_year:
+            raw_value = item.amount_by_year.get(str(year))
+            if raw_value in (None, ""):
+                return 0.0
+            return float(raw_value or 0)
+        if str(year) == "1":
+            return float(item.amount or 0)
+        return 0.0
+
+    def _find_fee_structure_item(
+        self,
+        fee_structure: FeeStructure,
+        fee_head_id: UUID,
+        fee_sub_head_id: UUID,
+    ) -> FeeStructureItem | None:
+        matches = [
+            item
+            for item in (fee_structure.items or [])
+            if item.fee_head_id == fee_head_id and item.fee_sub_head_id == fee_sub_head_id
+        ]
+        if len(matches) > 1:
+            raise ValueError(
+                "Multiple fee structure items found for selected fee head/subhead. "
+                "Please keep only one mapping in the fee structure."
+            )
+        return matches[0] if matches else None
+
+    async def resolve_students_by_identifiers(
+        self,
+        db: AsyncSession,
+        institution_id: UUID,
+        identifiers: list[str] | None,
+    ) -> dict:
+        from common.models.admission.admission_entry import AdmissionStudent
+
+        normalized_to_display: dict[str, str] = {}
+        ordered_identifiers: list[str] = []
+        for raw in identifiers or []:
+            trimmed = str(raw or "").strip()
+            normalized = self._normalize_identifier(trimmed)
+            if not normalized:
+                continue
+            if normalized not in normalized_to_display:
+                normalized_to_display[normalized] = trimmed
+                ordered_identifiers.append(normalized)
+
+        if not ordered_identifiers:
+            return {"matched_students": [], "unmatched_identifiers": []}
+
+        stmt = (
+            select(AdmissionStudent)
+            .options(
+                selectinload(AdmissionStudent.department),
+                selectinload(AdmissionStudent.course),
+            )
+            .where(
+                AdmissionStudent.deleted_at.is_(None),
+                AdmissionStudent.institution_id == institution_id,
+                or_(
+                    func.lower(func.trim(AdmissionStudent.application_number)).in_(
+                        ordered_identifiers
+                    ),
+                    func.lower(func.trim(AdmissionStudent.roll_number)).in_(
+                        ordered_identifiers
+                    ),
+                ),
+            )
+        )
+        result = await db.execute(stmt)
+        students = result.scalars().all()
+
+        matches_by_identifier: dict[str, list] = {key: [] for key in ordered_identifiers}
+        for student in students:
+            candidate_keys = {
+                self._normalize_identifier(student.application_number),
+                self._normalize_identifier(student.roll_number),
+            }
+            for key in candidate_keys:
+                if key and key in matches_by_identifier:
+                    matches_by_identifier[key].append(student)
+
+        selected_students = []
+        selected_ids: set[UUID] = set()
+        unmatched_identifiers: list[str] = []
+
+        for key in ordered_identifiers:
+            matches = matches_by_identifier.get(key, [])
+            if len(matches) > 1:
+                conflicting_ids = ", ".join(str(student.id) for student in matches[:5])
+                raise ValueError(
+                    f"Identifier '{normalized_to_display[key]}' matches multiple students "
+                    f"({conflicting_ids})."
+                )
+            if len(matches) == 1:
+                student = matches[0]
+                if student.id not in selected_ids:
+                    selected_ids.add(student.id)
+                    selected_students.append(student)
+            else:
+                unmatched_identifiers.append(normalized_to_display[key])
+
+        matched_students = [
+            {
+                "id": student.id,
+                "name": student.name,
+                "application_number": student.application_number,
+                "roll_number": student.roll_number,
+                "department": student.department.name if student.department else None,
+                "course": student.course.title if student.course else None,
+                "year": student.year,
+            }
+            for student in selected_students
+        ]
+
+        return {
+            "matched_students": matched_students,
+            "unmatched_identifiers": unmatched_identifiers,
+        }
+
+    async def _derive_general_demand_amount(
+        self,
+        fee_structure: FeeStructure,
+        fee_head_id: UUID,
+        fee_sub_head_id: UUID,
+        year: str,
+    ) -> tuple[float, UUID]:
+        matched_item = self._find_fee_structure_item(
+            fee_structure=fee_structure,
+            fee_head_id=fee_head_id,
+            fee_sub_head_id=fee_sub_head_id,
+        )
+        if not matched_item:
+            raise ValueError(
+                "No matching fee structure item for selected fee head and subhead."
+            )
+
+        derived_amount = self._amount_for_year_from_item(matched_item, year)
+        if derived_amount <= 0:
+            raise ValueError(
+                f"No configured amount found for Year {year} in selected fee structure."
+            )
+
+        return float(derived_amount), matched_item.id
+
+    async def create_general_demand(self, db: AsyncSession, payload) -> dict:
+        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.billing.application_fees import FeeHead
+        from common.models.billing.demand import DemandBatch, DemandItem
+        from common.models.billing.fee_subhead import FeeSubHead
+
+        data = payload.dict(exclude_unset=True)
+        institution_id: UUID = data["institution_id"]
+        fee_structure_id: UUID = data["fee_structure_id"]
+        year = str(data.get("year") or "").strip()
+        fee_head_id: UUID = data["fee_head_id"]
+        fee_sub_head_id: UUID = data["fee_sub_head_id"]
+        avoid_duplicates = bool(data.get("avoid_duplicates", True))
+
+        if not year:
+            raise ValueError("year is required")
+
+        fee_structure_stmt = (
+            select(FeeStructure)
+            .options(selectinload(FeeStructure.items))
+            .where(
+                FeeStructure.id == fee_structure_id,
+                FeeStructure.institution_id == institution_id,
+            )
+        )
+        fee_structure_res = await db.execute(fee_structure_stmt)
+        fee_structure = fee_structure_res.scalar_one_or_none()
+        if not fee_structure:
+            raise ValueError("Fee structure not found for selected institution")
+
+        fee_head_stmt = select(FeeHead).where(
+            FeeHead.id == fee_head_id,
+            FeeHead.institution_id == institution_id,
+        )
+        fee_head_res = await db.execute(fee_head_stmt)
+        fee_head = fee_head_res.scalar_one_or_none()
+        if not fee_head:
+            raise ValueError("Fee head not found for selected institution")
+
+        fee_sub_head_stmt = select(FeeSubHead).where(
+            FeeSubHead.id == fee_sub_head_id,
+            FeeSubHead.fee_head_id == fee_head_id,
+            FeeSubHead.institution_id == institution_id,
+        )
+        fee_sub_head_res = await db.execute(fee_sub_head_stmt)
+        fee_sub_head = fee_sub_head_res.scalar_one_or_none()
+        if not fee_sub_head:
+            raise ValueError("Fee subhead does not belong to selected fee head/institution")
+
+        resolve_result = await self.resolve_students_by_identifiers(
+            db=db,
+            institution_id=institution_id,
+            identifiers=data.get("identifiers") or [],
+        )
+        resolved_students = resolve_result.get("matched_students", [])
+        unmatched_identifiers = resolve_result.get("unmatched_identifiers", [])
+
+        explicit_student_ids = [
+            parsed
+            for raw in self._as_list(data.get("student_ids"))
+            if (parsed := self._parse_uuid(raw))
+        ]
+        resolved_student_ids = [
+            parsed
+            for student in resolved_students
+            if (parsed := self._parse_uuid(student.get("id")))
+        ]
+
+        target_student_ids: list[UUID] = []
+        seen_ids: set[UUID] = set()
+        for sid in explicit_student_ids + resolved_student_ids:
+            if sid not in seen_ids:
+                seen_ids.add(sid)
+                target_student_ids.append(sid)
+
+        if not target_student_ids:
+            raise ValueError("No target students found for general demand")
+
+        students_stmt = select(AdmissionStudent.id).where(
+            AdmissionStudent.deleted_at.is_(None),
+            AdmissionStudent.institution_id == institution_id,
+            AdmissionStudent.id.in_(target_student_ids),
+        )
+        students_res = await db.execute(students_stmt)
+        valid_student_ids = set(students_res.scalars().all())
+        invalid_students = [sid for sid in target_student_ids if sid not in valid_student_ids]
+        if invalid_students:
+            invalid_text = ", ".join(str(sid) for sid in invalid_students[:5])
+            raise ValueError(
+                f"Some selected students do not belong to the selected institution: {invalid_text}"
+            )
+
+        matched_item = self._find_fee_structure_item(
+            fee_structure=fee_structure,
+            fee_head_id=fee_head_id,
+            fee_sub_head_id=fee_sub_head_id,
+        )
+
+        amount_value = data.get("amount")
+        fee_structure_item_id = matched_item.id if matched_item else None
+        if amount_value is None:
+            amount_used, fee_structure_item_id = await self._derive_general_demand_amount(
+                fee_structure=fee_structure,
+                fee_head_id=fee_head_id,
+                fee_sub_head_id=fee_sub_head_id,
+                year=year,
+            )
+        else:
+            amount_used = float(amount_value)
+            if amount_used <= 0:
+                raise ValueError("Amount must be greater than zero")
+
+        amount_used = round(float(amount_used), 2)
+
+        description_base = (data.get("description") or "").strip()
+        if not description_base:
+            description_base = f"{fee_head.name} - {fee_sub_head.name}"
+        year_suffix = f"(Year {year})"
+        description = (
+            description_base
+            if year_suffix.casefold() in description_base.casefold()
+            else f"{description_base} {year_suffix}"
+        )
+
+        batch = DemandBatch(
+            name=f"General Demand - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
+            institution_id=institution_id,
+            fee_structure_id=fee_structure_id,
+            filters={
+                "type": "general_demand",
+                "year": year,
+                "fee_head_id": str(fee_head_id),
+                "fee_sub_head_id": str(fee_sub_head_id),
+                "description": description,
+            },
+            status="generated",
+            generated_at=datetime.utcnow(),
+        )
+        db.add(batch)
+        await db.flush()
+
+        skipped_student_ids: set[UUID] = set()
+        if avoid_duplicates:
+            existing_stmt = (
+                select(DemandItem.student_id)
+                .where(
+                    DemandItem.student_id.in_(target_student_ids),
+                    DemandItem.status == "pending",
+                    DemandItem.invoice_id.is_(None),
+                    DemandItem.fee_head_id == fee_head_id,
+                    DemandItem.fee_sub_head_id == fee_sub_head_id,
+                    DemandItem.amount == amount_used,
+                    DemandItem.description.ilike(f"%(Year {year})"),
+                )
+                .distinct()
+            )
+            existing_res = await db.execute(existing_stmt)
+            skipped_student_ids = set(existing_res.scalars().all())
+
+        created_count = 0
+        skipped_count = 0
+        for student_id in target_student_ids:
+            if student_id in skipped_student_ids:
+                skipped_count += 1
+                continue
+
+            db.add(
+                DemandItem(
+                    batch_id=batch.id,
+                    student_id=student_id,
+                    fee_structure_id=fee_structure_id,
+                    fee_structure_item_id=fee_structure_item_id,
+                    fee_head_id=fee_head_id,
+                    fee_sub_head_id=fee_sub_head_id,
+                    amount=amount_used,
+                    description=description,
+                    status="pending",
+                )
+            )
+            created_count += 1
+
+        await db.commit()
+
+        logger.info(
+            "general_demand_created batch_id={} created_count={} skipped_count={} institution_id={}",
+            str(batch.id),
+            created_count,
+            skipped_count,
+            str(institution_id),
+        )
+
+        return {
+            "batch_id": batch.id,
+            "resolved_student_count": len(target_student_ids),
+            "created_count": created_count,
+            "skipped_count": skipped_count,
+            "unmatched_identifiers": unmatched_identifiers,
+            "amount_used": amount_used,
+            "message": "General demand created successfully",
+        }
 
     async def create_demand_batch(self, db: AsyncSession, payload):
         """Create a demand batch; this can target explicit students or filter-based student groups."""
@@ -938,6 +1329,7 @@ class BillingService:
                         fee_structure_item_id=item.id,
                         amount=amount,
                         fee_head_id=item.fee_head_id,
+                        fee_sub_head_id=item.fee_sub_head_id,
                         description=description,
                     )
                 )
@@ -1105,6 +1497,7 @@ class BillingService:
                         fee_structure_item_id=item.id,
                         amount=amount,
                         fee_head_id=item.fee_head_id,
+                        fee_sub_head_id=item.fee_sub_head_id,
                         description=description
                     )
                     db.add(demand_item)

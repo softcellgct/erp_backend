@@ -272,7 +272,7 @@ async def list_admission_students(
 ):
     """
     Retrieve paginated admission students with optional search and filtering.
-    Search only applies to: name, enquiry_number, application_number, student_mobile, parent_mobile
+    Search only applies to: name, enquiry_number, application_number, roll_number, student_mobile, parent_mobile
     Filtering uses JSON format: {"status": {"$in": ["APPLIED", "ENROLLED"]}}
     """
     try:
@@ -291,6 +291,7 @@ async def list_admission_students(
                     AdmissionStudent.name.ilike(search_pattern),
                     AdmissionStudent.enquiry_number.ilike(search_pattern),
                     AdmissionStudent.application_number.ilike(search_pattern),
+                    AdmissionStudent.roll_number.ilike(search_pattern),
                     AdmissionStudent.student_mobile.ilike(search_pattern),
                     AdmissionStudent.parent_mobile.ilike(search_pattern),
                     AdmissionStudent.father_name.ilike(search_pattern),
@@ -324,6 +325,7 @@ async def list_admission_students(
                         "name": AdmissionStudent.name,
                         "enquiry_number": AdmissionStudent.enquiry_number,
                         "application_number": AdmissionStudent.application_number,
+                        "roll_number": AdmissionStudent.roll_number,
                         "student_mobile": AdmissionStudent.student_mobile,
                         "parent_mobile": AdmissionStudent.parent_mobile,
                         "father_name": AdmissionStudent.father_name,

@@ -204,6 +204,10 @@ from common.schemas.billing.demand_schemas import (
     DemandBatchCreate,
     DemandBatchResponse,
     DemandPreviewResponse,
+    GeneralDemandCreateRequest,
+    GeneralDemandCreateResponse,
+    ResolveGeneralDemandStudentsRequest,
+    ResolveGeneralDemandStudentsResponse,
 )
 from common.schemas.billing.ledger_schemas import LedgerResponse
 
@@ -409,6 +413,46 @@ async def check_demand_status(
         return {"status": status_map}
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/demands/students/resolve",
+    response_model=ResolveGeneralDemandStudentsResponse,
+    tags=["Billing - Demands"],
+    summary="Resolve students by application number / roll number"
+)
+async def resolve_general_demand_students(
+    payload: ResolveGeneralDemandStudentsRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        return await billing_service.resolve_students_by_identifiers(
+            db=db,
+            institution_id=payload.institution_id,
+            identifiers=payload.identifiers,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/demands/general",
+    response_model=GeneralDemandCreateResponse,
+    tags=["Billing - Demands"],
+    summary="Create general demand by fee head/subhead for students"
+)
+async def create_general_demand(
+    payload: GeneralDemandCreateRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        return await billing_service.create_general_demand(db=db, payload=payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 
