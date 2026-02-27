@@ -21,17 +21,47 @@ from typing import List
 
 # Academic Year Router
 academic_year_router = APIRouter()
-academic_year_crud = create_crud_routes(
-    AcademicYear,
-    AcademicYearSchema,
-    UpdateAcademicYearSchema,
-    AcademicYearResponse,
-    AcademicYearResponse,
-    decorators=[is_superadmin],
+
+# ========== Specific routes (registered BEFORE CRUD) ==========
+
+@academic_year_router.get(
+    "/academic-years/admission-active",
+    response_model=List[AcademicYearResponse],
+    tags=["Academic Years"],
 )
-academic_year_router.include_router(
-    academic_year_crud, prefix="/academic-years", tags=["Academic Years"]
+@is_superadmin
+async def get_admission_active_years(
+    request: Request,
+    institution_id: str | None = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Get academic years where admission is active and status is active.
+    Optionally filtered by institution_id.
+    """
+    from apps.master.services.institution import InstitutionService
+    from uuid import UUID
+    inst_id = UUID(institution_id) if institution_id else None
+    return await InstitutionService(db).list_admission_active_years(inst_id)
+
+
+@academic_year_router.get(
+    "/academic-years/{academic_year_id}/active-courses",
+    response_model=list,
+    tags=["Academic Years"],
 )
+@is_superadmin
+async def get_active_courses_for_year(
+    request: Request,
+    academic_year_id: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Get active courses assigned to a specific academic year.
+    """
+    from apps.master.services.institution import InstitutionService
+    from uuid import UUID
+    return await InstitutionService(db).list_active_courses_for_year(UUID(academic_year_id))
 
 @academic_year_router.post(
     "/academic-years/{academic_year_id}/courses",
@@ -67,8 +97,6 @@ async def get_courses_for_academic_year(
     """
     from uuid import UUID
     return await AnnualTaskService(db).get_courses_for_academic_year(UUID(academic_year_id))
-
-
 
 @academic_year_router.post(
     "/academic-years/{academic_year_id}/activate",
@@ -119,6 +147,20 @@ async def remove_course_from_academic_year(
     """
     from uuid import UUID
     return await AnnualTaskService(db).remove_course_from_academic_year(UUID(academic_year_id), UUID(course_id))
+
+# ========== CRUD routes (registered AFTER specific routes) ==========
+
+academic_year_crud = create_crud_routes(
+    AcademicYear,
+    AcademicYearSchema,
+    UpdateAcademicYearSchema,
+    AcademicYearResponse,
+    AcademicYearResponse,
+    decorators=[is_superadmin],
+)
+academic_year_router.include_router(
+    academic_year_crud, prefix="/academic-years", tags=["Academic Years"]
+)
 
 # Semester Period Router
 sem_period_router = APIRouter()

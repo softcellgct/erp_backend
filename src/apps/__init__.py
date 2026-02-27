@@ -19,7 +19,9 @@ from .master.routers import (
     permissions_router,
     module_router,
     screen_router,
-    admission_masters_router
+    admission_masters_router,
+    staff_router,
+    school_router
 )
 from .master.required_certificates_routers import required_certificates_router
 from .master.files.routers import router as file_router
@@ -60,5 +62,7 @@ ROUTERS = [
     (department_change_router, "/api/admission"),
     (billing_router, "/api/billing"),
     (hostel_router, "/api/master"),
-    (admission_masters_router, "/api/master")
+    (admission_masters_router, "/api/master"),
+    (school_router, "/api/master"),
+    (staff_router, "/api/master"),
 ]

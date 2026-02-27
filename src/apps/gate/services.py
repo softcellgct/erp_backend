@@ -9,14 +9,18 @@ from sqlalchemy import and_, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
+from common.models.admission.admission_entry import (
+    AdmissionStudent,
+    AdmissionStatusEnum,
+    SourceEnum,
+    VisitStatusEnum,
+)
 from common.models.gate.visitor_model import (
-    AdmissionVisitor,
     ConsultancyReference,
     OtherReference,
     ReferenceType,
     StaffReference,
     StudentReference,
-    VisitStatus,
 )
 from common.models.master.institution import Institution
 from common.schemas.gate.admission_visitor import (
@@ -25,6 +29,16 @@ from common.schemas.gate.admission_visitor import (
     AdmissionVisitorReportSummary,
     AdmissionVisitorUpdate,
 )
+
+# Maps incoming payload field names to AdmissionStudent column names
+_FIELD_MAP = {
+    "student_name": "name",
+    "mobile_number": "student_mobile",
+    "parent_or_guardian_name": "father_name",
+    "aadhar_number": "aadhaar_number",
+    "vehicle": "has_vehicle",
+    "gate_pass_no": "gate_pass_number",
+}
 
 
 class AdmissionVisitorCRUD:
@@ -44,40 +58,58 @@ class AdmissionVisitorCRUD:
             else:
                 ref_type = ref_type_raw
 
-            if "gate_pass_no" not in data or not data["gate_pass_no"]:
-                data["gate_pass_no"] = await self._generate_unique_gate_pass_no(db)
+            # Remap field names from visitor schema to student model
+            for old_key, new_key in _FIELD_MAP.items():
+                if old_key in data:
+                    data[new_key] = data.pop(old_key)
 
+            # Generate gate pass number if not provided
+            if not data.get("gate_pass_number"):
+                data["gate_pass_number"] = await self._generate_unique_gate_pass_no(db)
+
+            # Generate enquiry number
+            from apps.admission.services import generate_enquiry_number
+            data["enquiry_number"] = await generate_enquiry_number(db, data.get("institution_id"))
+
+            # Pop reference sub-payloads
             consultancy = data.pop("consultancy_reference", None)
             staff = data.pop("staff_reference", None)
-            student = data.pop("student_reference", None)
+            student_ref = data.pop("student_reference", None)
             other = data.pop("other_reference", None)
 
-            visitor = AdmissionVisitor(**data, reference_type=ref_type)
-            db.add(visitor)
+            # Set gate-enquiry-specific defaults
+            data["source"] = SourceEnum.GATE_ENQUIRY
+            data["status"] = AdmissionStatusEnum.ENQUIRY
+            data["visit_status"] = VisitStatusEnum.CHECKED_IN
+            data["reference_type"] = ref_type.value
+
+            student = AdmissionStudent(**data)
+            student.check_in_time = func.now()
+            db.add(student)
             await db.flush()
 
             match ref_type:
                 case ReferenceType.CONSULTANCY if consultancy:
                     db.add(
-                        ConsultancyReference(admission_visitor_id=visitor.id, **consultancy)
+                        ConsultancyReference(student_id=student.id, **consultancy)
                     )
                 case ReferenceType.STAFF if staff:
-                    db.add(StaffReference(reference_id=visitor.id, **staff))
-                case ReferenceType.STUDENT if student:
-                    db.add(StudentReference(reference_id=visitor.id, **student))
+                    db.add(StaffReference(student_id=student.id, **staff))
+                case ReferenceType.STUDENT if student_ref:
+                    db.add(StudentReference(student_id=student.id, **student_ref))
                 case ReferenceType.OTHER if other:
-                    db.add(OtherReference(reference_id=visitor.id, **other))
+                    db.add(OtherReference(student_id=student.id, **other))
 
             await db.commit()
 
             stmt = (
-                select(AdmissionVisitor)
-                .where(AdmissionVisitor.id == visitor.id)
+                select(AdmissionStudent)
+                .where(AdmissionStudent.id == student.id)
                 .options(
-                    selectinload(AdmissionVisitor.consultancy_reference),
-                    selectinload(AdmissionVisitor.staff_reference),
-                    selectinload(AdmissionVisitor.student_reference),
-                    selectinload(AdmissionVisitor.other_reference),
+                    selectinload(AdmissionStudent.consultancy_reference),
+                    selectinload(AdmissionStudent.staff_reference),
+                    selectinload(AdmissionStudent.student_reference),
+                    selectinload(AdmissionStudent.other_reference),
                 )
             )
             result = await db.execute(stmt)
@@ -93,9 +125,9 @@ class AdmissionVisitorCRUD:
 
         result = await db.execute(
             text(
-                "SELECT gate_pass_no FROM admission_visitors "
-                "WHERE gate_pass_no LIKE :prefix "
-                "ORDER BY CAST(SUBSTRING(gate_pass_no FROM 10) AS INTEGER) DESC LIMIT 1"
+                "SELECT gate_pass_number FROM admission_students "
+                "WHERE gate_pass_number LIKE :prefix "
+                "ORDER BY CAST(SUBSTRING(gate_pass_number FROM 10) AS INTEGER) DESC LIMIT 1"
             ),
             {"prefix": f"{prefix}%"},
         )
@@ -111,90 +143,106 @@ class AdmissionVisitorCRUD:
 
         return f"{prefix}{next_num:03d}"
 
-    async def get_one(self, db: AsyncSession, visitor_id: UUID):
+    async def get_one(self, db: AsyncSession, student_id: UUID):
         stmt = (
-            select(AdmissionVisitor)
+            select(AdmissionStudent)
             .where(
-                AdmissionVisitor.id == visitor_id,
-                AdmissionVisitor.deleted_at.is_(None),
+                AdmissionStudent.id == student_id,
+                AdmissionStudent.deleted_at.is_(None),
+                AdmissionStudent.source == SourceEnum.GATE_ENQUIRY,
             )
             .options(
-                joinedload(AdmissionVisitor.consultancy_reference),
-                joinedload(AdmissionVisitor.staff_reference),
-                joinedload(AdmissionVisitor.student_reference),
-                joinedload(AdmissionVisitor.other_reference),
+                joinedload(AdmissionStudent.consultancy_reference),
+                joinedload(AdmissionStudent.staff_reference),
+                joinedload(AdmissionStudent.student_reference),
+                joinedload(AdmissionStudent.other_reference),
             )
         )
         result = await db.execute(stmt)
         return result.scalars().first()
 
     async def get_by_gate_pass_no(self, db: AsyncSession, gate_pass_no: str):
-        normalized_gate_pass_no = gate_pass_no.strip()
+        normalized = gate_pass_no.strip()
         stmt = (
-            select(AdmissionVisitor)
+            select(AdmissionStudent)
             .where(
-                AdmissionVisitor.gate_pass_no == normalized_gate_pass_no,
-                AdmissionVisitor.deleted_at.is_(None),
+                AdmissionStudent.gate_pass_number == normalized,
+                AdmissionStudent.deleted_at.is_(None),
             )
             .options(
-                joinedload(AdmissionVisitor.consultancy_reference),
-                joinedload(AdmissionVisitor.staff_reference),
-                joinedload(AdmissionVisitor.student_reference),
-                joinedload(AdmissionVisitor.other_reference),
+                joinedload(AdmissionStudent.consultancy_reference),
+                joinedload(AdmissionStudent.staff_reference),
+                joinedload(AdmissionStudent.student_reference),
+                joinedload(AdmissionStudent.other_reference),
             )
         )
         result = await db.execute(stmt)
         return result.scalars().first()
 
     async def get_all(self, db: AsyncSession, query):
+        # Ensure only gate enquiries are returned
+        query = query.where(AdmissionStudent.source == SourceEnum.GATE_ENQUIRY)
+        # Use DISTINCT ON primary key to avoid DISTINCT across joined JSON columns
+        pk = getattr(AdmissionStudent, "id", None)
+        if pk is not None:
+            query = query.distinct(pk)
+        else:
+            query = query.distinct()
+
         return await paginate(db, query)
 
     async def update(
-        self, db: AsyncSession, visitor_id: UUID, payload: AdmissionVisitorUpdate
+        self, db: AsyncSession, student_id: UUID, payload: AdmissionVisitorUpdate
     ):
-        visitor = await db.get(AdmissionVisitor, visitor_id)
-        if not visitor:
+        student = await db.get(AdmissionStudent, student_id)
+        if not student or student.source != SourceEnum.GATE_ENQUIRY:
             return None
 
-        for field, value in payload.dict(exclude_unset=True).items():
-            setattr(visitor, field, value)
+        update_data = payload.dict(exclude_unset=True)
+        for old_key, new_key in _FIELD_MAP.items():
+            if old_key in update_data:
+                update_data[new_key] = update_data.pop(old_key)
+
+        for field, value in update_data.items():
+            if hasattr(student, field):
+                setattr(student, field, value)
 
         await db.commit()
-        await db.refresh(visitor)
-        return visitor
+        await db.refresh(student)
+        return student
 
-    async def delete(self, db: AsyncSession, visitor_id: UUID):
-        visitor = await db.get(AdmissionVisitor, visitor_id)
-        if not visitor:
+    async def delete(self, db: AsyncSession, student_id: UUID):
+        student = await db.get(AdmissionStudent, student_id)
+        if not student or student.source != SourceEnum.GATE_ENQUIRY:
             return 0
-        await db.delete(visitor)
+        await db.delete(student)
         await db.commit()
         return 1
 
     async def pass_out(
         self,
         db: AsyncSession,
-        visitor_id: UUID,
+        student_id: UUID,
         payload: AdmissionVisitorPassOutRequest,
     ):
-        visitor = await self.get_one(db, visitor_id)
-        if not visitor:
+        student = await self.get_one(db, student_id)
+        if not student:
             return None, False
 
-        if visitor.visit_status == VisitStatus.CHECKED_OUT:
-            return visitor, True
+        if student.visit_status == VisitStatusEnum.CHECKED_OUT:
+            return student, True
 
         check_out_time = payload.check_out_time or datetime.now(timezone.utc)
-        if self._to_naive_utc(check_out_time) < self._to_naive_utc(visitor.check_in_time):
+        if student.check_in_time and self._to_naive_utc(check_out_time) < self._to_naive_utc(student.check_in_time):
             raise ValueError("check_out_time cannot be earlier than check_in_time")
 
-        visitor.visit_status = VisitStatus.CHECKED_OUT
-        visitor.check_out_time = check_out_time
-        visitor.check_out_remarks = (payload.remarks or "").strip() or None
-        db.add(visitor)
+        student.visit_status = VisitStatusEnum.CHECKED_OUT
+        student.check_out_time = check_out_time
+        student.check_out_remarks = (payload.remarks or "").strip() or None
+        db.add(student)
         await db.commit()
-        await db.refresh(visitor)
-        return visitor, False
+        await db.refresh(student)
+        return student, False
 
     async def get_report(
         self,
@@ -202,7 +250,7 @@ class AdmissionVisitorCRUD:
         *,
         date_from: date | None,
         date_to: date | None,
-        visit_status: VisitStatus | None,
+        visit_status: VisitStatusEnum | None,
         institution_id: UUID | None,
         reference_type: str | None,
         search: str | None,
@@ -222,15 +270,15 @@ class AdmissionVisitorCRUD:
 
         stmt = (
             select(
-                AdmissionVisitor,
+                AdmissionStudent,
                 Institution.name.label("institution_name"),
             )
-            .select_from(AdmissionVisitor)
-            .join(Institution, Institution.id == AdmissionVisitor.institution_id, isouter=True)
+            .select_from(AdmissionStudent)
+            .join(Institution, Institution.id == AdmissionStudent.institution_id, isouter=True)
             .where(*filters)
             .order_by(
-                AdmissionVisitor.check_in_time.desc(),
-                AdmissionVisitor.created_at.desc(),
+                AdmissionStudent.check_in_time.desc(),
+                AdmissionStudent.created_at.desc(),
             )
             .offset((page - 1) * size)
             .limit(size)
@@ -266,7 +314,7 @@ class AdmissionVisitorCRUD:
         *,
         date_from: date | None,
         date_to: date | None,
-        visit_status: VisitStatus | None,
+        visit_status: VisitStatusEnum | None,
         institution_id: UUID | None,
         reference_type: str | None,
         search: str | None,
@@ -283,15 +331,15 @@ class AdmissionVisitorCRUD:
 
         stmt = (
             select(
-                AdmissionVisitor,
+                AdmissionStudent,
                 Institution.name.label("institution_name"),
             )
-            .select_from(AdmissionVisitor)
-            .join(Institution, Institution.id == AdmissionVisitor.institution_id, isouter=True)
+            .select_from(AdmissionStudent)
+            .join(Institution, Institution.id == AdmissionStudent.institution_id, isouter=True)
             .where(*filters)
             .order_by(
-                AdmissionVisitor.check_in_time.desc(),
-                AdmissionVisitor.created_at.desc(),
+                AdmissionStudent.check_in_time.desc(),
+                AdmissionStudent.created_at.desc(),
             )
         )
         rows = (await db.execute(stmt)).all()
@@ -341,7 +389,7 @@ class AdmissionVisitorCRUD:
         *,
         date_from: date | None,
         date_to: date | None,
-        visit_status: VisitStatus | None,
+        visit_status: VisitStatusEnum | None,
         institution_id: UUID | None,
         reference_type: str | None,
         search: str | None,
@@ -357,16 +405,16 @@ class AdmissionVisitorCRUD:
         )
 
         entries_filters = list(common_filters)
-        entries_filters.extend(self._time_range_filters(AdmissionVisitor.check_in_time, date_from, date_to))
+        entries_filters.extend(self._time_range_filters(AdmissionStudent.check_in_time, date_from, date_to))
         total_entries = await self._get_count(db, entries_filters)
 
         exits_filters = list(common_filters)
-        exits_filters.append(AdmissionVisitor.check_out_time.is_not(None))
-        exits_filters.extend(self._time_range_filters(AdmissionVisitor.check_out_time, date_from, date_to))
+        exits_filters.append(AdmissionStudent.check_out_time.is_not(None))
+        exits_filters.extend(self._time_range_filters(AdmissionStudent.check_out_time, date_from, date_to))
         total_exits = await self._get_count(db, exits_filters)
 
         inside_filters = list(common_filters)
-        inside_filters.append(AdmissionVisitor.visit_status == VisitStatus.CHECKED_IN)
+        inside_filters.append(AdmissionStudent.visit_status == VisitStatusEnum.CHECKED_IN)
         inside_campus = await self._get_count(db, inside_filters)
 
         return AdmissionVisitorReportSummary(
@@ -380,41 +428,44 @@ class AdmissionVisitorCRUD:
         *,
         date_from: date | None,
         date_to: date | None,
-        visit_status: VisitStatus | None,
+        visit_status: VisitStatusEnum | None,
         institution_id: UUID | None,
         reference_type: str | None,
         search: str | None,
         for_items: bool,
     ):
-        filters = [AdmissionVisitor.deleted_at.is_(None)]
+        filters = [
+            AdmissionStudent.deleted_at.is_(None),
+            AdmissionStudent.source == SourceEnum.GATE_ENQUIRY,
+        ]
 
         if visit_status:
-            filters.append(AdmissionVisitor.visit_status == visit_status)
+            filters.append(AdmissionStudent.visit_status == visit_status)
 
         if institution_id:
-            filters.append(AdmissionVisitor.institution_id == institution_id)
+            filters.append(AdmissionStudent.institution_id == institution_id)
 
         if reference_type:
-            filters.append(AdmissionVisitor.reference_type == reference_type)
+            filters.append(AdmissionStudent.reference_type == reference_type)
 
         if search:
             like = f"%{search.strip()}%"
             filters.append(
                 or_(
-                    AdmissionVisitor.gate_pass_no.ilike(like),
-                    AdmissionVisitor.student_name.ilike(like),
-                    AdmissionVisitor.mobile_number.ilike(like),
-                    AdmissionVisitor.parent_or_guardian_name.ilike(like),
-                    AdmissionVisitor.native_place.ilike(like),
+                    AdmissionStudent.gate_pass_number.ilike(like),
+                    AdmissionStudent.name.ilike(like),
+                    AdmissionStudent.student_mobile.ilike(like),
+                    AdmissionStudent.father_name.ilike(like),
+                    AdmissionStudent.native_place.ilike(like),
                 )
             )
 
         if for_items and (date_from or date_to):
             in_range_in = and_(
-                *self._time_range_filters(AdmissionVisitor.check_in_time, date_from, date_to)
+                *self._time_range_filters(AdmissionStudent.check_in_time, date_from, date_to)
             )
             in_range_out = and_(
-                *self._time_range_filters(AdmissionVisitor.check_out_time, date_from, date_to)
+                *self._time_range_filters(AdmissionStudent.check_out_time, date_from, date_to)
             )
             filters.append(or_(in_range_in, in_range_out))
 
@@ -429,33 +480,32 @@ class AdmissionVisitorCRUD:
         return filters
 
     async def _get_count(self, db: AsyncSession, filters):
-        stmt = select(func.count()).select_from(AdmissionVisitor).where(*filters)
+        stmt = select(func.count()).select_from(AdmissionStudent).where(*filters)
         result = await db.execute(stmt)
         return result.scalar_one() or 0
 
     def _row_to_report_item(self, row):
-        visitor = row[0]
+        """Maps AdmissionStudent columns back to old API response field names for backward compatibility."""
+        student = row[0]
         institution_name = row[1]
         return {
-            "id": visitor.id,
-            "gate_pass_no": visitor.gate_pass_no,
-            "student_name": visitor.student_name,
-            "mobile_number": visitor.mobile_number,
-            "parent_or_guardian_name": visitor.parent_or_guardian_name,
-            "native_place": visitor.native_place,
-            "institution_id": visitor.institution_id,
+            "id": student.id,
+            "gate_pass_no": student.gate_pass_number,
+            "student_name": student.name,
+            "mobile_number": student.student_mobile,
+            "parent_or_guardian_name": student.father_name,
+            "native_place": student.native_place,
+            "institution_id": student.institution_id,
             "institution_name": institution_name,
-            "reference_type": visitor.reference_type.value
-            if hasattr(visitor.reference_type, "value")
-            else str(visitor.reference_type),
-            "visit_status": visitor.visit_status.value
-            if hasattr(visitor.visit_status, "value")
-            else str(visitor.visit_status),
-            "check_in_time": visitor.check_in_time.isoformat() if visitor.check_in_time else None,
-            "check_out_time": visitor.check_out_time.isoformat() if visitor.check_out_time else None,
-            "check_out_remarks": visitor.check_out_remarks,
-            "created_at": visitor.created_at.isoformat() if visitor.created_at else None,
-            "updated_at": visitor.updated_at.isoformat() if visitor.updated_at else None,
+            "reference_type": str(student.reference_type) if student.reference_type else None,
+            "visit_status": student.visit_status.value
+            if hasattr(student.visit_status, "value")
+            else str(student.visit_status),
+            "check_in_time": student.check_in_time.isoformat() if student.check_in_time else None,
+            "check_out_time": student.check_out_time.isoformat() if student.check_out_time else None,
+            "check_out_remarks": student.check_out_remarks,
+            "created_at": student.created_at.isoformat() if student.created_at else None,
+            "updated_at": student.updated_at.isoformat() if student.updated_at else None,
         }
 
     def _to_naive_utc(self, value: datetime | None):

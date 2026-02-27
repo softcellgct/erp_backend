@@ -15,8 +15,8 @@ class Community(Base):
 
     name: Mapped[str] = mapped_column(String(100), unique=True, nullable=False)
 
-    castes : Mapped[List["Caste"]] = relationship(
-        "Caste", back_populates="community", lazy="selectin"
+    castes: Mapped[List["Caste"]] = relationship(
+        "Caste", back_populates="community", lazy="select"
     )
 
 
@@ -27,8 +27,9 @@ class Caste(Base):
     community_id: Mapped[UUID] = mapped_column(
         ForeignKey("communities.id"),
         nullable=False,
+        index=True,
     )
 
     community: Mapped["Community"] = relationship(
-        "Community", back_populates="castes", lazy="selectin"
+        "Community", back_populates="castes", lazy="select"
     )

@@ -1,5 +1,4 @@
 import enum
-from datetime import datetime
 from components.db.base_model import Base
 from sqlalchemy import (
     Column,
@@ -8,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Enum,
+    Integer,
     Text,
     UUID,
 )
@@ -26,8 +26,7 @@ class VerificationStatusEnum(str, enum.Enum):
 
 class AdmissionFormVerification(Base):
     """
-    Model to track admission form printing and certificate verification process.
-    Staff prints the form and verifies certificates without collecting them.
+    Track admission form printing and certificate verification process.
     """
 
     __tablename__ = "admission_form_verifications"
@@ -51,36 +50,49 @@ class AdmissionFormVerification(Base):
     # Form printing
     form_printed = Column(Boolean, default=False, nullable=False)
     form_printed_at = Column(DateTime, nullable=True)
-    form_printed_by = Column(UUID(as_uuid=True), nullable=True)  # Staff ID
+    form_printed_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
+        nullable=True,
+        index=True,
+    )
 
-    # Application Received (New workflow - Form Verification Team receives printed form)
+    # Application Received
     application_received = Column(Boolean, default=False, nullable=False)
     application_received_at = Column(DateTime, nullable=True)
-    application_received_by = Column(UUID(as_uuid=True), nullable=True)  # Form Verification Team Staff ID
+    application_received_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
+        nullable=True,
+        index=True,
+    )
 
-    # Certificate verification (key requirement)
+    # Certificate verification
     certificate_verified = Column(Boolean, default=False, nullable=False)
     certificate_verified_at = Column(DateTime, nullable=True)
     certificate_verified_by = Column(
-        UUID(as_uuid=True), nullable=True
-    )  # Staff ID who verified
+        UUID(as_uuid=True),
+        ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
+        nullable=True,
+        index=True,
+    )
 
-    # Provisionally Allotted status
+    # Provisionally Allotted
     provisionally_allotted = Column(Boolean, default=False, nullable=False)
     provisionally_allotted_at = Column(DateTime, nullable=True)
-    provisionally_allotted_by = Column(UUID(as_uuid=True), nullable=True)  # Staff ID
+    provisionally_allotted_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
+        nullable=True,
+        index=True,
+    )
 
     # Additional tracking
-    verification_remarks = Column(Text, nullable=True)  # Comments from verifier
+    verification_remarks = Column(Text, nullable=True)
     documents_checked = Column(
-        String, nullable=True
+        String(2000), nullable=True
     )  # Comma-separated list of docs checked
-
-    # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
-    )
+    # created_at / updated_at inherited from Base
 
     # Relationships
     student = relationship("AdmissionStudent", back_populates="form_verification")
@@ -97,8 +109,7 @@ class AdmissionFormVerification(Base):
 
 class SubmittedCertificate(Base):
     """
-    Model to track submitted certificates for form verification
-    Stores certificate uploads with metadata
+    Track submitted certificates for form verification.
     """
 
     __tablename__ = "submitted_certificates"
@@ -111,42 +122,45 @@ class SubmittedCertificate(Base):
         index=True,
     )
 
-    # Reference to required certificate
-    required_certificate_id = Column(
+    # Reference to document type (was required_certificate_id)
+    document_type_id = Column(
         UUID(as_uuid=True),
-        ForeignKey("admission_required_certificates.id", ondelete="CASCADE"),
+        ForeignKey("document_types.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
 
     # Certificate file details
-    file_path = Column(String(500), nullable=True)  # S3 or local path
+    file_path = Column(String(500), nullable=True)
     file_name = Column(String(200), nullable=True)
-    file_size = Column(String(50), nullable=True)  # e.g., "2.5MB"
-    file_type = Column(String(50), nullable=True)  # e.g., "pdf", "jpg"
+    file_size = Column(Integer, nullable=True)  # bytes
+    file_type = Column(String(50), nullable=True)
 
     # Verification status
     is_received = Column(Boolean, default=False, nullable=False)
     is_verified = Column(Boolean, default=False, nullable=False)
     received_at = Column(DateTime, nullable=True)
-    received_by = Column(UUID(as_uuid=True), nullable=True)  # Staff ID who received
+    received_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
+        nullable=True,
+    )
     verified_at = Column(DateTime, nullable=True)
-    verified_by = Column(UUID(as_uuid=True), nullable=True)  # Staff ID who verified
+    verified_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
+        nullable=True,
+    )
 
     # Comments
     remarks = Column(Text, nullable=True)
-
-    # Timestamps
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
-    )
+    # created_at / updated_at inherited from Base
 
     # Relationships
     form_verification = relationship(
         "AdmissionFormVerification", back_populates="submitted_certificates"
     )
-    required_certificate = relationship("AdmissionRequiredCertificates")
+    required_certificate = relationship("DocumentType")
 
     def __repr__(self):
         return f"<SubmittedCertificate(form_verification_id={self.form_verification_id}, is_received={self.is_received})>"

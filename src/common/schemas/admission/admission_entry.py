@@ -43,22 +43,47 @@ class SSLCDetailsBase(BaseModel):
     """Base schema for SSLC (10th) details"""
     register_number: Optional[str] = None
     school_name: Optional[str] = None
+    school_block: Optional[str] = None
+    board: Optional[str] = None  # State Board, CBSE, ICSE, etc.
     year_of_passing: Optional[str] = None
     marks: Optional[float] = None
     total_marks: Optional[float] = None
     percentage: Optional[float] = None
 
 
+class HSCSubjectMarkBase(BaseModel):
+    """Base schema for individual HSC subject marks"""
+    subject_name: str
+    subject_variant: Optional[str] = None  # e.g., Vocational, Practical
+    total_marks: float
+    obtained_marks: float
+
+
+class HSCSubjectMarkCreate(HSCSubjectMarkBase):
+    """Schema for creating HSC subject mark"""
+    pass
+
+
+class HSCSubjectMarkResponse(HSCSubjectMarkBase):
+    """Schema for HSC subject mark response"""
+    id: UUID
+
+    class Config:
+        from_attributes = True
+
+
 class HSCDetailsBase(BaseModel):
     """Base schema for HSC (12th) details"""
     register_number: Optional[str] = None
     school_name: Optional[str] = None
+    school_block: Optional[str] = None
+    board: Optional[str] = None  # State Board, CBSE, ICSE, etc.
     year_of_passing: Optional[str] = None
     total_marks: Optional[float] = None
     obtained_marks: Optional[float] = None
     percentage: Optional[float] = None
     
-    # Subject-wise marks
+    # Subject-wise marks (legacy aggregate columns)
     maths_mark: Optional[float] = None
     physics_mark: Optional[float] = None
     chemistry_mark: Optional[float] = None
@@ -137,6 +162,9 @@ class AdmissionStudentBase(BaseModel):
     # Previous Academic Level
     previous_academic_level: Optional[PreviousAcademicLevelEnum] = None
     
+    # Lateral Entry
+    is_lateral_entry: Optional[bool] = False
+    
     # Vehicle Details
     has_vehicle: Optional[bool] = False
     vehicle_number: Optional[str] = Field(None, max_length=20)
@@ -192,7 +220,7 @@ class SSLCDetailsCreate(SSLCDetailsBase):
 
 class HSCDetailsCreate(HSCDetailsBase):
     """Schema for creating HSC details"""
-    pass
+    subject_marks: Optional[List[HSCSubjectMarkCreate]] = None
 
 
 class DiplomaDetailsCreate(DiplomaDetailsBase):
@@ -231,6 +259,8 @@ class SSLCDetailsUpdate(BaseModel):
     """Schema for updating SSLC details"""
     register_number: Optional[str] = None
     school_name: Optional[str] = None
+    school_block: Optional[str] = None
+    board: Optional[str] = None
     year_of_passing: Optional[str] = None
     marks: Optional[float] = None
     total_marks: Optional[float] = None
@@ -241,6 +271,8 @@ class HSCDetailsUpdate(BaseModel):
     """Schema for updating HSC details"""
     register_number: Optional[str] = None
     school_name: Optional[str] = None
+    school_block: Optional[str] = None
+    board: Optional[str] = None
     year_of_passing: Optional[str] = None
     total_marks: Optional[float] = None
     obtained_marks: Optional[float] = None
@@ -252,6 +284,7 @@ class HSCDetailsUpdate(BaseModel):
     cutoff_mark: Optional[float] = None
     school_address: Optional[str] = None
     medium_of_study: Optional[str] = None
+    subject_marks: Optional[List[HSCSubjectMarkCreate]] = None
 
 
 class DiplomaDetailsUpdate(BaseModel):
@@ -307,6 +340,7 @@ class AdmissionStudentUpdate(BaseModel):
     year: Optional[str] = Field(None, max_length=20)
     branch: Optional[str] = Field(None, max_length=200)
     previous_academic_level: Optional[PreviousAcademicLevelEnum] = None
+    is_lateral_entry: Optional[bool] = None
     has_vehicle: Optional[bool] = None
     vehicle_number: Optional[str] = Field(None, max_length=20)
     admission_quota_id: Optional[Union[UUID, str]] = None
@@ -375,6 +409,7 @@ class HSCDetailsResponse(HSCDetailsBase):
     student_id: UUID
     created_at: datetime
     updated_at: datetime
+    subject_marks: Optional[List[HSCSubjectMarkResponse]] = []
 
     class Config:
         from_attributes = True

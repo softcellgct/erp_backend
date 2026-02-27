@@ -11,20 +11,20 @@ class Role(Base):
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     description: Mapped[str] = mapped_column(String(255))
 
-    # Relationships
+    # Relationships — lazy="select" avoids loading ALL users/permissions on role fetch
     role_permissions: Mapped[list["RolePermission"]] = relationship(
         "RolePermission",
         back_populates="role",
-        lazy="selectin",
+        lazy="select",
         foreign_keys="RolePermission.role_id",
         cascade="all, delete-orphan",
     )
+    # NEVER cascade delete-orphan on users — deleting a role must NOT delete users
     users: Mapped[list["User"]] = relationship(
         "User",
         back_populates="role",
-        lazy="selectin",
+        lazy="select",
         foreign_keys="User.role_id",
-        cascade="all, delete-orphan",
     )
 
 
@@ -61,11 +61,10 @@ class User(Base):
     password: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
-    role_id: Mapped[UUID] = mapped_column(ForeignKey("roles.id"))
+    role_id: Mapped[UUID] = mapped_column(ForeignKey("roles.id"), index=True)
 
     # Relationships
-    role: Mapped["Role"] = relationship("Role", foreign_keys=[role_id], lazy="selectin")
-    # user_permissions: Mapped[list["UserPermission"]] = relationship("UserPermission", back_populates="user", foreign_keys="[UserPermission.user_id]")
+    role: Mapped["Role"] = relationship("Role", foreign_keys=[role_id], lazy="select")
 
 
 @event.listens_for(User.__table__, "after_create")

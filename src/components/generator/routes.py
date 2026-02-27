@@ -60,6 +60,31 @@ def create_crud_routes(
         """
         Retrieve paginated {split_name} records with optional filtering, sorting, and searching.
         """
+        # Use DISTINCT ON the primary key to avoid DISTINCT across all selected
+        # columns (which can include types like JSON without equality ops).
+        pk = getattr(model, "id", None)
+        if pk is not None:
+            query = query.distinct(pk)
+
+            # PostgreSQL requires that DISTINCT ON expressions match the initial
+            # ORDER BY expressions. If the query has an ORDER BY that doesn't
+            # start with the primary key, prepend the primary key to the
+            # ordering clause so DISTINCT ON works correctly.
+            try:
+                existing_order_by = getattr(query, "_order_by_clause", None)
+                if existing_order_by is not None and len(existing_order_by) > 0:
+                    # Clear existing ORDER BY and reapply with pk first
+                    query = query.order_by(None)
+                    query = query.order_by(pk, *list(existing_order_by))
+                else:
+                    # No explicit order_by present — ensure we at least order by pk
+                    query = query.order_by(pk)
+            except Exception:
+                # If anything goes wrong, fall back to distinct without modifying order
+                pass
+        else:
+            query = query.distinct()
+
         response_data = await paginate(db, query)
         return response_data
 
@@ -114,11 +139,22 @@ def create_crud_routes(
         """
         Create multiple new {split_name} records in bulk and invalidate cached list.
         """
-        count = await model.create(request, db, items)
-        return {
-            "detail": f"{split_name} data created successfully",
-            "count": count,
-        }
+        result = await model.create(request, db, items)
+        
+        # Handle both old (int) and new (dict) return formats
+        if isinstance(result, dict):
+            return {
+                "detail": f"{split_name} data created successfully",
+                "created": result.get("created", 0),
+                "skipped": result.get("skipped", 0),
+                "errors": result.get("errors", []),
+            }
+        else:
+            # Legacy format - just a count
+            return {
+                "detail": f"{split_name} data created successfully",
+                "count": result,
+            }
 
     """
     =====================================================

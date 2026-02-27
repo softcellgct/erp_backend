@@ -15,7 +15,7 @@ from fastapi_pagination.ext.sqlalchemy import paginate
 from fastapi_querybuilder.dependencies import QueryBuilder
 from fastapi import Request
 
-from common.models.admission.admission_entry import AdmissionStudent, AdmissionStatusEnum
+from common.models.admission.admission_entry import AdmissionStudent, AdmissionStatusEnum, SourceEnum
 from common.models.admission.lead_followup import LeadFollowUp
 from common.schemas.admission.admission_entry import (
     AdmissionStudentCreate,
@@ -35,7 +35,6 @@ from common.schemas.admission.lead_followup import (
     LeadFollowUpResponse,
     LeadFollowUpUpdate,
 )
-from common.models.gate.visitor_model import AdmissionVisitor
 from apps.admission.services import generate_enquiry_number
 from sqlalchemy import select, desc, and_, or_, cast, String
 from sqlalchemy import func
@@ -719,89 +718,102 @@ async def create_admission_student(
     """
     Create admission student record with automatic application number generation.
     
-    If visitor_id is provided in the payload:
-    1. Generates a unique application number
-    2. Updates the admission_visitors record status to APPLIED
-    3. Creates a new admission_students record with the provided payload and application number
+    If visitor_id is provided (i.e. the student came from a gate enquiry):
+    1. Finds the existing AdmissionStudent record (source=GATE_ENQUIRY)
+    2. Updates it with the new payload data and promotes status to ENQUIRED
     
-    If visitor_id is not provided:
-    1. Creates admission_students record without updating visitor status
+    If visitor_id is not provided (direct entry):
+    1. Creates a new AdmissionStudent record (source=DIRECT_ENTRY)
     
     Args:
         payload: Admission student details (may include visitor_id)
         
     Returns:
-        Created admission student record with generated application number
+        Created / updated admission student record
     """
     try:
-        # Extract visitor_id from payload if present
         visitor_id = payload.visitor_id
         
-        # Handle visitor status update if visitor_id is provided
         if visitor_id:
-            # Fetch the admission visitor
-            visitor_result = await db.execute(
-                select(AdmissionVisitor).where(AdmissionVisitor.id == visitor_id)
+            # Promote existing gate-enquiry record
+            result = await db.execute(
+                select(AdmissionStudent).where(AdmissionStudent.id == visitor_id)
             )
-            admission_visitor = visitor_result.scalar_one_or_none()
+            admission_student = result.scalar_one_or_none()
             
-            if not admission_visitor:
+            if not admission_student:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Admission visitor with ID {visitor_id} not found"
+                    detail=f"Gate enquiry record with ID {visitor_id} not found"
                 )
             
-            # Generate unique enquiry number
-            enquiry_number = await generate_enquiry_number(db, admission_visitor.institution_id)
+            # Generate enquiry number if not already set
+            if not admission_student.enquiry_number:
+                admission_student.enquiry_number = await generate_enquiry_number(
+                    db, admission_student.institution_id
+                )
             
-            # Update admission visitor status to ENQUIRED
-            # Status flow: ENQUIRY -> ENQUIRED -> ... -> BOOKED -> APPLIED
-            admission_visitor.status = AdmissionStatusEnum.ENQUIRED.value
-            db.add(admission_visitor)
+            # Update fields from payload
+            update_data = payload.dict(exclude_unset=True)
+            update_data.pop("visitor_id", None)
+            
+            if "status" not in update_data or update_data["status"] is None:
+                update_data["status"] = AdmissionStatusEnum.ENQUIRED.value
+            
+            # Handle nested relationships
+            mapper = inspect(AdmissionStudent)
+            for rel_name, rel in mapper.relationships.items():
+                if rel_name in update_data and update_data[rel_name] is not None:
+                    rel_data = update_data.pop(rel_name)
+                    related_model = rel.mapper.class_
+                    if not rel.uselist and isinstance(rel_data, dict):
+                        setattr(admission_student, rel_name, related_model(**rel_data))
+                    elif rel.uselist and isinstance(rel_data, list):
+                        setattr(admission_student, rel_name, [
+                            related_model(**item) if isinstance(item, dict) else item
+                            for item in rel_data
+                        ])
+                elif rel_name in update_data:
+                    update_data.pop(rel_name)
+            
+            for field, value in update_data.items():
+                setattr(admission_student, field, value)
+            
+            await db.commit()
+            await db.refresh(admission_student)
+            return admission_student
+        
         else:
-            # Generate enquiry number even without visitor_id
+            # Direct entry — create new record
             enquiry_number = await generate_enquiry_number(db)
-        
-        # Create new admission student record with enquiry number
-        student_data = payload.dict(exclude_unset=True)
-        
-        # Remove non-model fields
-        student_data.pop('visitor_id', None)  # Remove visitor_id from payload
-        
-        # Add enquiry number
-        student_data['enquiry_number'] = enquiry_number
-        
-        # Ensure status is set to ENQUIRED by default if not provided
-        if 'status' not in student_data or student_data['status'] is None:
-            student_data['status'] = AdmissionStatusEnum.ENQUIRED.value
-        
-        # Handle nested relationships - convert dicts to model instances
-        mapper = inspect(AdmissionStudent)
-        for rel_name, rel in mapper.relationships.items():
-            if rel_name in student_data and student_data[rel_name] is not None:
-                rel_data = student_data[rel_name]
-                related_model = rel.mapper.class_
-                # If a single related object is provided as a dict -> create instance
-                if not rel.uselist and isinstance(rel_data, dict):
-                    student_data[rel_name] = related_model(**rel_data)
-                # If a list of related objects is provided -> convert each
-                elif rel.uselist and isinstance(rel_data, list):
-                    new_list = []
-                    for item in rel_data:
-                        if isinstance(item, dict):
-                            new_list.append(related_model(**item))
-                        else:
-                            new_list.append(item)
-                    student_data[rel_name] = new_list
-        
-        # Create admission student
-        admission_student = AdmissionStudent(**student_data)
-        
-        db.add(admission_student)
-        await db.commit()
-        await db.refresh(admission_student)
-        
-        return admission_student
+            
+            student_data = payload.dict(exclude_unset=True)
+            student_data.pop("visitor_id", None)
+            student_data["enquiry_number"] = enquiry_number
+            student_data.setdefault("source", SourceEnum.DIRECT_ENTRY.value)
+            
+            if "status" not in student_data or student_data["status"] is None:
+                student_data["status"] = AdmissionStatusEnum.ENQUIRED.value
+            
+            # Handle nested relationships
+            mapper = inspect(AdmissionStudent)
+            for rel_name, rel in mapper.relationships.items():
+                if rel_name in student_data and student_data[rel_name] is not None:
+                    rel_data = student_data[rel_name]
+                    related_model = rel.mapper.class_
+                    if not rel.uselist and isinstance(rel_data, dict):
+                        student_data[rel_name] = related_model(**rel_data)
+                    elif rel.uselist and isinstance(rel_data, list):
+                        student_data[rel_name] = [
+                            related_model(**item) if isinstance(item, dict) else item
+                            for item in rel_data
+                        ]
+            
+            admission_student = AdmissionStudent(**student_data)
+            db.add(admission_student)
+            await db.commit()
+            await db.refresh(admission_student)
+            return admission_student
         
     except HTTPException:
         await db.rollback()
@@ -827,47 +839,29 @@ async def get_admission_dashboard_metrics(
     week_ago = today - timedelta(days=7)
     month_ago = today - timedelta(days=30)
     
-    # Today's enquiries (both AdmissionStudent and AdmissionVisitor)
-    stmt_students_today = select(func.count(AdmissionStudent.id)).where(
+    # Today's enquiries (all sources in one table now)
+    stmt_today = select(func.count(AdmissionStudent.id)).where(
         func.date(AdmissionStudent.created_at) == today,
         AdmissionStudent.status == AdmissionStatusEnum.ENQUIRY
     )
-    stmt_visitors_today = select(func.count(AdmissionVisitor.id)).where(
-        func.date(AdmissionVisitor.created_at) == today,
-        AdmissionVisitor.status == AdmissionStatusEnum.ENQUIRY
-    )
-    
-    res_students_today = await db.execute(stmt_students_today)
-    res_visitors_today = await db.execute(stmt_visitors_today)
-    enquiries_today = res_students_today.scalar() + res_visitors_today.scalar()
+    res_today = await db.execute(stmt_today)
+    enquiries_today = res_today.scalar()
     
     # This week's enquiries
-    stmt_students_week = select(func.count(AdmissionStudent.id)).where(
+    stmt_week = select(func.count(AdmissionStudent.id)).where(
         func.date(AdmissionStudent.created_at) >= week_ago,
         AdmissionStudent.status.in_([AdmissionStatusEnum.ENQUIRY, AdmissionStatusEnum.APPLIED])
     )
-    stmt_visitors_week = select(func.count(AdmissionVisitor.id)).where(
-        func.date(AdmissionVisitor.created_at) >= week_ago,
-        AdmissionVisitor.status == AdmissionStatusEnum.ENQUIRY
-    )
-    
-    res_students_week = await db.execute(stmt_students_week)
-    res_visitors_week = await db.execute(stmt_visitors_week)
-    enquiries_week = res_students_week.scalar() + res_visitors_week.scalar()
+    res_week = await db.execute(stmt_week)
+    enquiries_week = res_week.scalar()
     
     # This month's enquiries
-    stmt_students_month = select(func.count(AdmissionStudent.id)).where(
+    stmt_month = select(func.count(AdmissionStudent.id)).where(
         func.date(AdmissionStudent.created_at) >= month_ago,
         AdmissionStudent.status.in_([AdmissionStatusEnum.ENQUIRY, AdmissionStatusEnum.APPLIED])
     )
-    stmt_visitors_month = select(func.count(AdmissionVisitor.id)).where(
-        func.date(AdmissionVisitor.created_at) >= month_ago,
-        AdmissionVisitor.status == AdmissionStatusEnum.ENQUIRY
-    )
-    
-    res_students_month = await db.execute(stmt_students_month)
-    res_visitors_month = await db.execute(stmt_visitors_month)
-    enquiries_month = res_students_month.scalar() + res_visitors_month.scalar()
+    res_month = await db.execute(stmt_month)
+    enquiries_month = res_month.scalar()
     
     # Status breakdown (only AdmissionStudent has detailed statuses)
     stmt_status = select(
@@ -877,14 +871,6 @@ async def get_admission_dashboard_metrics(
     
     res_status = await db.execute(stmt_status)
     status_breakdown = {str(status): count for status, count in res_status.all()}
-    
-    # Add ENQUIRY visitors to status breakdown
-    enquiry_visitors = await db.execute(
-        select(func.count(AdmissionVisitor.id)).where(
-            AdmissionVisitor.status == AdmissionStatusEnum.ENQUIRY
-        )
-    )
-    status_breakdown["ENQUIRY"] = status_breakdown.get("ENQUIRY", 0) + enquiry_visitors.scalar()
     
     # Follow-up pending count (students with status ENQUIRY/APPLIED and no follow-up in last 3 days)
     three_days_ago = datetime.now() - timedelta(days=3)
@@ -918,11 +904,13 @@ async def get_admission_dashboard_metrics(
     total_app = total_applied.scalar()
     conversion_rate = round((total_app / total_enq * 100), 2) if total_enq > 0 else 0
     
-    # Source breakdown (from AdmissionVisitor reference_type)
+    # Source breakdown (from AdmissionStudent reference_type)
     stmt_source = select(
-        AdmissionVisitor.reference_type,
-        func.count(AdmissionVisitor.id)
-    ).group_by(AdmissionVisitor.reference_type)
+        AdmissionStudent.reference_type,
+        func.count(AdmissionStudent.id)
+    ).where(
+        AdmissionStudent.reference_type.isnot(None)
+    ).group_by(AdmissionStudent.reference_type)
     
     res_source = await db.execute(stmt_source)
     source_breakdown = {str(ref_type): count for ref_type, count in res_source.all() if ref_type}
@@ -981,59 +969,213 @@ async def get_enquiry_reports(
     if status:
         query_students = query_students.where(AdmissionStudent.status == status)
     
+    if reference_type:
+        query_students = query_students.where(AdmissionStudent.reference_type == reference_type)
+    
     res_students = await db.execute(query_students)
     students = res_students.scalars().all()
     
-    # Build query for AdmissionVisitors
-    query_visitors = select(AdmissionVisitor).where(AdmissionVisitor.status == AdmissionStatusEnum.ENQUIRY)
-    
-    if start_date:
-        try:
-            start = datetime.fromisoformat(start_date)
-            query_visitors = query_visitors.where(AdmissionVisitor.created_at >= start)
-        except ValueError:
-            pass
-    
-    if end_date:
-        try:
-            end = datetime.fromisoformat(end_date)
-            query_visitors = query_visitors.where(AdmissionVisitor.created_at <= end)
-        except ValueError:
-            pass
-    
-    if reference_type:
-        query_visitors = query_visitors.where(AdmissionVisitor.reference_type == reference_type)
-    
-    res_visitors = await db.execute(query_visitors)
-    visitors = res_visitors.scalars().all()
-    
     # Normalize data
-    normalized_students = [{
+    all_enquiries = [{
         "id": str(s.id),
         "enquiry_number": s.enquiry_number,
         "name": s.name,
         "mobile": s.student_mobile,
         "status": s.status,
-        "source": None,
+        "source": s.source.value if s.source else None,
+        "reference_type": s.reference_type,
         "created_at": s.created_at.isoformat() if s.created_at else None,
     } for s in students]
-    
-    normalized_visitors = [{
-        "id": str(v.id),
-        "enquiry_number": v.gate_pass_no,
-        "name": v.student_name,
-        "mobile": v.mobile_number,
-        "status": v.status,
-        "source": v.reference_type,
-        "created_at": v.created_at.isoformat() if v.created_at else None,
-    } for v in visitors]
-    
-    all_enquiries = normalized_students + normalized_visitors
     
     return {
         "total": len(all_enquiries),
         "data": all_enquiries
     }
+
+
+@admission_entry_router.get("/reports/reference-summary", tags=["Admission - Reports"])
+async def get_reference_summary(
+    start_date: str = None,
+    end_date: str = None,
+    institution_id: str = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Get admission counts grouped by consultancy and staff.
+    Returns two lists: consultancy_summary and staff_summary.
+    """
+    from datetime import datetime as dt
+    from common.models.gate.visitor_model import ConsultancyReference, StaffReference
+    from common.models.admission.consultancy import Consultancy
+    from common.models.master.institution import Staff, Department
+
+    base_filters = [AdmissionStudent.deleted_at.is_(None)]
+
+    if start_date:
+        try:
+            base_filters.append(AdmissionStudent.created_at >= dt.fromisoformat(start_date))
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            base_filters.append(AdmissionStudent.created_at <= dt.fromisoformat(end_date))
+        except ValueError:
+            pass
+    if institution_id:
+        base_filters.append(AdmissionStudent.institution_id == institution_id)
+
+    # Consultancy summary
+    consultancy_stmt = (
+        select(
+            Consultancy.id,
+            Consultancy.name,
+            func.count(AdmissionStudent.id).label("admission_count"),
+        )
+        .join(ConsultancyReference, ConsultancyReference.consultancy_id == Consultancy.id)
+        .join(AdmissionStudent, AdmissionStudent.id == ConsultancyReference.student_id)
+        .where(*base_filters)
+        .group_by(Consultancy.id, Consultancy.name)
+        .order_by(func.count(AdmissionStudent.id).desc())
+    )
+    consultancy_result = await db.execute(consultancy_stmt)
+    consultancy_summary = [
+        {"id": str(row.id), "name": row.name, "admission_count": row.admission_count}
+        for row in consultancy_result.all()
+    ]
+
+    # Staff summary
+    staff_stmt = (
+        select(
+            Staff.id,
+            Staff.name,
+            Staff.designation,
+            Department.name.label("department_name"),
+            func.count(AdmissionStudent.id).label("admission_count"),
+        )
+        .join(StaffReference, StaffReference.staff_id == Staff.id)
+        .join(AdmissionStudent, AdmissionStudent.id == StaffReference.student_id)
+        .outerjoin(Department, Department.id == Staff.department_id)
+        .where(*base_filters)
+        .group_by(Staff.id, Staff.name, Staff.designation, Department.name)
+        .order_by(func.count(AdmissionStudent.id).desc())
+    )
+    staff_result = await db.execute(staff_stmt)
+    staff_summary = [
+        {
+            "id": str(row.id),
+            "name": row.name,
+            "designation": row.designation,
+            "department_name": row.department_name,
+            "admission_count": row.admission_count,
+        }
+        for row in staff_result.all()
+    ]
+
+    # Totals
+    total_consultancy = sum(c["admission_count"] for c in consultancy_summary)
+    total_staff = sum(s["admission_count"] for s in staff_summary)
+
+    # Overall total admissions
+    total_stmt = select(func.count(AdmissionStudent.id)).where(*base_filters)
+    total_result = await db.execute(total_stmt)
+    total_admissions = total_result.scalar_one() or 0
+
+    return {
+        "total_admissions": total_admissions,
+        "total_by_consultancy": total_consultancy,
+        "total_by_staff": total_staff,
+        "consultancy_summary": consultancy_summary,
+        "staff_summary": staff_summary,
+    }
+
+
+@admission_entry_router.get("/reports/reference-details", tags=["Admission - Reports"])
+async def get_reference_details(
+    reference_type: str = None,
+    reference_id: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    page: int = 1,
+    size: int = 50,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Get detailed admission list filtered by a specific consultancy or staff member.
+    reference_type: 'consultancy' or 'staff'
+    reference_id: UUID of the consultancy or staff member
+    """
+    from datetime import datetime as dt
+    from common.models.gate.visitor_model import ConsultancyReference, StaffReference
+    from common.models.admission.consultancy import Consultancy
+    from common.models.master.institution import Staff
+
+    filters = [AdmissionStudent.deleted_at.is_(None)]
+
+    if start_date:
+        try:
+            filters.append(AdmissionStudent.created_at >= dt.fromisoformat(start_date))
+        except ValueError:
+            pass
+    if end_date:
+        try:
+            filters.append(AdmissionStudent.created_at <= dt.fromisoformat(end_date))
+        except ValueError:
+            pass
+
+    if reference_type == "consultancy" and reference_id:
+        stmt = (
+            select(AdmissionStudent)
+            .join(ConsultancyReference, ConsultancyReference.student_id == AdmissionStudent.id)
+            .where(ConsultancyReference.consultancy_id == reference_id, *filters)
+        )
+        count_stmt = (
+            select(func.count(AdmissionStudent.id))
+            .join(ConsultancyReference, ConsultancyReference.student_id == AdmissionStudent.id)
+            .where(ConsultancyReference.consultancy_id == reference_id, *filters)
+        )
+    elif reference_type == "staff" and reference_id:
+        stmt = (
+            select(AdmissionStudent)
+            .join(StaffReference, StaffReference.student_id == AdmissionStudent.id)
+            .where(StaffReference.staff_id == reference_id, *filters)
+        )
+        count_stmt = (
+            select(func.count(AdmissionStudent.id))
+            .join(StaffReference, StaffReference.student_id == AdmissionStudent.id)
+            .where(StaffReference.staff_id == reference_id, *filters)
+        )
+    else:
+        return {"items": [], "total": 0, "page": page, "size": size, "pages": 0}
+
+    # Total count
+    total_res = await db.execute(count_stmt)
+    total = total_res.scalar_one() or 0
+    pages = (total + size - 1) // size if size > 0 else 0
+
+    # Paginated data
+    offset = (page - 1) * size
+    stmt = stmt.order_by(desc(AdmissionStudent.created_at)).offset(offset).limit(size)
+    result = await db.execute(stmt)
+    students = result.scalars().all()
+
+    items = [
+        {
+            "id": str(s.id),
+            "enquiry_number": s.enquiry_number,
+            "name": s.name,
+            "mobile": s.student_mobile,
+            "parent_name": s.father_name,
+            "native_place": s.native_place,
+            "status": s.status.value if hasattr(s.status, "value") else s.status,
+            "reference_type": s.reference_type,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "institution_id": str(s.institution_id) if s.institution_id else None,
+            "department_id": str(s.department_id) if s.department_id else None,
+        }
+        for s in students
+    ]
+
+    return {"items": items, "total": total, "page": page, "size": size, "pages": pages}
 
 
 lead_followup_router = APIRouter()
@@ -1110,97 +1252,15 @@ async def get_lead_students(
     if paid_student_ids:
         query = query.where(AdmissionStudent.id.notin_(paid_student_ids))
 
-    # -----------------------------
-    # Combine AdmissionStudent + AdmissionVisitor (ENQUIRY) into a single paginated response
-    # - Use QueryBuilder-built `query` to fetch ALL matching AdmissionStudent rows (we'll paginate after merging)
-    # - Fetch AdmissionVisitor rows with status ENQUIRY and apply simple search if provided
-    # - Map AdmissionVisitor fields to match AdmissionStudentResponse shape
-    # -----------------------------
-    # Parse pagination params from request
-    try:
-        page = int(request.query_params.get("page", 1))
-    except Exception:
-        page = 1
-    try:
-        size = int(request.query_params.get("size", 50))
-    except Exception:
-        size = 50
+    # Paginate and return — use DISTINCT ON primary key to avoid DISTINCT
+    # across all selected columns (some may be JSON without equality ops).
+    pk = getattr(AdmissionStudent, "id", None)
+    if pk is not None:
+        query = query.distinct(pk)
+    else:
+        query = query.distinct()
 
-    # Execute student query (all matching rows)
-    res_students = await db.execute(query)
-    student_objs = res_students.scalars().all()
-
-    # Build visitor query (only ENQUIRY visitors)
-    visitor_q = select(AdmissionVisitor).where(AdmissionVisitor.status == AdmissionStatusEnum.ENQUIRY)
-
-    # Apply simple search on visitors if 'search' present in query params
-    search_term = request.query_params.get("search")
-    if search_term:
-        visitor_q = visitor_q.where(
-            (AdmissionVisitor.student_name.ilike(f"%{search_term}%")) |
-            (AdmissionVisitor.gate_pass_no.ilike(f"%{search_term}%")) |
-            (AdmissionVisitor.mobile_number.ilike(f"%{search_term}%"))
-        )
-
-    res_visitors = await db.execute(visitor_q)
-    visitor_objs = res_visitors.scalars().all()
-
-    # Map visitors into AdmissionStudent-like dicts so frontend schema matches
-    # — but exclude visitors that already have a corresponding AdmissionStudent
-    # (dedupe by enquiry_number OR mobile number). This prevents the same lead
-    # from appearing twice when both tables contain the same person.
-    student_enq_set = {s.enquiry_number for s in student_objs if getattr(s, "enquiry_number", None)}
-    student_mobile_set = {s.student_mobile for s in student_objs if getattr(s, "student_mobile", None)}
-
-    mapped_visitors = []
-    for v in visitor_objs:
-        # if visitor matches an existing AdmissionStudent by enquiry_number or mobile, skip it
-        if (v.gate_pass_no and v.gate_pass_no in student_enq_set) or (
-            v.mobile_number and v.mobile_number in student_mobile_set
-        ):
-            continue
-
-        mapped_visitors.append({
-            "id": v.id,
-            "enquiry_number": v.gate_pass_no,
-            "name": v.student_name,
-            "student_mobile": v.mobile_number,
-            "status": v.status,
-            "institution_id": v.institution_id,
-            "created_at": v.created_at,
-            "updated_at": v.updated_at,
-        })
-
-    # Normalize student objects to dicts (Pydantic/JSON friendly)
-    normalized_students = []
-    for s in student_objs:
-        normalized_students.append({
-            "id": s.id,
-            "enquiry_number": s.enquiry_number,
-            "name": s.name,
-            "student_mobile": s.student_mobile,
-            "status": s.status,
-            "institution_id": s.institution_id,
-            "created_at": s.created_at,
-            "updated_at": s.updated_at,
-        })
-
-    # Merge, sort by created_at desc
-    combined = sorted(normalized_students + mapped_visitors, key=lambda x: x.get("created_at") or 0, reverse=True)
-
-    total = len(combined)
-    pages = (total + size - 1) // size if size > 0 else 1
-    start = (page - 1) * size
-    end = start + size
-    page_items = combined[start:end]
-
-    return {
-        "items": page_items,
-        "total": total,
-        "page": page,
-        "size": size,
-        "pages": pages,
-    }
+    return await paginate(db, query)
 
 
 admission_router = APIRouter()

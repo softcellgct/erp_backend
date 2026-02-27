@@ -28,6 +28,6 @@ class Consultancy(Base):
         SQLEnum(ProofType, native_enum=False),
         nullable=False
     )
-    contact_person_proof_number: Mapped[str] = mapped_column(String, nullable=False)
-    contact_person_proof_url: Mapped[str] = mapped_column(String, nullable=False)
+    contact_person_proof_number: Mapped[str] = mapped_column(String(100), nullable=False)
+    contact_person_proof_url: Mapped[str] = mapped_column(String(500), nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)

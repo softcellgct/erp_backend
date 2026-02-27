@@ -1,6 +1,5 @@
 from components.db.base_model import Base
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, UUID
-from datetime import datetime
+from sqlalchemy import Column, String, Boolean, ForeignKey, UUID, Integer, Text
 from sqlalchemy.orm import relationship
 
 class AdmissionType(Base):
@@ -13,9 +12,7 @@ class AdmissionType(Base):
     code = Column(String(50), unique=True, nullable=True)
     description = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True)
-
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # created_at / updated_at inherited from Base with server_default=func.now()
 
     def __repr__(self):
         return f"<AdmissionType(name='{self.name}')>"
@@ -32,9 +29,6 @@ class SeatQuota(Base):
     description = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
     def __repr__(self):
         return f"<SeatQuota(name='{self.name}')>"
 
@@ -42,6 +36,7 @@ class SeatQuota(Base):
 class DocumentType(Base):
     """
     Document Type Master (e.g., Transfer Certificate, Marksheet, Community Certificate)
+    Also serves as the required certificates configuration for admission.
     """
     __tablename__ = "document_types"
 
@@ -51,36 +46,46 @@ class DocumentType(Base):
     description = Column(String(500), nullable=True)
     is_active = Column(Boolean, default=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
     def __repr__(self):
         return f"<DocumentType(name='{self.name}')>"
 
 
-class AdmissionRequiredCertificates(Base):
+class SchoolMaster(Base):
     """
-    Required Certificates for admission process.
-    Simplified model without academic year and department constraints.
+    School Master - maintains a list of schools for 10th/12th dropdowns.
+    Schools can be uploaded via PDF/CSV/Excel in bulk.
+    
+    Structure based on Tamil Nadu school block information:
+    - district: District name
+    - block: Block/Taluk name  
+    - name: School name
+    - school_address: Full address of the school
+    - pincode: Postal code
     """
-    __tablename__ = "admission_required_certificates"
+    __tablename__ = "school_master"
 
-    document_type_id = Column(
-        UUID(as_uuid=True),
-        ForeignKey("document_types.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-
-    is_mandatory = Column(Boolean, default=False, nullable=False)
-    description = Column(String(500), nullable=True)
+    name = Column(String(500), nullable=False, index=True)  # school_name from PDF
+    block = Column(String(200), nullable=True, index=True)  # block_name from PDF
+    district = Column(String(200), nullable=True, index=True)  # district from PDF
+    school_address = Column(String(500), nullable=True)  # school_address from PDF
+    pincode = Column(String(6), nullable=True, index=True)  # pincode from PDF
+    state = Column(String(100), nullable=True, default="Tamil Nadu")
     is_active = Column(Boolean, default=True)
 
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    def __repr__(self):
+        return f"<SchoolMaster(name='{self.name}', block='{self.block}', district='{self.district}')>"
 
-    # Relationships
-    document_type = relationship("DocumentType")
+
+class SchoolListUpload(Base):
+    """
+    Tracks school list file uploads for audit purposes.
+    """
+    __tablename__ = "school_list_uploads"
+
+    file_name = Column(String(500), nullable=False)
+    file_url = Column(String(1000), nullable=True)
+    record_count = Column(Integer, default=0)
+    upload_status = Column(String(50), default="completed")  # completed, failed, partial
 
     def __repr__(self):
-        return f"<AdmissionRequiredCertificates(document_type_id={self.document_type_id})>"
+        return f"<SchoolListUpload(file_name='{self.file_name}', records={self.record_count})>"

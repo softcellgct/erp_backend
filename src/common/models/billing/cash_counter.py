@@ -9,13 +9,13 @@ class CashCounter(Base):
     __tablename__ = "cash_counters"
 
     institution_id: Mapped[UUID] = mapped_column(
-        # ForeignKey("institutions.id", ondelete="CASCADE"), 
+        ForeignKey("institutions.id", ondelete="CASCADE"),
         nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
-    password: Mapped[str] = mapped_column(nullable=False)
+    password: Mapped[str] = mapped_column(String(255), nullable=False)
 
     # Relationships
     # payments: Mapped[list["Payment"]] = relationship("Payment", back_populates="cash_counter")

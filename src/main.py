@@ -1,81 +1,87 @@
+"""
+ERP Backend — Application entry point.
+"""
+
 from contextlib import asynccontextmanager
-from fastapi import Depends, FastAPI
-from fastapi_pagination import add_pagination
+
 import uvicorn
-from apps import ROUTERS
-from components.settings import settings
-from components.db.base_model import Base
-# from components.minio import ensure_bucket
-from components.minio import ensure_bucket
-from logs.logging import logger
-from components.middleware import PermissionMiddleware, get_current_user, public_route
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from components.db.db import (
-    create_database_if_not_exists,
-    create_roles_and_users,
-    db_engine,
-    setup_schemas,
+from fastapi_pagination import add_pagination
+
+from apps import ROUTERS
+from core.config import settings
+from core.database import (
+    async_engine,
+    create_schemas,
+    ensure_database_exists,
+    seed_initial_data,
     sync_engine,
 )
+from core.logging import logger
+from core.security import AuthMiddleware, get_current_user, public_route
+from components.db.base_model import Base
+from infrastructure.storage import ensure_bucket
 
-app = FastAPI(swagger_ui_parameters={"persistAuthorization": True},title="ERP_Backend")
 
-app.add_middleware(PermissionMiddleware)
+# ── App factory ───────────────────────────────────────
+app = FastAPI(
+    title=settings.app_name,
+    swagger_ui_parameters={"persistAuthorization": True},
+)
+
+# Middleware — order matters (last added = first executed)
+app.add_middleware(AuthMiddleware)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 add_pagination(app)
 
 
-"""
-=====================================================
-# Middleware setup things happens here
-=====================================================
-"""
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
-    allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (GET, POST, PUT, DELETE, etc.)
-    allow_headers=["*"],  # Allows all headers
-)
-
-
+# ── Root health-check ─────────────────────────────────
 @app.get("/")
 @public_route
-async def read_root():
-    return {"Hello": "World"}
+async def health_check():
+    return {"status": "ok"}
 
 
+# ── Register routers ─────────────────────────────────
 for router, prefix in ROUTERS:
     app.include_router(router, prefix=prefix, dependencies=[Depends(get_current_user)])
 
 
+# ── Lifespan ──────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Ensure the database exists before starting the application
-    if create_database_if_not_exists():
-        logger.info("Database created successfully ✅")
+    # Database
+    if ensure_database_exists():
+        logger.info("Database created ✅")
         with sync_engine.begin() as conn:
-            setup_schemas(conn, Base.metadata)
+            create_schemas(conn, Base.metadata)
     else:
-        logger.info("Database already exists")
+        logger.info("Database exists ✅")
 
-    
-    async with db_engine.begin() as conn:
+    async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-        logger.info("PostgreSQL Database connected successfully.✅")
+        logger.info("Tables synced ✅")
 
-    await create_roles_and_users()
-    logger.info("Database roles and initial users are set up.✅")
+    await seed_initial_data()
+    logger.info("Seed data ready ✅")
 
     ensure_bucket(settings.minio_bucket)
-    logger.info("MinIO Bucket is ensured.✅")
+    logger.info("Storage bucket ready ✅")
 
     yield
-
-    logger.info("Application exited successfully.✅")
+    logger.info("Shutdown complete ✅")
 
 
 app.router.lifespan_context = lifespan
+
 
 if __name__ == "__main__":
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

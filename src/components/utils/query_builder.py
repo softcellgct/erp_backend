@@ -61,7 +61,14 @@ def build_safe_query(cls, params: QueryParams, searchable_fields: Optional[List[
         
         if search_expr:
             query = query.where(or_(*search_expr))
-            query = query.distinct()
+            # Use DISTINCT ON the model primary key to avoid DISTINCT across
+            # all selected columns (which can include JSON types lacking
+            # an equality operator). This produces PostgreSQL DISTINCT ON (id).
+            pk = getattr(cls, "id", None)
+            if pk is not None:
+                query = query.distinct(pk)
+            else:
+                query = query.distinct()
             
     elif params.search:
         # Fallback to default recursive search if no fields provided? 

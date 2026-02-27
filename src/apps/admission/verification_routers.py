@@ -14,7 +14,7 @@ from common.models.admission.form_verification import (
     SubmittedCertificate,
 )
 from common.models.admission.admission_entry import AdmissionStudent
-from common.models.master.admission_masters import AdmissionRequiredCertificates
+from common.models.master.admission_masters import DocumentType
 from common.schemas.admission.form_verification import (
     AdmissionFormVerificationResponse,
     AdmissionFormVerificationUpdate,
@@ -447,11 +447,9 @@ async def get_required_certificates(
             detail=f"Admission student with ID {student_id} not found",
         )
 
-    # Get all active required certificates (no longer filtered by academic year and department)
-    certs_query = select(AdmissionRequiredCertificates).options(
-        selectinload(AdmissionRequiredCertificates.document_type)
-    ).where(
-        AdmissionRequiredCertificates.is_active == True
+    # Get all active required certificates (now from document_types directly)
+    certs_query = select(DocumentType).where(
+        DocumentType.is_active == True
     )
     result = await db.execute(certs_query)
     required_certs = result.scalars().all()
@@ -469,7 +467,7 @@ async def get_required_certificates(
     submitted_certs = result.scalars().all()
 
     # Build response
-    submitted_cert_map = {str(sc.required_certificate_id): sc for sc in submitted_certs}
+    submitted_cert_map = {str(sc.document_type_id): sc for sc in submitted_certs}
 
     response = []
     for cert in required_certs:
@@ -477,8 +475,8 @@ async def get_required_certificates(
         response.append(
             {
                 "id": cert.id,
-                "document_type_id": cert.document_type_id,
-                "document_type_name": cert.document_type.name if cert.document_type else None,
+                "document_type_id": cert.id,
+                "document_type_name": cert.name,
                 "is_mandatory": cert.is_mandatory,
                 "description": cert.description,
                 "submitted_certificate_id": submitted.id if submitted else None,
@@ -505,7 +503,7 @@ async def get_required_certificates(
 async def submit_certificate(
     request: Request,
     student_id: UUID,
-    required_certificate_id: UUID = Query(...),
+    document_type_id: UUID = Query(...),
     file: Optional[UploadFile] = File(None),
     remarks: Optional[str] = None,
     scope: Optional[str] = None,
@@ -534,22 +532,22 @@ async def submit_certificate(
         await db.commit()
         await db.refresh(form_verification)
 
-    # Check if required certificate exists
-    cert_query = select(AdmissionRequiredCertificates).where(
-        AdmissionRequiredCertificates.id == required_certificate_id
+    # Check if document type exists
+    cert_query = select(DocumentType).where(
+        DocumentType.id == document_type_id
     )
     result = await db.execute(cert_query)
     if not result.scalar_one_or_none():
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Required certificate not found",
+            detail="Document type not found",
         )
 
     # Check if already submitted
     existing_query = select(SubmittedCertificate).where(
         and_(
             SubmittedCertificate.form_verification_id == form_verification.id,
-            SubmittedCertificate.required_certificate_id == required_certificate_id,
+            SubmittedCertificate.document_type_id == document_type_id,
         )
     )
     result = await db.execute(existing_query)
@@ -585,7 +583,7 @@ async def submit_certificate(
         # Create new record
         submitted_cert = SubmittedCertificate(
             form_verification_id=form_verification.id,
-            required_certificate_id=required_certificate_id,
+            document_type_id=document_type_id,
             is_received=True,
             received_at=datetime.utcnow(),
             received_by=user_id,
@@ -695,12 +693,10 @@ async def mark_provisionally_allotted(
         )
 
     # Check if all mandatory certificates are received
-    required_certs_query = select(AdmissionRequiredCertificates).where(
+    required_certs_query = select(DocumentType).where(
         and_(
-            AdmissionRequiredCertificates.academic_year_id == student.academic_year_id,
-            AdmissionRequiredCertificates.department_id == student.department_id,
-            AdmissionRequiredCertificates.is_mandatory == True,
-            AdmissionRequiredCertificates.is_active == True,
+            DocumentType.is_mandatory == True,
+            DocumentType.is_active == True,
         )
     )
     result = await db.execute(required_certs_query)
@@ -713,14 +709,14 @@ async def mark_provisionally_allotted(
     result = await db.execute(submitted_query)
     submitted_certs = result.scalars().all()
 
-    submitted_cert_ids = set(sc.required_certificate_id for sc in submitted_certs if sc.is_received)
+    submitted_cert_ids = set(sc.document_type_id for sc in submitted_certs if sc.is_received)
 
     # Check if all mandatory certificates are received
     for cert in required_certs:
         if cert.id not in submitted_cert_ids:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Mandatory certificate '{cert.document_type.name}' is not received",
+                detail=f"Mandatory certificate '{cert.name}' is not received",
             )
 
     # Update status

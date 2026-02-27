@@ -1541,7 +1541,7 @@ class BillingService:
         stmt = select(HostelFeeStructure)
         if filters:
             if filters.get("college_id"):
-                stmt = stmt.where(HostelFeeStructure.college_id == filters.get("college_id"))
+                stmt = stmt.where(HostelFeeStructure.institution_id == filters.get("college_id"))
             if filters.get("hostel_id"):
                 stmt = stmt.where(HostelFeeStructure.hostel_id == filters.get("hostel_id"))
             if filters.get("financial_year_id"):
@@ -1567,7 +1567,7 @@ class BillingService:
         stmt = select(TransportFeeStructure)
         if filters:
             if filters.get("college_id"):
-                stmt = stmt.where(TransportFeeStructure.college_id == filters.get("college_id"))
+                stmt = stmt.where(TransportFeeStructure.institution_id == filters.get("college_id"))
             if filters.get("route_id"):
                 stmt = stmt.where(TransportFeeStructure.route_id == filters.get("route_id"))
             if filters.get("batch"):
@@ -1579,7 +1579,7 @@ class BillingService:
         from common.models.billing.transport import TransportRoute
         stmt = select(TransportRoute)
         if college_id:
-            stmt = stmt.where(TransportRoute.college_id == college_id)
+            stmt = stmt.where(TransportRoute.institution_id == college_id)
         res = await db.execute(stmt)
         return res.scalars().all()
 

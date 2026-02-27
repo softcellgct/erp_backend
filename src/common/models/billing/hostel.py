@@ -9,7 +9,7 @@ from sqlalchemy import JSON
 class HostelFeeStructure(Base):
     __tablename__ = "hostel_fee_structures"
 
-    college_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True)
+    institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True)
     hostel_id: Mapped[UUID] = mapped_column(ForeignKey("hostels.id", ondelete="SET NULL"), nullable=True, index=True)
     room_type: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
     ac: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -20,10 +20,10 @@ class HostelFeeStructure(Base):
     installments: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # relationships
-    financial_year = relationship("FinancialYear", lazy="selectin")
-    fee_head = relationship("FeeHead", lazy="selectin")
-    fee_sub_head = relationship("FeeSubHead", lazy="selectin")
+    # relationships — lazy="select" to avoid loading related records eagerly
+    financial_year = relationship("FinancialYear", lazy="select")
+    fee_head = relationship("FeeHead", lazy="select")
+    fee_sub_head = relationship("FeeSubHead", lazy="select")
 
 
 class HostelRoom(Base):

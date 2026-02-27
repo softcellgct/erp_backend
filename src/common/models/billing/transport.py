@@ -9,7 +9,7 @@ from sqlalchemy import JSON
 class TransportRoute(Base):
     __tablename__ = "transport_routes"
 
-    college_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True)
+    institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String(150), nullable=False)
     code: Mapped[str | None] = mapped_column(String(50), nullable=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
@@ -28,7 +28,7 @@ class TransportBus(Base):
 class TransportFeeStructure(Base):
     __tablename__ = "transport_fee_structures"
 
-    college_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True)
+    institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True)
     batch: Mapped[str | None] = mapped_column(String(100), nullable=True, index=True)
     route_id: Mapped[UUID | None] = mapped_column(ForeignKey("transport_routes.id", ondelete="SET NULL"), nullable=True, index=True)
     fee_head_id: Mapped[UUID | None] = mapped_column(ForeignKey("fee_heads.id", ondelete="SET NULL"), nullable=True, index=True)

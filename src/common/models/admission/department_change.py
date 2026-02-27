@@ -1,5 +1,4 @@
 import enum
-from datetime import datetime
 from components.db.base_model import Base
 from sqlalchemy import (
     Column,
@@ -10,6 +9,7 @@ from sqlalchemy import (
     Enum,
     Text,
     UUID,
+    func,
 )
 from sqlalchemy.orm import relationship
 
@@ -22,8 +22,7 @@ class DepartmentChangeStatusEnum(str, enum.Enum):
 
 class DepartmentChangeRequest(Base):
     """
-    Model to track department change requests for admitted students.
-    Students can request to change their department after admission.
+    Track department change requests for admitted students.
     """
 
     __tablename__ = "department_change_requests"
@@ -41,16 +40,18 @@ class DepartmentChangeRequest(Base):
         UUID(as_uuid=True),
         ForeignKey("departments.id", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
     )
 
     requested_department_id = Column(
         UUID(as_uuid=True),
         ForeignKey("departments.id", ondelete="RESTRICT"),
         nullable=False,
+        index=True,
     )
 
     # Request details
-    reason = Column(Text, nullable=False)  # Reason for department change
+    reason = Column(Text, nullable=False)
     status = Column(
         Enum(DepartmentChangeStatusEnum),
         default=DepartmentChangeStatusEnum.PENDING,
@@ -58,23 +59,28 @@ class DepartmentChangeRequest(Base):
         index=True,
     )
 
-    # Tracking
+    # Tracking — proper FK to users
     requested_by = Column(
-        UUID(as_uuid=True), nullable=False
-    )  # User ID who created the request (staff/student)
-    requested_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+        UUID(as_uuid=True),
+        ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
+        nullable=False,
+        index=True,
+    )
+    requested_at = Column(DateTime, server_default=func.now(), nullable=False)
 
     # Approval/Rejection
-    reviewed_by = Column(UUID(as_uuid=True), nullable=True)  # Admin/Staff who reviewed
+    reviewed_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
+        nullable=True,
+        index=True,
+    )
     reviewed_at = Column(DateTime, nullable=True)
-    remarks = Column(Text, nullable=True)  # Admin remarks
+    remarks = Column(Text, nullable=True)
 
     # Metadata
     is_active = Column(Boolean, default=True, nullable=False)
-    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
-    updated_at = Column(
-        DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
-    )
+    # created_at / updated_at inherited from Base
 
     # Relationships
     student = relationship("AdmissionStudent", back_populates="department_change_requests")

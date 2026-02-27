@@ -1,6 +1,8 @@
 from sqlalchemy import select, update
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from common.models.master.institution import Institution, Department, Course, Class
+from common.models.master.annual_task import AcademicYear, AcademicYearCourse
 from fastapi import HTTPException
 from uuid import UUID
 
@@ -147,3 +149,66 @@ class InstitutionService:
             stmt = stmt.where(Hostel.institution_id == institution_id)
         result = await self.db.execute(stmt)
         return result.scalars().all()
+
+    # ========== NEW: Cascading filter methods for admission form ==========
+
+    async def list_admission_active_years(self, institution_id: UUID | None = None):
+        """
+        Get academic years where admission_active=True AND status=True.
+        Optionally filtered by institution_id.
+        """
+        stmt = select(AcademicYear).where(
+            AcademicYear.admission_active == True,
+            AcademicYear.status == True,
+            AcademicYear.deleted_at.is_(None),
+        ).options(
+            selectinload(AcademicYear.institution).selectinload(Institution.departments),
+            selectinload(AcademicYear.available_courses)
+        )
+        if institution_id:
+            stmt = stmt.where(AcademicYear.institution_id == institution_id)
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
+
+    async def list_departments_by_institution(self, institution_id: UUID):
+        """
+        Get active departments for a specific institution.
+        """
+        stmt = select(Department).where(
+            Department.institution_id == institution_id,
+            Department.is_active == True,
+            Department.deleted_at.is_(None),
+        ).order_by(Department.name)
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
+
+    async def list_courses_by_department(self, department_id: UUID):
+        """
+        Get active courses for a specific department.
+        """
+        stmt = select(Course).where(
+            Course.department_id == department_id,
+            Course.is_active == True,
+            Course.deleted_at.is_(None),
+        ).order_by(Course.title)
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
+
+    async def list_active_courses_for_year(self, academic_year_id: UUID):
+        """
+        Get courses linked to an academic year via AcademicYearCourse where is_active=True.
+        Returns the Course objects.
+        """
+        from sqlalchemy.orm import selectinload
+        stmt = (
+            select(AcademicYearCourse)
+            .options(selectinload(AcademicYearCourse.course))
+            .where(
+                AcademicYearCourse.academic_year_id == academic_year_id,
+                AcademicYearCourse.is_active == True,
+                AcademicYearCourse.deleted_at.is_(None),
+            )
+        )
+        result = await self.db.execute(stmt)
+        year_courses = result.scalars().all()
+        return [yc.course for yc in year_courses if yc.course and yc.course.is_active]

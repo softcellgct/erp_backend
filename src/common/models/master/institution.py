@@ -1,7 +1,7 @@
 from uuid import UUID
 from components.db.base_model import Base
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Boolean, ForeignKey, Integer, String, JSON
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String, JSON
 
 class Institution(Base):
     __tablename__ = "institutions"
@@ -9,13 +9,12 @@ class Institution(Base):
     name: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # Relationships
+    # Relationships — lazy="select" avoids loading ALL departments on every institution fetch
     departments: Mapped[list["Department"]] = relationship(
-        back_populates="institution", lazy="selectin"
+        back_populates="institution", lazy="select"
     )
-    # Using string forward reference to avoid circular import issues at module level
     academic_years: Mapped[list["AcademicYear"]] = relationship(
-        "AcademicYear", back_populates="institution"
+        "AcademicYear", back_populates="institution", lazy="select"
     )
 
 
@@ -23,14 +22,15 @@ class Department(Base):
     __tablename__ = "departments"
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     name: Mapped[str] = mapped_column(String(255))
-    institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id"))
+    institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id"), index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Relationships
     institution: Mapped["Institution"] = relationship(
-        back_populates="departments", lazy="selectin"
+        back_populates="departments", lazy="select"
     )
-    courses: Mapped[list["Course"]] = relationship(back_populates="department")
+    courses: Mapped[list["Course"]] = relationship(back_populates="department", lazy="select")
+    staff_members: Mapped[list["Staff"]] = relationship(back_populates="department", lazy="select")
 
 
 class Course(Base):
@@ -39,25 +39,30 @@ class Course(Base):
     title: Mapped[str] = mapped_column(String(255))
     short_name: Mapped[str | None] = mapped_column(
         String(50), unique=True, index=True, nullable=True
-    )  # Short name / abbreviation
+    )
     level: Mapped[str] = mapped_column(
         String(10), nullable=False, default="UG", server_default="UG"
-    )  # "UG" or "PG"
-    department_id: Mapped[UUID] = mapped_column(ForeignKey("departments.id"))
+    )
+    department_id: Mapped[UUID] = mapped_column(ForeignKey("departments.id"), index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     course_duration_years: Mapped[int] = mapped_column(Integer, nullable=False)
     total_semesters: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # Relationships
     department: Mapped["Department"] = relationship(back_populates="courses")
-    classes: Mapped[list["Class"]] = relationship(back_populates="course")
+    classes: Mapped[list["Class"]] = relationship(back_populates="course", lazy="select")
+
+    __table_args__ = (
+        CheckConstraint("course_duration_years > 0", name="ck_course_duration_positive"),
+        CheckConstraint("total_semesters > 0", name="ck_total_semesters_positive"),
+    )
 
 
 class Class(Base):
     __tablename__ = "classes"
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     title: Mapped[str] = mapped_column(String(255))
-    course_id: Mapped[UUID] = mapped_column(ForeignKey("courses.id"))
+    course_id: Mapped[UUID] = mapped_column(ForeignKey("courses.id"), index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
@@ -73,5 +78,16 @@ class Hostel(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
-    # relationships
-    # rooms and structures will reference this table
+
+class Staff(Base):
+    """Staff members linked to a department."""
+    __tablename__ = "staff_members"
+
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    department_id: Mapped[UUID] = mapped_column(ForeignKey("departments.id", ondelete="CASCADE"), nullable=False, index=True)
+    contact_number: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    designation: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    # Relationships
+    department: Mapped["Department"] = relationship(back_populates="staff_members", lazy="select")

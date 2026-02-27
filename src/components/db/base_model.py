@@ -2,8 +2,8 @@ import uuid
 from typing import Any, List, Optional
 
 from fastapi import Request
-from sqlalchemy import UUID, DateTime, ForeignKey, delete, func, select, update
-from sqlalchemy.ext.declarative import as_declarative
+from sqlalchemy import UUID, DateTime, ForeignKey, Index, delete, func, select, update
+from sqlalchemy.ext.declarative import as_declarative, declared_attr
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -12,6 +12,8 @@ class Base:  # noqa: F811
     """
     =====================================================
     # Base model to include default columns for all tables.
+    # Every table gets: UUID PK, audit timestamps, soft-delete,
+    # and a partial index on deleted_at for fast active-record lookups.
     =====================================================
     """
 
@@ -28,24 +30,24 @@ class Base:  # noqa: F811
         onupdate=func.now(),
     )
     deleted_at: Mapped[Optional[DateTime]] = mapped_column(
-        DateTime(timezone=True), nullable=True
+        DateTime(timezone=True), nullable=True, index=True
     )
 
     created_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
         nullable=True,
-    )  # Track the creator
+    )
     updated_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
         nullable=True,
-    )  # Track the updater
+    )
     deleted_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
         nullable=True,
-    )  # Soft delete column
+    )
 
 
     """
@@ -64,6 +66,9 @@ class Base:  # noqa: F811
         if not data_list:
             raise ValueError("No data provided to create records.")
 
+        # Audit fields to exclude from nested objects
+        AUDIT_FIELDS = {"created_at", "updated_at", "deleted_at", "created_by", "updated_by", "deleted_by"}
+
         objects = []
         for data in data_list:
             user_id = await get_user_id(request)
@@ -78,13 +83,17 @@ class Base:  # noqa: F811
                     related_model = rel.mapper.class_
                     # If a single related object is provided as a dict -> create instance
                     if not rel.uselist and isinstance(rel_data, dict):
-                        obj_data[rel_name] = related_model(**rel_data)
+                        # Remove audit fields from nested data to let server_default handle them
+                        cleaned_data = {k: v for k, v in rel_data.items() if k not in AUDIT_FIELDS}
+                        obj_data[rel_name] = related_model(**cleaned_data)
                     # If a list of related objects is provided -> convert each
                     elif rel.uselist and isinstance(rel_data, list):
                         new_list = []
                         for item in rel_data:
                             if isinstance(item, dict):
-                                new_list.append(related_model(**item))
+                                # Remove audit fields from nested data to let server_default handle them
+                                cleaned_item = {k: v for k, v in item.items() if k not in AUDIT_FIELDS}
+                                new_list.append(related_model(**cleaned_item))
                             elif hasattr(item, '_sa_instance_state'):
                                 new_list.append(item)
                             else:
@@ -119,6 +128,9 @@ class Base:  # noqa: F811
             raise ValueError("No data provided for update.")
 
         user_id = await get_user_id(request)
+
+        # Audit fields to exclude from nested objects
+        AUDIT_FIELDS = {"created_at", "updated_at", "deleted_at", "created_by", "updated_by", "deleted_by"}
 
         # Extract and validate IDs
         obj_ids = []
@@ -188,12 +200,16 @@ class Base:  # noqa: F811
                                             setattr(related_obj, r_key, r_val)
                                     setattr(instance, key, related_obj)
                                 else:
-                                    new_obj = related_model(**value)
+                                    # Remove audit fields from nested data
+                                    cleaned_value = {k: v for k, v in value.items() if k not in AUDIT_FIELDS}
+                                    new_obj = related_model(**cleaned_value)
                                     session.add(new_obj)
                                     setattr(instance, key, new_obj)
 
                             else:
-                                new_obj = related_model(**value)
+                                # Remove audit fields from nested data
+                                cleaned_value = {k: v for k, v in value.items() if k not in AUDIT_FIELDS}
+                                new_obj = related_model(**cleaned_value)
                                 session.add(new_obj)
                                 setattr(instance, key, new_obj)
 
@@ -223,11 +239,15 @@ class Base:  # noqa: F811
                                                     setattr(related_obj, r_key, r_val)
                                             new_list.append(related_obj)
                                         else:
-                                            new_item = related_model(**item)
+                                            # Remove audit fields from nested data
+                                            cleaned_item = {k: v for k, v in item.items() if k not in AUDIT_FIELDS}
+                                            new_item = related_model(**cleaned_item)
                                             session.add(new_item)
                                             new_list.append(new_item)
                                     else:
-                                        new_item = related_model(**item)
+                                        # Remove audit fields from nested data
+                                        cleaned_item = {k: v for k, v in item.items() if k not in AUDIT_FIELDS}
+                                        new_item = related_model(**cleaned_item)
                                         session.add(new_item)
                                         new_list.append(new_item)
                                 elif hasattr(item, "_sa_instance_state"):

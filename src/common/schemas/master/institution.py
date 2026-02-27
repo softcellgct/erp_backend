@@ -124,3 +124,33 @@ class HostelResponse(HostelBase):
 
     class Config:
         from_attributes = True
+
+
+# Staff Schemas
+class StaffCreate(BaseModel):
+    name: str
+    department_id: UUID
+    contact_number: Optional[str] = None
+    designation: Optional[str] = None
+    is_active: bool = True
+
+class StaffUpdate(BaseModel):
+    id: UUID
+    name: Optional[str] = None
+    department_id: Optional[UUID] = None
+    contact_number: Optional[str] = None
+    designation: Optional[str] = None
+    is_active: Optional[bool] = None
+
+class StaffResponse(BaseModel):
+    id: UUID
+    name: str
+    department_id: UUID
+    contact_number: Optional[str] = None
+    designation: Optional[str] = None
+    is_active: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True

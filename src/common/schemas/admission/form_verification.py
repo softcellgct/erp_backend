@@ -112,7 +112,7 @@ class SubmittedCertificateCreate(SubmittedCertificateBase):
     """Schema for creating submitted certificate"""
 
     form_verification_id: UUID
-    required_certificate_id: UUID
+    document_type_id: UUID
     file_name: Optional[str] = None
     file_type: Optional[str] = None
     file_size: Optional[str] = None
@@ -131,7 +131,7 @@ class SubmittedCertificateResponse(SubmittedCertificateBase):
 
     id: UUID
     form_verification_id: UUID
-    required_certificate_id: UUID
+    document_type_id: UUID
     file_name: Optional[str]
     file_type: Optional[str]
     file_size: Optional[str]

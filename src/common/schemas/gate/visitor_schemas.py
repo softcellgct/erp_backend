@@ -141,47 +141,5 @@ class VisitorResponse(BaseModel):
         from_attributes = True
 
 
-# =====================================================
-# VendorVisitor Schemas
-# =====================================================
 
-class VendorVisitorCreate(BaseModel):
-    # Base visitor info
-    visitor: VisitorCreate
-    
-    # Vendor-specific info
-    company_name: str = Field(..., max_length=255)
-    company_address: Optional[str] = None
-    company_contact: Optional[str] = Field(None, max_length=20)
-    designation: Optional[str] = Field(None, max_length=100)
-    
-    carrying_materials: bool = False
-    material_description: Optional[str] = None
-
-
-class VendorVisitorUpdate(BaseModel):
-    company_name: Optional[str] = Field(None, max_length=255)
-    company_address: Optional[str] = None
-    company_contact: Optional[str] = Field(None, max_length=20)
-    designation: Optional[str] = Field(None, max_length=100)
-    
-    carrying_materials: Optional[bool] = None
-    material_description: Optional[str] = None
-
-
-class VendorVisitorResponse(BaseModel):
-    id: UUID
-    visitor_id: UUID
-    company_name: str
-    company_address: Optional[str]
-    company_contact: Optional[str]
-    designation: Optional[str]
-    carrying_materials: bool
-    material_description: Optional[str]
-    
-    created_at: datetime
-    updated_at: datetime
-
-    class Config:
-        from_attributes = True
 

@@ -2,7 +2,7 @@ from datetime import date
 from urllib.parse import unquote
 from uuid import UUID
 
-from common.models.gate.visitor_model import AdmissionVisitor, VisitStatus
+from common.models.admission.admission_entry import AdmissionStudent, SourceEnum, VisitStatusEnum
 from components.db.db import get_db_session
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -75,7 +75,7 @@ visitor_router.include_router(
 
 
 from .services import admission_crud
-from components.utils.query_builder import SafeQueryBuilder
+from fastapi_querybuilder.dependencies import QueryBuilder
 
 admission_visitor_router = APIRouter(
     prefix="/admission-visitors",
@@ -84,6 +84,7 @@ admission_visitor_router = APIRouter(
 
 @admission_visitor_router.post(
     "",
+    response_model=AdmissionVisitorRead,
     name="Create Admission Visitor",
     description="Create a new admission visitor record.",
 )
@@ -147,7 +148,7 @@ async def get_admission_visitor_reports(
     request: Request,
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
-    visit_status: VisitStatus | None = Query(default=None),
+    visit_status: VisitStatusEnum | None = Query(default=None),
     institution_id: UUID | None = Query(default=None),
     reference_type: str | None = Query(default=None),
     search: str | None = Query(default=None),
@@ -177,7 +178,7 @@ async def export_admission_visitor_reports(
     request: Request,
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
-    visit_status: VisitStatus | None = Query(default=None),
+    visit_status: VisitStatusEnum | None = Query(default=None),
     institution_id: UUID | None = Query(default=None),
     reference_type: str | None = Query(default=None),
     search: str | None = Query(default=None),
@@ -222,19 +223,7 @@ async def get_admission_visitor(
 async def get_all_admission_visitors(
     request: Request,
     db: AsyncSession = Depends(get_db_session),
-    query = SafeQueryBuilder(
-        AdmissionVisitor,
-        searchable_fields=[
-            "student_name",
-            "gate_pass_no",
-            "mobile_number",
-            "parent_or_guardian_name",
-            "aadhar_number",
-            "native_place",
-            "vehicle_number",
-            "reference_type",
-        ],
-    ),
+    query = QueryBuilder(AdmissionStudent),
 
 ):
     visitors = await admission_crud.get_all(db, query)

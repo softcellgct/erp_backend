@@ -1,5 +1,9 @@
 """
-Pydantic Schemas for Admission Required Certificates Master
+Pydantic Schemas for Required Certificates (backed by DocumentType).
+
+After consolidation, `admission_required_certificates` was merged into
+`document_types`.  These schemas are the API contract for the
+/required-certificates endpoints.
 """
 from uuid import UUID
 from pydantic import BaseModel
@@ -7,73 +11,34 @@ from typing import Optional
 from datetime import datetime
 
 
-class AdmissionRequiredCertificatesBase(BaseModel):
-    """Base schema for admission required certificates"""
-
-    document_type_id: UUID
+class RequiredCertificateCreate(BaseModel):
+    """Create a new document-type / required-certificate entry."""
+    name: str
+    code: Optional[str] = None
     is_mandatory: bool = False
     description: Optional[str] = None
     is_active: bool = True
 
 
-class AdmissionRequiredCertificatesCreate(AdmissionRequiredCertificatesBase):
-    """Schema for creating admission required certificates"""
-
-    pass
-
-
-class AdmissionRequiredCertificatesUpdate(BaseModel):
-    """Schema for updating admission required certificates"""
-
+class RequiredCertificateUpdate(BaseModel):
+    """Update an existing document-type / required-certificate."""
+    name: Optional[str] = None
+    code: Optional[str] = None
     is_mandatory: Optional[bool] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
 
 
-class AdmissionRequiredCertificatesResponse(AdmissionRequiredCertificatesBase):
-    """Response schema for admission required certificates"""
-
+class RequiredCertificateResponse(BaseModel):
+    """Response schema — maps directly to DocumentType columns."""
     id: UUID
-    created_at: datetime
-    updated_at: datetime
-
-    # Include related data
-    class DocumentTypeInfo(BaseModel):
-        id: UUID
-        name: str
-        code: Optional[str]
-        is_mandatory: bool
-
-        class Config:
-            from_attributes = True
-
-    document_type_info: Optional[DocumentTypeInfo] = None
-
-    class Config:
-        from_attributes = True
-
-
-class AdmissionRequiredCertificatesListResponse(BaseModel):
-    """List response schema with related data"""
-
-    id: UUID
-    document_type_id: UUID
+    name: str
+    code: Optional[str] = None
     is_mandatory: bool
-    is_active: bool
     description: Optional[str] = None
+    is_active: bool
     created_at: datetime
     updated_at: datetime
-
-    # Include nested relationships
-    class DocumentTypeNested(BaseModel):
-        id: UUID
-        name: str
-        code: Optional[str] = None
-
-        class Config:
-            from_attributes = True
-
-    document_type: Optional[DocumentTypeNested] = None
 
     class Config:
         from_attributes = True

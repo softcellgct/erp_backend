@@ -1,7 +1,7 @@
 from uuid import UUID
 from components.db.base_model import Base
 from sqlalchemy.orm import mapped_column, Mapped, relationship
-from sqlalchemy import Boolean, ForeignKey, Integer, String, event, insert, select
+from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint, event, insert, select
 from logs.logging import logger
 
 class Module(Base):
@@ -35,25 +35,23 @@ class Screen(Base):
     __tablename__ = "screens"
     name: Mapped[str] = mapped_column(
         String(50), unique=True, index=True
-    )  # e.g., PRE_ADMISSION, ADMISSION_ENQUIRY
+    )
     title: Mapped[str] = mapped_column(String(255))
-    module_id: Mapped[UUID] = mapped_column(ForeignKey("modules.id"))
+    module_id: Mapped[UUID] = mapped_column(ForeignKey("modules.id"), index=True)
     parent_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("screens.id"), nullable=True
-    )  # For hierarchy
+        ForeignKey("screens.id"), nullable=True, index=True
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # Relationships
+    # Relationships — lazy="select" avoids recursive N+1 on parent/children tree
     module: Mapped["Module"] = relationship(back_populates="screens")
     parent: Mapped["Screen"] = relationship(
-        "Screen", back_populates="children", remote_side="Screen.id", lazy="selectin"
+        "Screen", back_populates="children", remote_side="Screen.id", lazy="select"
     )
     children: Mapped[list["Screen"]] = relationship(
         "Screen",
-        back_populates="parent", lazy="selectin"
+        back_populates="parent", lazy="select"
     )
-    # permissions: Mapped[list["Permission"]] = relationship(back_populates="screen")
-    # user_permissions: Mapped[list["UserPermission"]] = relationship("UserPermission", back_populates="screen", foreign_keys="[UserPermission.screen_id]")
     role_permissions: Mapped[list["RolePermission"]] = relationship(
         "RolePermission",
         back_populates="screen",
@@ -98,21 +96,10 @@ def insert_initial_screens(target, connection, **kwargs):
         print(f"Failed to insert initial screens: {e}")
 
 
-class Permission(Base):
-    __tablename__ = "permissions"
-    key: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    path: Mapped[str] = mapped_column(String(255))
-    method: Mapped[str] = mapped_column(String(10))
-    description: Mapped[str] = mapped_column(String(255))
-    tag: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    # Relationships
-    # screen: Mapped["Screen"] = relationship(back_populates="permissions")
-
-
 class RolePermission(Base):
     __tablename__ = "role_permissions"
-    role_id: Mapped[UUID] = mapped_column(ForeignKey("roles.id"), primary_key=True)
-    screen_id: Mapped[UUID] = mapped_column(ForeignKey("screens.id"), primary_key=True)
+    role_id: Mapped[UUID] = mapped_column(ForeignKey("roles.id"), nullable=False, index=True)
+    screen_id: Mapped[UUID] = mapped_column(ForeignKey("screens.id"), nullable=False, index=True)
     can_view: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     can_create: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     can_edit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -121,6 +108,10 @@ class RolePermission(Base):
     # Relationships
     role: Mapped["Role"] = relationship("Role", back_populates="role_permissions")
     screen: Mapped["Screen"] = relationship("Screen", back_populates="role_permissions")
+
+    __table_args__ = (
+        UniqueConstraint("role_id", "screen_id", name="uq_role_screen"),
+    )
 
 
 @event.listens_for(RolePermission.__table__, "after_create")
@@ -155,17 +146,4 @@ def insert_initial_role_permissions(target, connection, **kwargs):
         print(f"Failed to insert initial role permissions: {e}")
 
 
-class UserPermission(Base):
-    __tablename__ = "user_permissions"
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), primary_key=True)
-    screen_id: Mapped[UUID] = mapped_column(ForeignKey("screens.id"), primary_key=True)
-    can_view: Mapped[bool | None] = mapped_column(
-        Boolean, nullable=True
-    )  # None means "inherit from role"
-    can_create: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    can_edit: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
-    can_delete: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
-    # Relationships
-    # user: Mapped["User"] = relationship(back_populates="user_permissions")
-    # screen: Mapped["Screen"] = relationship(back_populates="user_permissions")
