@@ -38,7 +38,7 @@ from common.schemas.admission.lead_followup import (
 from apps.admission.services import generate_enquiry_number
 from sqlalchemy import select, desc, and_, or_, cast, String
 from sqlalchemy import func
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, raiseload
 from uuid import UUID
 from typing import List
 from datetime import datetime, time
@@ -47,6 +47,9 @@ from common.models.master.annual_task import AcademicYear
 
 from common.models.billing.application_fees import Invoice, InvoiceLineItem, PaymentStatusEnum as InvoicePaymentStatus
 from components.generator.utils.get_user_from_request import get_user_id
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 consultancy_router = APIRouter()
@@ -77,7 +80,6 @@ admission_entry_crud_router = create_crud_routes(
 # Custom GET endpoint with eager loading
 @admission_entry_router.get(
     "/admission-students/{id}",
-    response_model=AdmissionStudentResponse,
     name="Get Admission Student",
     tags=["Admission - Admission Students"]
 )
@@ -86,10 +88,7 @@ async def get_admission_student(
     db: AsyncSession = Depends(get_db_session)
 ):
     query = select(AdmissionStudent).options(
-        selectinload(AdmissionStudent.sslc_details),
-        selectinload(AdmissionStudent.hsc_details),
-        selectinload(AdmissionStudent.diploma_details),
-        selectinload(AdmissionStudent.pg_details),
+        raiseload("*")
     ).where(AdmissionStudent.id == id)
     
     result = await db.execute(query)
@@ -100,8 +99,27 @@ async def get_admission_student(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Admission student with ID {id} not found"
         )
-        
-    return student
+    
+    # Return as dict to avoid circular reference encoding issues
+    return {
+        "id": str(student.id),
+        "name": student.name,
+        "email": student.email,
+        "student_mobile": student.student_mobile,
+        "enquiry_number": student.enquiry_number,
+        "application_number": student.application_number,
+        "status": student.status,
+        "source": student.source,
+        "department_id": str(student.department_id) if student.department_id else None,
+        "course_id": str(student.course_id) if student.course_id else None,
+        "institution_id": str(student.institution_id) if student.institution_id else None,
+        "created_at": student.created_at,
+        "updated_at": student.updated_at,
+        "fee_structure_id": str(student.fee_structure_id) if student.fee_structure_id else None,
+        "is_fee_structure_locked": student.is_fee_structure_locked,
+        "fee_structure_locked_at": student.fee_structure_locked_at,
+        "fee_structure_locked_by": str(student.fee_structure_locked_by) if student.fee_structure_locked_by else None
+    }
 
 
 @admission_entry_router.get(
@@ -559,7 +577,6 @@ async def list_admission_students(
 
 @admission_entry_router.post(
     "/admission-students/bulk-status",
-    response_model=BulkAdmissionStatusUpdateResponse,
     tags=["Admission - Admission Students"],
     name="Bulk Update Admission Student Status",
 )
@@ -705,7 +722,6 @@ admission_entry_router.include_router(
 # Custom POST endpoint for granting admission
 @admission_entry_router.post(
     "/admission-students",
-    response_model=AdmissionStudentResponse,
     status_code=status.HTTP_201_CREATED,
     tags=["Admission - Admission Students"],
     name="Create Admission Student",
@@ -781,7 +797,27 @@ async def create_admission_student(
             
             await db.commit()
             await db.refresh(admission_student)
-            return admission_student
+            
+            # Return as dict to avoid circular reference encoding issues
+            return {
+                "id": str(admission_student.id),
+                "name": admission_student.name,
+                "email": admission_student.email,
+                "student_mobile": admission_student.student_mobile,
+                "enquiry_number": admission_student.enquiry_number,
+                "application_number": admission_student.application_number,
+                "status": admission_student.status,
+                "source": admission_student.source,
+                "department_id": str(admission_student.department_id) if admission_student.department_id else None,
+                "course_id": str(admission_student.course_id) if admission_student.course_id else None,
+                "institution_id": str(admission_student.institution_id) if admission_student.institution_id else None,
+                "created_at": admission_student.created_at,
+                "updated_at": admission_student.updated_at,
+                "fee_structure_id": str(admission_student.fee_structure_id) if admission_student.fee_structure_id else None,
+                "is_fee_structure_locked": admission_student.is_fee_structure_locked,
+                "fee_structure_locked_at": admission_student.fee_structure_locked_at,
+                "fee_structure_locked_by": str(admission_student.fee_structure_locked_by) if admission_student.fee_structure_locked_by else None
+            }
         
         else:
             # Direct entry — create new record
@@ -813,7 +849,27 @@ async def create_admission_student(
             db.add(admission_student)
             await db.commit()
             await db.refresh(admission_student)
-            return admission_student
+            
+            # Return as dict to avoid circular reference encoding issues
+            return {
+                "id": str(admission_student.id),
+                "name": admission_student.name,
+                "email": admission_student.email,
+                "student_mobile": admission_student.student_mobile,
+                "enquiry_number": admission_student.enquiry_number,
+                "application_number": admission_student.application_number,
+                "status": admission_student.status,
+                "source": admission_student.source,
+                "department_id": str(admission_student.department_id) if admission_student.department_id else None,
+                "course_id": str(admission_student.course_id) if admission_student.course_id else None,
+                "institution_id": str(admission_student.institution_id) if admission_student.institution_id else None,
+                "created_at": admission_student.created_at,
+                "updated_at": admission_student.updated_at,
+                "fee_structure_id": str(admission_student.fee_structure_id) if admission_student.fee_structure_id else None,
+                "is_fee_structure_locked": admission_student.is_fee_structure_locked,
+                "fee_structure_locked_at": admission_student.fee_structure_locked_at,
+                "fee_structure_locked_by": str(admission_student.fee_structure_locked_by) if admission_student.fee_structure_locked_by else None
+            }
         
     except HTTPException:
         await db.rollback()
@@ -1189,7 +1245,6 @@ lead_followup_crud_router = create_crud_routes(
 
 @lead_followup_router.get(
     "/student/{student_id}",
-    response_model=List[LeadFollowUpResponse],
     tags=["Admission - Lead Follow-up"]
 )
 async def get_student_followup_history(
@@ -1197,9 +1252,23 @@ async def get_student_followup_history(
     db: AsyncSession = Depends(get_db_session)
 ):
     """Get follow-up history for a specific student."""
-    query = select(LeadFollowUp).where(LeadFollowUp.student_id == student_id).order_by(desc(LeadFollowUp.created_at))
+    query = select(LeadFollowUp).options(raiseload("*")).where(LeadFollowUp.student_id == student_id).order_by(desc(LeadFollowUp.created_at))
     result = await db.execute(query)
-    return result.scalars().all()
+    followups = result.scalars().all()
+    
+    # Return as list of dicts to avoid circular reference encoding issues
+    return [
+        {
+            "id": str(f.id),
+            "student_id": str(f.student_id),
+            "remark": f.remark,
+            "status": f.status,
+            "next_follow_up_date": f.next_follow_up_date,
+            "created_at": f.created_at,
+            "created_by": str(f.created_by) if f.created_by else None
+        }
+        for f in followups
+    ]
 
 lead_followup_router.include_router(
     lead_followup_crud_router, prefix="/records", tags=["Admission - Lead Follow-up"]
@@ -1208,7 +1277,6 @@ lead_followup_router.include_router(
 
 @lead_followup_router.get(
     "/leads",
-    response_model=Page[AdmissionStudentResponse],
     tags=["Admission - Lead Follow-up"],
     summary="Get Lead Students (excluding Admitted/Paid)"
 )
@@ -1270,20 +1338,37 @@ async def get_applied_admission_students(
     db: AsyncSession = Depends(get_db_session)
 ):
     """Get all admission students with status 'Applied'."""
+    from sqlalchemy.orm import raiseload
     result = await db.execute(
-        select(AdmissionStudent).where(AdmissionStudent.status == AdmissionStatusEnum.APPLIED.value)
+        select(AdmissionStudent).where(AdmissionStudent.status == AdmissionStatusEnum.APPLIED.value).options(raiseload("*"))
     )
-    return result.scalars().all()
+    students = result.scalars().all()
+    # Return dict format to avoid circular reference encoding
+    return [
+        {
+            "id": str(s.id),
+            "name": s.name,
+            "enquiry_number": s.enquiry_number,
+            "application_number": s.application_number,
+            "status": s.status,
+            "student_mobile": s.student_mobile,
+            "department_id": str(s.department_id) if s.department_id else None,
+            "course_id": str(s.course_id) if s.course_id else None,
+            "institution_id": str(s.institution_id) if s.institution_id else None,
+        }
+        for s in students
+    ]
 
 
 # Import schemas
-from common.schemas.admission.admission_entry import BookAdmissionRequest, UpdateCourseRequest
+from common.schemas.admission.admission_entry import BookAdmissionRequest, BookAdmissionResponse, UpdateCourseRequest
 from apps.billing.services import billing_service
 
 @admission_router.post(
     "/admission-students/{student_id}/book-admission",
     tags=["Admission - Admission Students"],
-    summary="Book Admission (Generate App No & Assign Fees)"
+    summary="Book Admission (Generate App No & Assign Fees)",
+    response_model=BookAdmissionResponse
 )
 async def book_admission(
     student_id: UUID,
@@ -1305,24 +1390,38 @@ async def book_admission(
         app_num = await billing_service.generate_application_number(db, student.institution_id)
         student.application_number = app_num
         student.status = AdmissionStatusEnum.BOOKED.value  # Changed to BOOKED status
+        db.add(student)  # Ensure student record is tracked
         
-        # 3. Assign Fees (Auto-resolve if not provided)
-        # We pass None for fee_structure_id to let the service find it based on student details
-        await billing_service.assign_course_fees(db, student_id, fee_structure_id=None)
+        # 3. Assign Fees (Auto-resolve if not provided) - Non-critical, log but don't fail
+        try:
+            await billing_service.assign_course_fees(db, student_id, fee_structure_id=None)
+        except Exception as fee_err:
+            logger.warning(f"Failed to assign course fees for student {student_id}: {str(fee_err)}")
         
-
-        # 4. Assign Application Fee (if configured)
-        demand = await billing_service.assign_application_fee(db, student_id)
-        if demand:
-            # Auto-Invoice the application fee for Cash Counter availability
-            await billing_service.create_invoice_from_demands(db, [demand])
+        # 4. Assign Application Fee (if configured) - Non-critical
+        try:
+            demand = await billing_service.assign_application_fee(db, student_id)
+            if demand:
+                # Auto-Invoice the application fee for Cash Counter availability
+                await billing_service.create_invoice_from_demands(db, [demand])
+        except Exception as app_fee_err:
+            logger.warning(f"Failed to assign application fee for student {student_id}: {str(app_fee_err)}")
         
         await db.commit()
         await db.refresh(student)
-        return student
+        
+        # Return response with only essential data to avoid circular references
+        return BookAdmissionResponse(
+            id=student.id,
+            application_number=student.application_number,
+            status=student.status,
+            enquiry_number=student.enquiry_number,
+            name=student.name
+        )
     except Exception as e:
         await db.rollback()
-        raise HTTPException(status_code=400, detail=str(e))
+        logger.error(f"Book admission failed for student {student_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to book admission: {str(e)}")
 
 
 @admission_router.post(

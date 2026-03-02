@@ -52,14 +52,14 @@ class FeeStructure(Base):
 
     # Relationships — only items eager-loaded; lookups are lazy to avoid N+1 explosion
     items = relationship("FeeStructureItem", back_populates="fee_structure", cascade="all, delete-orphan", lazy="selectin")
-    financial_year = relationship("FinancialYear", back_populates="fee_structures", lazy="select")
-    admission_year = relationship("AcademicYear", lazy="select")
+    financial_year = relationship("FinancialYear", back_populates="fee_structures", lazy="selectin")
+    admission_year = relationship("AcademicYear", lazy="selectin")
     
-    semester_period = relationship("SemesterPeriod", lazy="select")
-    admission_type = relationship("AdmissionType", lazy="select")
-    quota = relationship("SeatQuota", lazy="select")
-    degree = relationship("Course", lazy="select")
-    department = relationship("Department", lazy="select")
+    semester_period = relationship("SemesterPeriod", lazy="selectin")
+    admission_type = relationship("AdmissionType", lazy="selectin")
+    quota = relationship("SeatQuota", lazy="selectin")
+    degree = relationship("Course", lazy="selectin")
+    department = relationship("Department", lazy="selectin")
 
 
 class FeeStructureItem(Base):
@@ -79,8 +79,8 @@ class FeeStructureItem(Base):
     amount_by_year: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     order: Mapped[int] = mapped_column(nullable=True)
 
-    # Relationships — lazy="select" to avoid circular eager load with FeeStructure
-    fee_structure = relationship("FeeStructure", back_populates="items", lazy="select")
-    fee_head = relationship("FeeHead", lazy="select")
-    fee_sub_head = relationship("FeeSubHead", back_populates="structure_items", lazy="select")
+    # Relationships — lazy="selectin" to avoid circular eager load with FeeStructure
+    fee_structure = relationship("FeeStructure", back_populates="items", lazy="selectin")
+    fee_head = relationship("FeeHead", lazy="selectin")
+    fee_sub_head = relationship("FeeSubHead", back_populates="structure_items", lazy="selectin")
 

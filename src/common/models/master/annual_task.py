@@ -20,14 +20,14 @@ class AcademicYear(Base):
     institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id"), index=True)
     
     # Relationships
-    institution: Mapped["Institution"] = relationship("Institution", back_populates="academic_years")
+    institution: Mapped["Institution"] = relationship("Institution", back_populates="academic_years", lazy="selectin")
     
     available_courses: Mapped[List["AcademicYearCourse"]] = relationship(
-        "AcademicYearCourse", back_populates="academic_year", cascade="all, delete-orphan"
+        "AcademicYearCourse", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
     )
     
     semester_periods: Mapped[List["SemesterPeriod"]] = relationship(
-        "SemesterPeriod", back_populates="academic_year", cascade="all, delete-orphan"
+        "SemesterPeriod", back_populates="academic_year", cascade="all, delete-orphan", lazy="selectin"
     )
 
     __table_args__ = (
@@ -44,8 +44,8 @@ class AcademicYearCourse(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     
     # Relationships
-    academic_year: Mapped["AcademicYear"] = relationship("AcademicYear", back_populates="available_courses")
-    course: Mapped["Course"] = relationship("Course") 
+    academic_year: Mapped["AcademicYear"] = relationship("AcademicYear", back_populates="available_courses", lazy="selectin")
+    course: Mapped["Course"] = relationship("Course", lazy="selectin")
 
     __table_args__ = (
         UniqueConstraint("academic_year_id", "course_id", name="uq_academic_year_course"),
@@ -64,7 +64,7 @@ class SemesterPeriod(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     
     # Relationships
-    academic_year: Mapped["AcademicYear"] = relationship("AcademicYear", back_populates="semester_periods")
+    academic_year: Mapped["AcademicYear"] = relationship("AcademicYear", back_populates="semester_periods", lazy="selectin")
 
     __table_args__ = (
         CheckConstraint("from_date < to_date", name="ck_semester_period_dates"),

@@ -20,10 +20,10 @@ class HostelFeeStructure(Base):
     installments: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # relationships — lazy="select" to avoid loading related records eagerly
-    financial_year = relationship("FinancialYear", lazy="select")
-    fee_head = relationship("FeeHead", lazy="select")
-    fee_sub_head = relationship("FeeSubHead", lazy="select")
+    # relationships — lazy="selectin" to avoid loading related records eagerly
+    financial_year = relationship("FinancialYear", lazy="selectin")
+    fee_head = relationship("FeeHead", lazy="selectin")
+    fee_sub_head = relationship("FeeSubHead", lazy="selectin")
 
 
 class HostelRoom(Base):

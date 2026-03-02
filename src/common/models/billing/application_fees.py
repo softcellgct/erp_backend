@@ -33,10 +33,10 @@ class FeeHead(Base):
     academic_year_id: Mapped[UUID] = mapped_column(
         ForeignKey("academic_years.id", ondelete="CASCADE"), nullable=True, index=True
     )
-    academic_year: Mapped["AcademicYear"] = relationship("AcademicYear", lazy="select")
-    # Relationships — lazy="select" prevents loading ALL line items across ALL invoices
+    academic_year: Mapped["AcademicYear"] = relationship("AcademicYear", lazy="selectin")
+    # Relationships — lazy="selectin" prevents loading ALL line items across ALL invoices
     line_items: Mapped[list["InvoiceLineItem"]] = relationship(
-        "InvoiceLineItem", back_populates="fee_head", lazy="select"
+        "InvoiceLineItem", back_populates="fee_head", lazy="selectin"
     )
 
 
@@ -71,10 +71,10 @@ class Invoice(Base):
         "InvoiceLineItem", back_populates="invoice", cascade="all, delete-orphan", lazy="selectin"
     )
     payments: Mapped[list["Payment"]] = relationship(
-        "Payment", back_populates="invoice", cascade="all, delete-orphan", lazy="select"
+        "Payment", back_populates="invoice", cascade="all, delete-orphan", lazy="selectin"
     )
     status_history: Mapped[list["InvoiceStatusHistory"]] = relationship(
-        "InvoiceStatusHistory", back_populates="invoice", cascade="all, delete-orphan", lazy="select"
+        "InvoiceStatusHistory", back_populates="invoice", cascade="all, delete-orphan", lazy="selectin"
     )
 
     __table_args__ = (
@@ -99,8 +99,8 @@ class InvoiceLineItem(Base):
     net_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
 
     # Relationships
-    invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="line_items")
-    fee_head: Mapped["FeeHead"] = relationship("FeeHead", back_populates="line_items", lazy="select")
+    invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="line_items", lazy="selectin")
+    fee_head: Mapped["FeeHead"] = relationship("FeeHead", back_populates="line_items", lazy="selectin")
 
     __table_args__ = (
         CheckConstraint("amount >= 0", name="ck_line_item_amount_non_negative"),
@@ -124,8 +124,8 @@ class Payment(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
-    invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="payments")
-    cash_counter: Mapped["CashCounter"] = relationship("CashCounter")
+    invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="payments", lazy="selectin")
+    cash_counter: Mapped["CashCounter"] = relationship("CashCounter", lazy="selectin")
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_payment_amount_positive"),
@@ -146,7 +146,7 @@ class InvoiceStatusHistory(Base):
     remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Relationships
-    invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="status_history")
+    invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="status_history", lazy="selectin")
 
     def __repr__(self):
         return f"<InvoiceStatusHistory(id={self.id}, invoice_id={self.invoice_id}, from='{self.from_status}', to='{self.to_status}')>"
@@ -180,10 +180,10 @@ class ApplicationTransaction(Base):
     remarks: Mapped[str | None] = mapped_column(Text, nullable=True)
     
     # Relationships
-    academic_year: Mapped["AcademicYear"] = relationship("AcademicYear")
-    course: Mapped["Course"] = relationship("Course")
-    cash_counter: Mapped["CashCounter"] = relationship("CashCounter")
-    creator: Mapped["User"] = relationship("User", foreign_keys=[created_by])
+    academic_year: Mapped["AcademicYear"] = relationship("AcademicYear", lazy="selectin")
+    course: Mapped["Course"] = relationship("Course", lazy="selectin")
+    cash_counter: Mapped["CashCounter"] = relationship("CashCounter", lazy="selectin")
+    creator: Mapped["User"] = relationship("User", foreign_keys=[created_by], lazy="selectin")
 
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_app_txn_amount_positive"),

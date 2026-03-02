@@ -95,12 +95,13 @@ class AdmissionFormVerification(Base):
     # created_at / updated_at inherited from Base
 
     # Relationships
-    student = relationship("AdmissionStudent", back_populates="form_verification")
+    student = relationship("AdmissionStudent", back_populates="form_verification", lazy="selectin")
     submitted_certificates = relationship(
         "SubmittedCertificate",
         back_populates="form_verification",
         cascade="all, delete-orphan",
         passive_deletes=True,
+        lazy="selectin",
     )
 
     def __repr__(self):
@@ -158,9 +159,9 @@ class SubmittedCertificate(Base):
 
     # Relationships
     form_verification = relationship(
-        "AdmissionFormVerification", back_populates="submitted_certificates"
+        "AdmissionFormVerification", back_populates="submitted_certificates", lazy="selectin"
     )
-    required_certificate = relationship("DocumentType")
+    required_certificate = relationship("DocumentType", lazy="selectin")
 
     def __repr__(self):
         return f"<SubmittedCertificate(form_verification_id={self.form_verification_id}, is_received={self.is_received})>"

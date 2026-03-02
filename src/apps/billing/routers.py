@@ -666,7 +666,6 @@ async def search_student_dues(
 
 @router.post(
     "/cash-counters/pay",
-    response_model=PaymentResponse,
     tags=["Billing - Cash Counters"],
     summary="Accept payment at cash counter"
 )

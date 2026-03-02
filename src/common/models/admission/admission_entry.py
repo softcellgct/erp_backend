@@ -138,9 +138,9 @@ class AdmissionStudent(Base):
     branch = Column(String(200), nullable=True)
 
     # Relationships linked to Foreign Keys
-    institution = relationship("Institution")
-    department = relationship("Department")
-    course = relationship("Course")
+    institution = relationship("Institution", lazy="selectin")
+    department = relationship("Department", lazy="selectin")
+    course = relationship("Course", lazy="selectin")
 
     # Previous Academic Level
     previous_academic_level = Column(Enum(PreviousAcademicLevelEnum), nullable=True)
@@ -210,9 +210,9 @@ class AdmissionStudent(Base):
     )
 
     # Relationships linked to Foreign Keys
-    admission_quota = relationship("SeatQuota")
-    admission_type = relationship("AdmissionType")
-    fee_structure = relationship("FeeStructure", lazy="select")
+    admission_quota = relationship("SeatQuota", lazy="selectin")
+    admission_type = relationship("AdmissionType", lazy="selectin")
+    fee_structure = relationship("FeeStructure", lazy="selectin")
 
     # Relationships
     sslc_details = relationship(
@@ -221,6 +221,7 @@ class AdmissionStudent(Base):
         uselist=False,
         cascade="all, delete-orphan",
         passive_deletes=True,
+        lazy="selectin",
     )
     hsc_details = relationship(
         "HSCDetails",
@@ -228,6 +229,7 @@ class AdmissionStudent(Base):
         uselist=False,
         cascade="all, delete-orphan",
         passive_deletes=True,
+        lazy="selectin",
     )
     diploma_details = relationship(
         "DiplomaDetails",
@@ -235,6 +237,7 @@ class AdmissionStudent(Base):
         uselist=False,
         cascade="all, delete-orphan",
         passive_deletes=True,
+        lazy="selectin",
     )
     pg_details = relationship(
         "PGDetails",
@@ -242,6 +245,7 @@ class AdmissionStudent(Base):
         uselist=False,
         cascade="all, delete-orphan",
         passive_deletes=True,
+        lazy="selectin",
     )
     form_verification = relationship(
         "AdmissionFormVerification",
@@ -249,25 +253,27 @@ class AdmissionStudent(Base):
         uselist=False,
         cascade="all, delete-orphan",
         passive_deletes=True,
+        lazy="selectin",
     )
     department_change_requests = relationship(
         "DepartmentChangeRequest",
         back_populates="student",
         cascade="all, delete-orphan",
         passive_deletes=True,
+        lazy="selectin",
     )
     # Reference relationships (from gate enquiry)
     consultancy_reference = relationship(
-        "ConsultancyReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True
+        "ConsultancyReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
     )
     staff_reference = relationship(
-        "StaffReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True
+        "StaffReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
     )
     student_reference = relationship(
-        "StudentReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True
+        "StudentReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
     )
     other_reference = relationship(
-        "OtherReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True
+        "OtherReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
     )
 
     def __repr__(self):
@@ -440,7 +446,7 @@ class SSLCDetails(Base):
     # created_at / updated_at inherited from Base
 
     # Relationship
-    student = relationship("AdmissionStudent", back_populates="sslc_details")
+    student = relationship("AdmissionStudent", back_populates="sslc_details", lazy="selectin")
 
     def __repr__(self):
         return f"<SSLCDetails(student_id={self.student_id}, register_number='{self.register_number}')>"
@@ -480,12 +486,13 @@ class HSCDetails(Base):
     medium_of_study = Column(String(50), nullable=True)
 
     # Relationship
-    student = relationship("AdmissionStudent", back_populates="hsc_details")
+    student = relationship("AdmissionStudent", back_populates="hsc_details", lazy="selectin")
     subject_marks = relationship(
         "HSCSubjectMark",
         back_populates="hsc_details",
         cascade="all, delete-orphan",
         passive_deletes=True,
+        lazy="selectin",
     )
 
     def __repr__(self):
@@ -513,7 +520,7 @@ class DiplomaDetails(Base):
     cgpa = Column(Float, nullable=True)
 
     # Relationship
-    student = relationship("AdmissionStudent", back_populates="diploma_details")
+    student = relationship("AdmissionStudent", back_populates="diploma_details", lazy="selectin")
 
     def __repr__(self):
         return f"<DiplomaDetails(student_id={self.student_id}, college_name='{self.college_name}')>"
@@ -538,7 +545,7 @@ class HSCSubjectMark(Base):
     obtained_marks = Column(Float, nullable=False)
 
     # Relationship
-    hsc_details = relationship("HSCDetails", back_populates="subject_marks")
+    hsc_details = relationship("HSCDetails", back_populates="subject_marks", lazy="selectin")
 
     def __repr__(self):
         return f"<HSCSubjectMark(subject='{self.subject_name}', obtained={self.obtained_marks}/{self.total_marks})>"
@@ -566,7 +573,7 @@ class PGDetails(Base):
     cgpa = Column(Float, nullable=True)
 
     # Relationship
-    student = relationship("AdmissionStudent", back_populates="pg_details")
+    student = relationship("AdmissionStudent", back_populates="pg_details", lazy="selectin")
 
     def __repr__(self):
         return f"<PGDetails(student_id={self.student_id}, degree_name='{self.degree_name}')>"

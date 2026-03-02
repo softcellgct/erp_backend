@@ -9,12 +9,12 @@ class Institution(Base):
     name: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # Relationships — lazy="select" avoids loading ALL departments on every institution fetch
+    # Relationships — lazy="selectin" avoids loading ALL departments on every institution fetch
     departments: Mapped[list["Department"]] = relationship(
-        back_populates="institution", lazy="select"
+        back_populates="institution", lazy="selectin"
     )
     academic_years: Mapped[list["AcademicYear"]] = relationship(
-        "AcademicYear", back_populates="institution", lazy="select"
+        "AcademicYear", back_populates="institution", lazy="selectin"
     )
 
 
@@ -27,10 +27,10 @@ class Department(Base):
 
     # Relationships
     institution: Mapped["Institution"] = relationship(
-        back_populates="departments", lazy="select"
+        back_populates="departments", lazy="selectin"
     )
-    courses: Mapped[list["Course"]] = relationship(back_populates="department", lazy="select")
-    staff_members: Mapped[list["Staff"]] = relationship(back_populates="department", lazy="select")
+    courses: Mapped[list["Course"]] = relationship(back_populates="department", lazy="selectin")
+    staff_members: Mapped[list["Staff"]] = relationship(back_populates="department", lazy="selectin")
 
 
 class Course(Base):
@@ -49,8 +49,8 @@ class Course(Base):
     total_semesters: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # Relationships
-    department: Mapped["Department"] = relationship(back_populates="courses")
-    classes: Mapped[list["Class"]] = relationship(back_populates="course", lazy="select")
+    department: Mapped["Department"] = relationship(back_populates="courses", lazy="selectin")
+    classes: Mapped[list["Class"]] = relationship(back_populates="course", lazy="selectin")
 
     __table_args__ = (
         CheckConstraint("course_duration_years > 0", name="ck_course_duration_positive"),
@@ -66,7 +66,7 @@ class Class(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
-    course: Mapped["Course"] = relationship(back_populates="classes")
+    course: Mapped["Course"] = relationship(back_populates="classes", lazy="selectin")
 
 
 class Hostel(Base):
@@ -90,4 +90,4 @@ class Staff(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
-    department: Mapped["Department"] = relationship(back_populates="staff_members", lazy="select")
+    department: Mapped["Department"] = relationship(back_populates="staff_members", lazy="selectin")

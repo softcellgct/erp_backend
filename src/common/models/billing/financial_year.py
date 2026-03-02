@@ -14,8 +14,8 @@ class FinancialYear(Base):
     active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False, index=True)
     institution_id: Mapped[UUID] = mapped_column(ForeignKey("institutions.id", ondelete="CASCADE"), nullable=False, index=True)
 
-    # Relationships — lazy="select" to avoid loading ALL fee structures on every year fetch
-    fee_structures = relationship("FeeStructure", back_populates="financial_year", lazy="select")
+    # Relationships — lazy="selectin" to avoid loading ALL fee structures on every year fetch
+    fee_structures = relationship("FeeStructure", back_populates="financial_year", lazy="selectin")
 
     __table_args__ = (
         CheckConstraint("start_date < end_date", name="ck_financial_year_start_lt_end"),

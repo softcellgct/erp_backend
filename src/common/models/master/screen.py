@@ -14,7 +14,7 @@ class Module(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
-    screens: Mapped[list["Screen"]] = relationship(back_populates="module")
+    screens: Mapped[list["Screen"]] = relationship(back_populates="module", lazy="selectin")
 
 
 @event.listens_for(Module.__table__, "after_create")
@@ -43,19 +43,20 @@ class Screen(Base):
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    # Relationships — lazy="select" avoids recursive N+1 on parent/children tree
-    module: Mapped["Module"] = relationship(back_populates="screens")
+    # Relationships — lazy="selectin" avoids recursive N+1 on parent/children tree
+    module: Mapped["Module"] = relationship(back_populates="screens", lazy="selectin")
     parent: Mapped["Screen"] = relationship(
-        "Screen", back_populates="children", remote_side="Screen.id", lazy="select"
+        "Screen", back_populates="children", remote_side="Screen.id", lazy="selectin"
     )
     children: Mapped[list["Screen"]] = relationship(
         "Screen",
-        back_populates="parent", lazy="select"
+        back_populates="parent", lazy="selectin"
     )
     role_permissions: Mapped[list["RolePermission"]] = relationship(
         "RolePermission",
         back_populates="screen",
         foreign_keys="RolePermission.screen_id",
+        lazy="selectin",
     )
 
 
@@ -106,8 +107,8 @@ class RolePermission(Base):
     can_delete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Relationships
-    role: Mapped["Role"] = relationship("Role", back_populates="role_permissions")
-    screen: Mapped["Screen"] = relationship("Screen", back_populates="role_permissions")
+    role: Mapped["Role"] = relationship("Role", back_populates="role_permissions", lazy="selectin")
+    screen: Mapped["Screen"] = relationship("Screen", back_populates="role_permissions", lazy="selectin")
 
     __table_args__ = (
         UniqueConstraint("role_id", "screen_id", name="uq_role_screen"),

@@ -61,7 +61,7 @@ class PersonType(Base):
 
     # Relationships
     visitors: Mapped[list["Visitor"]] = relationship(
-        "Visitor", back_populates="person_type"
+        "Visitor", back_populates="person_type", lazy="selectin"
     )
 
 
@@ -133,13 +133,13 @@ class Visitor(Base):
 
     # Relationships
     institution: Mapped["Institution"] = relationship(
-        "Institution", foreign_keys=[institution_id]
+        "Institution", foreign_keys=[institution_id], lazy="selectin"
     )
     department: Mapped["Department"] = relationship(
-        "Department", foreign_keys=[department_id]
+        "Department", foreign_keys=[department_id], lazy="selectin"
     )
     person_type: Mapped["PersonType"] = relationship(
-        "PersonType", back_populates="visitors", foreign_keys=[person_type_id]
+        "PersonType", back_populates="visitors", foreign_keys=[person_type_id], lazy="selectin"
     )
 
 

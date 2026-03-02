@@ -364,6 +364,16 @@ class AdmissionStudentUpdate(BaseModel):
 class BookAdmissionRequest(BaseModel):
     pass
 
+
+class BookAdmissionResponse(BaseModel):
+    """Response schema for book admission endpoint - returns only essential data"""
+    id: UUID
+    application_number: str
+    status: str
+    enquiry_number: str
+    name: str
+
+
 class UpdateCourseRequest(BaseModel):
     course_id: UUID
     fee_structure_id: UUID

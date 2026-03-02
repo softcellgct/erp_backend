@@ -17,7 +17,7 @@ class DemandBatch(Base):
     status: Mapped[str] = mapped_column(String(50), default="draft", nullable=False)
     generated_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    demands = relationship("DemandItem", back_populates="batch", cascade="all, delete-orphan", lazy="select")
+    demands = relationship("DemandItem", back_populates="batch", cascade="all, delete-orphan", lazy="selectin")
 
 
 class DemandItem(Base):
@@ -34,4 +34,4 @@ class DemandItem(Base):
     fee_head_id: Mapped[UUID | None] = mapped_column(ForeignKey("fee_heads.id", ondelete="SET NULL"), nullable=True, index=True)
     fee_sub_head_id: Mapped[UUID | None] = mapped_column(ForeignKey("fee_sub_heads.id", ondelete="SET NULL"), nullable=True, index=True)
 
-    batch = relationship("DemandBatch", back_populates="demands", lazy="select")
+    batch = relationship("DemandBatch", back_populates="demands", lazy="selectin")

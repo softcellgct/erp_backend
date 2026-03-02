@@ -483,26 +483,42 @@ class BillingService:
 
     async def apply_payment(self, db: AsyncSession, invoice_id: UUID, payload: PaymentCreate, counter_id: UUID | None = None):
         try:
+            from decimal import Decimal
+            from sqlalchemy.orm import raiseload
+            
             data = payload.dict(exclude_unset=True)
             # idempotency: check existing transaction_id
             transaction_id = data.get("transaction_id")
             if transaction_id:
-                stmt = select(Payment).where(Payment.transaction_id == transaction_id)
+                stmt = select(Payment).where(Payment.transaction_id == transaction_id).options(raiseload("*"))
                 res = await db.execute(stmt)
                 existing = res.scalar_one_or_none()
                 if existing:
-                    return existing
+                    # Return dict to avoid circular reference serialization
+                    return {
+                        "id": existing.id,
+                        "invoice_id": existing.invoice_id,
+                        "amount": float(existing.amount),
+                        "payment_method": existing.payment_method,
+                        "transaction_id": existing.transaction_id,
+                        "receipt_number": existing.receipt_number,
+                        "notes": existing.notes,
+                        "payment_date": existing.payment_date,
+                    }
 
-            stmt = select(Invoice).where(Invoice.id == invoice_id)
+            stmt = select(Invoice).where(Invoice.id == invoice_id).options(raiseload("*"))
             res = await db.execute(stmt)
             invoice = res.scalar_one_or_none()
             if not invoice:
                 raise ValueError("Invoice not found")
 
+            # Convert amount to Decimal for consistent arithmetic
+            payment_amount = Decimal(str(data["amount"]))
+            
             payment = Payment(
                 invoice_id=invoice.id,
                 cash_counter_id=counter_id,
-                amount=data["amount"],
+                amount=payment_amount,
                 payment_method=data["payment_method"],
                 transaction_id=transaction_id,
                 receipt_number=data.get("receipt_number"),
@@ -512,13 +528,16 @@ class BillingService:
             db.add(payment)
             await db.flush()
 
-            # update invoice paid / balance / status
-            invoice.paid_amount = (invoice.paid_amount or 0.0) + data["amount"]
-            invoice.balance_due = max(0.0, invoice.amount - invoice.paid_amount)
+            # Store payment_date before commit
+            payment_date = payment.payment_date
+
+            # update invoice paid / balance / status using Decimal arithmetic
+            invoice.paid_amount = (invoice.paid_amount or Decimal(0)) + payment_amount
+            invoice.balance_due = max(Decimal(0), invoice.amount - invoice.paid_amount)
             old_status = invoice.status
             if invoice.paid_amount >= invoice.amount:
                 invoice.status = PaymentStatusEnum.PAID
-            elif 0 < invoice.paid_amount < invoice.amount:
+            elif Decimal(0) < invoice.paid_amount < invoice.amount:
                 invoice.status = PaymentStatusEnum.PARTIAL
 
             # record status history
@@ -531,9 +550,18 @@ class BillingService:
             )
 
             await db.commit()
-            await db.refresh(payment)
-            await db.refresh(invoice)
-            return payment
+            
+            # Return dict response instead of model to avoid circular reference
+            return {
+                "id": payment.id,
+                "invoice_id": payment.invoice_id,
+                "amount": float(payment.amount),
+                "payment_method": payment.payment_method,
+                "transaction_id": payment.transaction_id,
+                "receipt_number": payment.receipt_number,
+                "notes": payment.notes,
+                "payment_date": payment_date,
+            }
         except Exception as e:
             await db.rollback()
             raise e

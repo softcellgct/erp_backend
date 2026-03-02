@@ -83,16 +83,18 @@ class DepartmentChangeRequest(Base):
     # created_at / updated_at inherited from Base
 
     # Relationships
-    student = relationship("AdmissionStudent", back_populates="department_change_requests")
+    student = relationship("AdmissionStudent", back_populates="department_change_requests", lazy="selectin")
     current_department = relationship(
         "Department",
         foreign_keys=[current_department_id],
         backref="students_changing_from",
+        lazy="selectin",
     )
     requested_department = relationship(
         "Department",
         foreign_keys=[requested_department_id],
         backref="students_changing_to",
+        lazy="selectin",
     )
 
     def __repr__(self):

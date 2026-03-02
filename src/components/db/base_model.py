@@ -4,8 +4,170 @@ from typing import Any, List, Optional
 from fastapi import Request
 from sqlalchemy import UUID, DateTime, ForeignKey, Index, delete, func, select, update
 from sqlalchemy.ext.declarative import as_declarative, declared_attr
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, defer, selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+
+# Audit fields to exclude from nested objects
+_AUDIT_FIELDS = {"created_at", "updated_at", "deleted_at", "created_by", "updated_by", "deleted_by"}
+
+
+def _convert_nested_rels(model_class, data: dict, session=None) -> dict:
+    """
+    Recursively walk *data* and convert any dict / list-of-dicts that
+    correspond to a SQLAlchemy relationship on *model_class* into proper
+    model instances.  Works at arbitrary nesting depth.
+
+    * to-one  (uselist=False) : dict  → model instance
+    * to-many (uselist=True)  : [dict, …] → [model instance, …]
+
+    Already-materialised SA instances (have ``_sa_instance_state``) are
+    left untouched.  Audit columns are stripped before constructing new
+    instances so server defaults apply.
+    """
+    from sqlalchemy.inspection import inspect
+
+    mapper = inspect(model_class)
+    for rel_name, rel in mapper.relationships.items():
+        if rel_name not in data or data[rel_name] is None:
+            continue
+
+        rel_data = data[rel_name]
+        related_model = rel.mapper.class_
+
+        if not rel.uselist:
+            # ---- to-one ----
+            if isinstance(rel_data, dict):
+                cleaned = {k: v for k, v in rel_data.items() if k not in _AUDIT_FIELDS}
+                # recurse before constructing the instance
+                cleaned = _convert_nested_rels(related_model, cleaned, session)
+                obj = related_model(**cleaned)
+                if session is not None:
+                    session.add(obj)
+                data[rel_name] = obj
+            # already a model instance → leave it
+        else:
+            # ---- to-many ----
+            if isinstance(rel_data, list):
+                new_list = []
+                for item in rel_data:
+                    if isinstance(item, dict):
+                        cleaned = {k: v for k, v in item.items() if k not in _AUDIT_FIELDS}
+                        cleaned = _convert_nested_rels(related_model, cleaned, session)
+                        obj = related_model(**cleaned)
+                        if session is not None:
+                            session.add(obj)
+                        new_list.append(obj)
+                    elif hasattr(item, "_sa_instance_state"):
+                        new_list.append(item)
+                    else:
+                        raise ValueError(
+                            f"Invalid related item for relationship '{rel_name}': {item}"
+                        )
+                data[rel_name] = new_list
+
+    return data
+
+
+async def _convert_nested_rels_for_update(
+    model_class, data: dict, session: AsyncSession
+) -> dict:
+    """
+    Like ``_convert_nested_rels`` but *update-aware*: when a nested dict
+    carries an ``id`` key the existing row is fetched and updated in-place
+    instead of creating a new instance.  Recurses to any depth.
+    """
+    from sqlalchemy.inspection import inspect
+
+    mapper = inspect(model_class)
+    for rel_name, rel in mapper.relationships.items():
+        if rel_name not in data or data[rel_name] is None:
+            continue
+
+        rel_data = data[rel_name]
+        related_model = rel.mapper.class_
+
+        if not rel.uselist:
+            # ---- to-one ----
+            if isinstance(rel_data, dict):
+                data[rel_name] = await _dict_to_instance(
+                    related_model, rel_data, session
+                )
+        else:
+            # ---- to-many ----
+            if isinstance(rel_data, list):
+                new_list = []
+                for item in rel_data:
+                    if isinstance(item, dict):
+                        new_list.append(
+                            await _dict_to_instance(related_model, item, session)
+                        )
+                    elif hasattr(item, "_sa_instance_state"):
+                        new_list.append(item)
+                    else:
+                        raise ValueError(
+                            f"Invalid related item for relationship '{rel_name}': {item}"
+                        )
+                data[rel_name] = new_list
+
+    return data
+
+
+async def _dict_to_instance(model_class, data: dict, session: AsyncSession):
+    """
+    Convert a single dict into a model instance.
+    * If the dict contains ``id``, fetch the existing row and patch it.
+    * Otherwise create a new instance.
+    Sub-relationships are converted recursively first.
+    """
+    from sqlalchemy.inspection import inspect
+    from sqlalchemy.orm import raiseload
+
+    if data.get("id"):
+        res = await session.execute(
+            select(model_class).where(model_class.id == data["id"]).options(raiseload("*"))
+        )
+        existing = res.scalars().one_or_none()
+        if existing:
+            mapper = inspect(model_class)
+            for key, val in data.items():
+                if key == "id" or not hasattr(existing, key):
+                    continue
+                if key in mapper.relationships:
+                    rel = mapper.relationships[key]
+                    related_model = rel.mapper.class_
+                    if not rel.uselist:
+                        if val is None:
+                            setattr(existing, key, None)
+                        elif isinstance(val, dict):
+                            setattr(existing, key, await _dict_to_instance(related_model, val, session))
+                        elif hasattr(val, "_sa_instance_state"):
+                            setattr(existing, key, val)
+                    else:
+                        if val is None:
+                            setattr(existing, key, None)
+                        elif isinstance(val, list):
+                            items = []
+                            for item in val:
+                                if isinstance(item, dict):
+                                    items.append(await _dict_to_instance(related_model, item, session))
+                                elif hasattr(item, "_sa_instance_state"):
+                                    items.append(item)
+                                else:
+                                    raise ValueError(
+                                        f"Invalid related item for relationship '{key}': {item}"
+                                    )
+                            setattr(existing, key, items)
+                else:
+                    setattr(existing, key, val)
+            return existing
+
+    # No id or id not found → create new instance
+    cleaned = {k: v for k, v in data.items() if k not in _AUDIT_FIELDS}
+    cleaned = await _convert_nested_rels_for_update(model_class, cleaned, session)
+    obj = model_class(**cleaned)
+    session.add(obj)
+    return obj
+
 
 @as_declarative()
 class Base:  # noqa: F811
@@ -21,11 +183,12 @@ class Base:  # noqa: F811
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
     created_at: Mapped[DateTime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        DateTime(timezone=True), nullable=False, default=func.now(), server_default=func.now()
     )
     updated_at: Mapped[DateTime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        default=func.now(),
         server_default=func.now(),
         onupdate=func.now(),
     )
@@ -61,49 +224,19 @@ class Base:  # noqa: F811
         cls, request: Request, session: AsyncSession, data_list: List[Any]
     ):
         from components.generator.utils.get_user_from_request import get_user_id
-        from sqlalchemy.inspection import inspect
 
         if not data_list:
             raise ValueError("No data provided to create records.")
-
-        # Audit fields to exclude from nested objects
-        AUDIT_FIELDS = {"created_at", "updated_at", "deleted_at", "created_by", "updated_by", "deleted_by"}
 
         objects = []
         for data in data_list:
             user_id = await get_user_id(request)
             obj_data = data.dict() if hasattr(data, "dict") else data
             obj_data["created_by"] = user_id
-            
-            # Handle nested relationships - convert dicts/lists to model instances
-            mapper = inspect(cls)
-            for rel_name, rel in mapper.relationships.items():
-                if rel_name in obj_data and obj_data[rel_name] is not None:
-                    rel_data = obj_data[rel_name]
-                    related_model = rel.mapper.class_
-                    # If a single related object is provided as a dict -> create instance
-                    if not rel.uselist and isinstance(rel_data, dict):
-                        # Remove audit fields from nested data to let server_default handle them
-                        cleaned_data = {k: v for k, v in rel_data.items() if k not in AUDIT_FIELDS}
-                        obj_data[rel_name] = related_model(**cleaned_data)
-                    # If a list of related objects is provided -> convert each
-                    elif rel.uselist and isinstance(rel_data, list):
-                        new_list = []
-                        for item in rel_data:
-                            if isinstance(item, dict):
-                                # Remove audit fields from nested data to let server_default handle them
-                                cleaned_item = {k: v for k, v in item.items() if k not in AUDIT_FIELDS}
-                                new_list.append(related_model(**cleaned_item))
-                            elif hasattr(item, '_sa_instance_state'):
-                                new_list.append(item)
-                            else:
-                                raise ValueError(f"Invalid related item for relationship '{rel_name}': {item}")
-                        obj_data[rel_name] = new_list
-                    # If a single related primary key is provided, leave it (FK column should be used instead)
-                    else:
-                        # leave as-is; let SQLAlchemy or FK column handle it
-                        pass
-            
+
+            # Recursively convert nested relationship dicts → model instances
+            obj_data = _convert_nested_rels(cls, obj_data, session)
+
             objects.append(cls(**obj_data))
 
         session.add_all(objects)
@@ -129,9 +262,6 @@ class Base:  # noqa: F811
 
         user_id = await get_user_id(request)
 
-        # Audit fields to exclude from nested objects
-        AUDIT_FIELDS = {"created_at", "updated_at", "deleted_at", "created_by", "updated_by", "deleted_by"}
-
         # Extract and validate IDs
         obj_ids = []
         for data_obj in data_list:
@@ -145,9 +275,11 @@ class Base:  # noqa: F811
                 raise ValueError("Each object must have an 'id' field.")
             obj_ids.append(obj_id)
 
-        # Fetch all existing records
+        # Fetch all existing records without eager loading relationships to avoid circular references
+        from sqlalchemy.orm import raiseload
+        
         result = await session.execute(
-            select(cls).where(cls.id.in_(obj_ids), cls.deleted_at.is_(None))
+            select(cls).where(cls.id.in_(obj_ids), cls.deleted_at.is_(None)).options(raiseload("*"))
         )
         existing_objs = result.scalars().all()
         existing_objs_map = {obj.id: obj for obj in existing_objs}
@@ -184,39 +316,35 @@ class Base:  # noqa: F811
                     if not rel.uselist:
                         if value is None:
                             setattr(instance, key, None)
-
-                        # If a dict is provided, try to reuse existing record when 'id' present
                         elif isinstance(value, dict):
-                            if value.get("id"):
-                                # try to fetch existing related record
-                                res = await session.execute(select(related_model).where(related_model.id == value["id"]))
-                                related_obj = res.scalars().one_or_none()
-                                if related_obj:
-                                    # update fields provided in the dict on the related object
-                                    for r_key, r_val in value.items():
-                                        if r_key == "id":
-                                            continue
-                                        if hasattr(related_obj, r_key):
-                                            setattr(related_obj, r_key, r_val)
-                                    setattr(instance, key, related_obj)
-                                else:
-                                    # Remove audit fields from nested data
-                                    cleaned_value = {k: v for k, v in value.items() if k not in AUDIT_FIELDS}
-                                    new_obj = related_model(**cleaned_value)
-                                    session.add(new_obj)
-                                    setattr(instance, key, new_obj)
-
-                            else:
-                                # Remove audit fields from nested data
-                                cleaned_value = {k: v for k, v in value.items() if k not in AUDIT_FIELDS}
-                                new_obj = related_model(**cleaned_value)
-                                session.add(new_obj)
-                                setattr(instance, key, new_obj)
-
+                            # For to-one relationships, if dict has no id but there's a unique
+                            # FK, query for the existing related object
+                            if not value.get("id"):
+                                # Get the foreign key columns to find existing related object
+                                local_cols = list(rel.local_columns)
+                                if local_cols:
+                                    fk_col = local_cols[0]
+                                    fk_value = getattr(instance, fk_col.name, None)
+                                    if fk_value:
+                                        # Query for existing related object by FK value
+                                        res = await session.execute(
+                                            select(related_model)
+                                            .where(getattr(related_model, rel.remote_side[0].name) == fk_value)
+                                            .options(raiseload("*"))
+                                        )
+                                        existing_related = res.scalars().one_or_none()
+                                        if existing_related and hasattr(existing_related, "id"):
+                                            value["id"] = existing_related.id
+                            
+                            setattr(
+                                instance,
+                                key,
+                                await _dict_to_instance(related_model, value, session),
+                            )
                         elif hasattr(value, "_sa_instance_state"):
                             setattr(instance, key, value)
                         else:
-                            # If a primary key or scalar is provided, let the FK column handle it
+                            # scalar FK value
                             setattr(instance, key, value)
 
                     # Handle to-many relationships
@@ -227,29 +355,11 @@ class Base:  # noqa: F811
                             new_list = []
                             for item in value:
                                 if isinstance(item, dict):
-                                    if item.get("id"):
-                                        res = await session.execute(select(related_model).where(related_model.id == item["id"]))
-                                        related_obj = res.scalars().one_or_none()
-                                        if related_obj:
-                                            # update provided fields on the related object
-                                            for r_key, r_val in item.items():
-                                                if r_key == "id":
-                                                    continue
-                                                if hasattr(related_obj, r_key):
-                                                    setattr(related_obj, r_key, r_val)
-                                            new_list.append(related_obj)
-                                        else:
-                                            # Remove audit fields from nested data
-                                            cleaned_item = {k: v for k, v in item.items() if k not in AUDIT_FIELDS}
-                                            new_item = related_model(**cleaned_item)
-                                            session.add(new_item)
-                                            new_list.append(new_item)
-                                    else:
-                                        # Remove audit fields from nested data
-                                        cleaned_item = {k: v for k, v in item.items() if k not in AUDIT_FIELDS}
-                                        new_item = related_model(**cleaned_item)
-                                        session.add(new_item)
-                                        new_list.append(new_item)
+                                    new_list.append(
+                                        await _dict_to_instance(
+                                            related_model, item, session
+                                        )
+                                    )
                                 elif hasattr(item, "_sa_instance_state"):
                                     new_list.append(item)
                                 else:

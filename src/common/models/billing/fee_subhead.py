@@ -16,6 +16,6 @@ class FeeSubHead(Base):
     academic_year_id: Mapped[UUID] = mapped_column(ForeignKey("academic_years.id", ondelete="CASCADE"), nullable=True, index=True)
 
     # Relationships
-    fee_head = relationship("FeeHead", lazy="select")
-    structure_items = relationship("FeeStructureItem", back_populates="fee_sub_head", lazy="select")
-    academic_year = relationship("AcademicYear", lazy="select")
+    fee_head = relationship("FeeHead", lazy="selectin")
+    structure_items = relationship("FeeStructureItem", back_populates="fee_sub_head", lazy="selectin")
+    academic_year = relationship("AcademicYear", lazy="selectin")

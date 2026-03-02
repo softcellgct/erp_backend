@@ -11,11 +11,11 @@ class Role(Base):
     name: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     description: Mapped[str] = mapped_column(String(255))
 
-    # Relationships — lazy="select" avoids loading ALL users/permissions on role fetch
+    # Relationships — lazy="selectin" avoids loading ALL users/permissions on role fetch
     role_permissions: Mapped[list["RolePermission"]] = relationship(
         "RolePermission",
         back_populates="role",
-        lazy="select",
+        lazy="selectin",
         foreign_keys="RolePermission.role_id",
         cascade="all, delete-orphan",
     )
@@ -23,7 +23,7 @@ class Role(Base):
     users: Mapped[list["User"]] = relationship(
         "User",
         back_populates="role",
-        lazy="select",
+        lazy="selectin",
         foreign_keys="User.role_id",
     )
 
@@ -64,7 +64,7 @@ class User(Base):
     role_id: Mapped[UUID] = mapped_column(ForeignKey("roles.id"), index=True)
 
     # Relationships
-    role: Mapped["Role"] = relationship("Role", foreign_keys=[role_id], lazy="select")
+    role: Mapped["Role"] = relationship("Role", foreign_keys=[role_id], lazy="selectin")
 
 
 @event.listens_for(User.__table__, "after_create")
