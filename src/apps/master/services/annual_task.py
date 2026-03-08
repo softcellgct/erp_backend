@@ -4,7 +4,11 @@ from fastapi import HTTPException
 from uuid import UUID
 
 from common.models.master.annual_task import AcademicYear
-from common.schemas.master.annual_task import AcademicYearSchema, AcademicYearCourseCreate
+from common.schemas.master.annual_task import (
+    AcademicYearSchema,
+    AcademicYearCourseCreate,
+    UpdateAcademicYearSchema,
+)
 
 class AnnualTaskService: # Or AcademicService
     def __init__(self, db: AsyncSession):
@@ -16,7 +20,16 @@ class AnnualTaskService: # Or AcademicService
         
         academic_year = AcademicYear(**data_dict)
         self.db.add(academic_year)
-        await self.db.flush() # Flush to get the ID
+        await self.db.flush()  # Flush to get the ID
+
+        # if the new year is meant to be active (status or admission_active)
+        # make sure no other year for the same institution remains active.
+        if academic_year.status or academic_year.admission_active:
+            await self._deactivate_other_years(
+                academic_year.institution_id, academic_year.id,
+                deactivate_status=academic_year.status,
+                deactivate_admission=academic_year.admission_active,
+            )
 
         if course_configs:
             from common.models.master.annual_task import AcademicYearCourse
@@ -46,15 +59,37 @@ class AnnualTaskService: # Or AcademicService
             raise HTTPException(status_code=404, detail="Academic Year not found")
         return academic_year
 
-    async def update_academic_year(self, academic_year_id: UUID, data: AcademicYearSchema):
+    async def update_academic_year(self, academic_year_id: UUID, data: UpdateAcademicYearSchema):
+        # using the update schema allows callers to send only the fields
+        # they want to modify; `id` is ignored here because the target is
+        # already specified separately.
         data_dict = data.model_dump(exclude_unset=True)
+        data_dict.pop("id", None)
         course_configs = data_dict.pop("course_configs", None)
+
+        # capture flags before the update for enforcing uniqueness later
+        status_flag = data_dict.get("status")
+        admission_flag = data_dict.get("admission_active")
 
         result = await self.db.execute(
             update(AcademicYear).where(AcademicYear.id == academic_year_id).values(**data_dict)
         )
         if result.rowcount == 0:
             raise HTTPException(status_code=404, detail="Academic Year not found")
+
+        # if the caller tried to set either flag true, deactivate others
+        if status_flag or admission_flag:
+            # need institution id of this year -- load the record
+            stmt = select(AcademicYear).where(AcademicYear.id == academic_year_id)
+            res = await self.db.execute(stmt)
+            ay = res.scalar_one_or_none()
+            if ay:
+                await self._deactivate_other_years(
+                    ay.institution_id,
+                    academic_year_id,
+                    deactivate_status=status_flag,
+                    deactivate_admission=admission_flag,
+                )
 
         if course_configs is not None:
              from common.models.master.annual_task import AcademicYearCourse
@@ -97,7 +132,7 @@ class AnnualTaskService: # Or AcademicService
         """
         Activate the given academic year and deactivate other academic years
         for the same institution. This ensures only one active academic year
-        per institution.
+        per institution.  Admission flag of others is cleared as well.
         """
         # Fetch the academic year
         stmt = select(AcademicYear).where(AcademicYear.id == academic_year_id)
@@ -107,11 +142,9 @@ class AnnualTaskService: # Or AcademicService
             raise HTTPException(status_code=404, detail="Academic Year not found")
 
         # Deactivate other academic years for the same institution
-        await self.db.execute(
-            update(AcademicYear)
-            .where(AcademicYear.institution_id == ay.institution_id, AcademicYear.id != academic_year_id)
-            .values(status=False, admission_active=False)
-        )
+        await self._deactivate_other_years(ay.institution_id, academic_year_id,
+                                          deactivate_status=True,
+                                          deactivate_admission=True)
 
         # Activate this one
         ay.status = True
@@ -119,6 +152,58 @@ class AnnualTaskService: # Or AcademicService
         await self.db.refresh(ay)
         return ay
 
+
+    async def _deactivate_other_years(self, institution_id: UUID, keep_id: UUID | None = None, deactivate_status: bool | None = True, deactivate_admission: bool | None = True):
+        """Helper to mark other academic years for an institution inactive.
+
+        Parameters
+        ----------
+        institution_id: UUID
+            institution whose years should be filtered
+        keep_id: UUID | None
+            id of year that should be left untouched (typically the one being
+            created/updated).  If None all years for the institution are affected.
+        deactivate_status: bool | None
+            if True, set `status` to False on matched rows.  If None do not
+            touch the column.  (Passing False has no effect but is accepted for
+            symmetry with `deactivate_admission`).
+        deactivate_admission: bool | None
+            similar to deactivate_status but for `admission_active`.
+        """
+        values = {}
+        if deactivate_status:
+            values["status"] = False
+        if deactivate_admission:
+            values["admission_active"] = False
+        if not values:
+            return
+        stmt = update(AcademicYear).where(
+            AcademicYear.institution_id == institution_id
+        )
+        if keep_id:
+            stmt = stmt.where(AcademicYear.id != keep_id)
+        await self.db.execute(stmt.values(**values))
+
+    async def set_admission_active(self, academic_year_id: UUID):
+        """Mark a single academic year as having admissions open.
+
+        Other years for the same institution will have
+        `admission_active` cleared.  This does not touch the `status` field,
+        although in practice an open-admission year is usually active as well.
+        """
+        stmt = select(AcademicYear).where(AcademicYear.id == academic_year_id)
+        res = await self.db.execute(stmt)
+        ay = res.scalar_one_or_none()
+        if not ay:
+            raise HTTPException(status_code=404, detail="Academic Year not found")
+
+        await self._deactivate_other_years(ay.institution_id, academic_year_id,
+                                          deactivate_status=False,
+                                          deactivate_admission=True)
+        ay.admission_active = True
+        await self.db.commit()
+        await self.db.refresh(ay)
+        return ay
 
     async def assign_course_to_academic_year(self, academic_year_id: UUID, data: AcademicYearCourseCreate):
         # Verify academic year exists

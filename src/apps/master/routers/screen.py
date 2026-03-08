@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from apps.master.services.screen import ScreenService
 from common.models.master.screen import Module, Screen
-from common.schemas.master.user import PermissionAssignSchema
+from common.schemas.master.user import PermissionAssignSchema, UserPermissionAssignSchema
 from common.schemas.master.screen import (
     ModuleCreate, ModuleUpdate, ModuleResponse,
     ScreenCreate, ScreenUpdate, ScreenResponse
@@ -15,12 +15,12 @@ from components.middleware import is_superadmin
 # Permission Router
 permissions_router = APIRouter()
 
-@permissions_router.get("/role-permissions", tags=["Permissions"])
+@permissions_router.get("/permissions", tags=["Permissions"])
 async def get_my_permissions(request: Request, db: AsyncSession = Depends(get_db_session)):
     current_user = request.state.user
     if not current_user or not current_user.role_id:
         return {}
-    return await ScreenService(db).get_role_permissions(current_user.role_id, current_user)
+    return await ScreenService(db).get_permissions(current_user.role_id, str(current_user.id))
 
 @permissions_router.get("/permissions/role/{role_id}", tags=["Permissions"])
 @is_superadmin
@@ -47,6 +47,32 @@ async def remove_role_permissions(
     request: Request,role_id: str, db: AsyncSession = Depends(get_db_session)
 ):
     return await ScreenService(db).remove_all_permissions_for_role(role_id)
+
+@permissions_router.get("/permissions/user/{user_id}", tags=["Permissions"])
+@is_superadmin
+async def get_user_permissions(
+    user_id: str, request: Request, db: AsyncSession = Depends(get_db_session)
+):
+    return await ScreenService(db).get_simple_user_permissions(user_id)
+
+@permissions_router.post("/permissions/user/{user_id}/assign", tags=["Permissions"])
+@is_superadmin
+async def assign_user_permissions(
+    request: Request,
+    user_id: str,
+    permissions: list[UserPermissionAssignSchema],
+    db: AsyncSession = Depends(get_db_session),
+):
+    # Ensure user_id in permissions matches path if needed, or just let service handle
+    return await ScreenService(db).bulk_add_user_permissions(permissions, user_id=user_id)
+
+@permissions_router.delete("/permissions/user/{user_id}", tags=["Permissions"])
+@is_superadmin
+async def remove_user_permissions(
+
+    request: Request,user_id: str, db: AsyncSession = Depends(get_db_session)
+):
+    return await ScreenService(db).remove_all_permissions_for_user(user_id)
 
 @permissions_router.get("/modules-screens", tags=["Permissions"])
 async def get_all_modules_and_screens_alias(db: AsyncSession = Depends(get_db_session)):

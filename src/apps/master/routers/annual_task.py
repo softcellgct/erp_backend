@@ -98,6 +98,44 @@ async def get_courses_for_academic_year(
     from uuid import UUID
     return await AnnualTaskService(db).get_courses_for_academic_year(UUID(academic_year_id))
 
+# custom create handler -- important to pop course_configs and delegate to service
+@academic_year_router.post(
+    "/academic-years",
+    response_model=AcademicYearResponse,
+    tags=["Academic Years"],
+)
+@is_superadmin
+async def create_academic_year(
+    request: Request,
+    data: AcademicYearSchema,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Create a new academic year and optionally configure courses for it.
+    This uses the service method which knows how to handle the
+    `course_configs` key; without it the generic CRUD route would merely
+    ignore that field (or in older versions crash).
+    """
+    return await AnnualTaskService(db).create_academic_year(data)
+
+
+@academic_year_router.put(
+    "/academic-years/{academic_year_id}",
+    response_model=AcademicYearResponse,
+    tags=["Academic Years"],
+)
+@is_superadmin
+async def update_academic_year(
+    request: Request,
+    academic_year_id: str,
+    data: UpdateAcademicYearSchema,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Update a single academic year using service logic."""
+    from uuid import UUID
+    return await AnnualTaskService(db).update_academic_year(UUID(academic_year_id), data)
+
+
 @academic_year_router.post(
     "/academic-years/{academic_year_id}/activate",
     response_model=AcademicYearResponse,
@@ -111,6 +149,26 @@ async def activate_academic_year(
 ):
     from uuid import UUID
     return await AnnualTaskService(db).set_active_academic_year(UUID(academic_year_id))
+
+
+@academic_year_router.post(
+    "/academic-years/{academic_year_id}/admissions/open",
+    response_model=AcademicYearResponse,
+    tags=["Academic Years"],
+)
+@is_superadmin
+async def open_admissions_for_year(
+    request: Request,
+    academic_year_id: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Mark this academic year as the one where admission is active.
+
+    Any other year belonging to the same institution will have its
+    `admission_active` flag cleared automatically.
+    """
+    from uuid import UUID
+    return await AnnualTaskService(db).set_admission_active(UUID(academic_year_id))
 
 @academic_year_router.put(
     "/academic-years/{academic_year_id}/courses/{course_id}",

@@ -15,6 +15,7 @@ from common.models.admission.admission_entry import (
     SourceEnum,
     VisitStatusEnum,
 )
+from fastapi import HTTPException
 from common.models.gate.visitor_model import (
     ConsultancyReference,
     OtherReference,
@@ -62,6 +63,21 @@ class AdmissionVisitorCRUD:
             for old_key, new_key in _FIELD_MAP.items():
                 if old_key in data:
                     data[new_key] = data.pop(old_key)
+
+            # check for duplicate Aadhaar sent from gate interface
+            aadhar_val = data.get("aadhaar_number")
+            if aadhar_val:
+                dup_stmt = select(AdmissionStudent.id).where(
+                    AdmissionStudent.aadhaar_number == aadhar_val,
+                    AdmissionStudent.deleted_at.is_(None),
+                )
+                dup_res = await db.execute(dup_stmt)
+                if dup_res.scalar_one_or_none():
+                    # mirror HTTP 409 used elsewhere for uniqueness conflicts
+                    raise HTTPException(
+                        status_code=409,
+                        detail=f"Aadhar number {aadhar_val} already exists",
+                    )
 
             # Generate gate pass number if not provided
             if not data.get("gate_pass_number"):
@@ -202,6 +218,21 @@ class AdmissionVisitorCRUD:
         for old_key, new_key in _FIELD_MAP.items():
             if old_key in update_data:
                 update_data[new_key] = update_data.pop(old_key)
+
+        # if the client is updating Aadhaar, ensure it doesn't collide with another record
+        if update_data.get("aadhaar_number"):
+            aadhar_val = update_data["aadhaar_number"]
+            dup_stmt = select(AdmissionStudent.id).where(
+                AdmissionStudent.aadhaar_number == aadhar_val,
+                AdmissionStudent.id != student_id,
+                AdmissionStudent.deleted_at.is_(None),
+            )
+            dup_res = await db.execute(dup_stmt)
+            if dup_res.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Aadhar number {aadhar_val} already exists",
+                )
 
         for field, value in update_data.items():
             if hasattr(student, field):

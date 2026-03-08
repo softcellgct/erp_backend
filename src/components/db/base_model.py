@@ -237,7 +237,13 @@ class Base:  # noqa: F811
             # Recursively convert nested relationship dicts → model instances
             obj_data = _convert_nested_rels(cls, obj_data, session)
 
-            objects.append(cls(**obj_data))
+            # remove any keys that aren't actual columns or relationships on the model
+            from sqlalchemy.inspection import inspect
+            mapper = inspect(cls)
+            valid_keys = set(mapper.columns.keys()) | set(mapper.relationships.keys())
+            filtered_data = {k: v for k, v in obj_data.items() if k in valid_keys}
+
+            objects.append(cls(**filtered_data))
 
         session.add_all(objects)
         await session.commit()

@@ -65,6 +65,12 @@ class User(Base):
 
     # Relationships
     role: Mapped["Role"] = relationship("Role", foreign_keys=[role_id], lazy="selectin")
+    user_permissions: Mapped[list["UserPermission"]] = relationship(
+        "UserPermission",
+        back_populates="user",
+        foreign_keys="UserPermission.user_id",
+        lazy="selectin",
+    )
 
 
 @event.listens_for(User.__table__, "after_create")

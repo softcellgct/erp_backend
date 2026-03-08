@@ -58,6 +58,12 @@ class Screen(Base):
         foreign_keys="RolePermission.screen_id",
         lazy="selectin",
     )
+    user_permissions: Mapped[list["UserPermission"]] = relationship(
+        "UserPermission",
+        back_populates="screen",
+        foreign_keys="UserPermission.screen_id",
+        lazy="selectin",
+    )
 
 
 @event.listens_for(Screen.__table__, "after_create")
@@ -107,8 +113,8 @@ class RolePermission(Base):
     can_delete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Relationships
-    role: Mapped["Role"] = relationship("Role", back_populates="role_permissions", lazy="selectin")
-    screen: Mapped["Screen"] = relationship("Screen", back_populates="role_permissions", lazy="selectin")
+    role: Mapped["Role"] = relationship("Role", back_populates="role_permissions", foreign_keys=[role_id], lazy="selectin")
+    screen: Mapped["Screen"] = relationship("Screen", back_populates="role_permissions", foreign_keys=[screen_id], lazy="selectin")
 
     __table_args__ = (
         UniqueConstraint("role_id", "screen_id", name="uq_role_screen"),
@@ -146,5 +152,21 @@ def insert_initial_role_permissions(target, connection, **kwargs):
     except Exception as e:
         print(f"Failed to insert initial role permissions: {e}")
 
+class UserPermission(Base):
+    __tablename__ = "user_permissions"
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    screen_id: Mapped[UUID] = mapped_column(ForeignKey("screens.id"), nullable=False, index=True)
+    can_view: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    can_create: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    can_edit: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    can_delete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
+    # Relationships
+    user: Mapped["User"] = relationship("User", back_populates="user_permissions", foreign_keys=[user_id], lazy="selectin")
+    screen: Mapped["Screen"] = relationship("Screen", back_populates="user_permissions", foreign_keys=[screen_id], lazy="selectin")
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "screen_id", name="uq_user_screen"),
+    )
 
 

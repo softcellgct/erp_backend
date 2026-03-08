@@ -61,3 +61,11 @@ class PermissionAssignSchema(BaseModel):
     can_create: bool = False
     can_edit: bool = False
     can_delete: bool = False
+
+class UserPermissionAssignSchema(BaseModel):
+    user_id: UUID
+    screen_id: UUID
+    can_view: bool = False
+    can_create: bool = False
+    can_edit: bool = False
+    can_delete: bool = False
