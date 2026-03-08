@@ -8,8 +8,7 @@ class FinancialYearBase(BaseModel):
     name: str
     start_date: date
     end_date: date
-    # institution_id: Optional[UUID] = None
-    # academic_year_id: Optional[UUID] = None
+    institution_id: UUID
     active: Optional[bool] = False
 
 
@@ -22,8 +21,7 @@ class FinancialYearUpdate(BaseModel):
     name: Optional[str] = None
     start_date: Optional[date] = None
     end_date: Optional[date] = None
-    # institution_id: Optional[UUID] = None
-    # academic_year_id: Optional[UUID] = None
+    institution_id: Optional[UUID] = None
     active: Optional[bool] = None
 
 

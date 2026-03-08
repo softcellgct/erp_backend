@@ -154,12 +154,12 @@ class InstitutionService:
 
     async def list_admission_active_years(self, institution_id: UUID | None = None):
         """
-        Get academic years where admission_active=True AND status=True.
+        Get academic years where admission_active=True.
+        Status (academic active/inactive) does not affect admission availability.
         Optionally filtered by institution_id.
         """
         stmt = select(AcademicYear).where(
             AcademicYear.admission_active == True,
-            AcademicYear.status == True,
             AcademicYear.deleted_at.is_(None),
         ).options(
             selectinload(AcademicYear.institution).selectinload(Institution.departments),

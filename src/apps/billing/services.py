@@ -20,6 +20,7 @@ from common.models.billing.fee_structure import FeeStructure, FeeStructureItem
 from common.schemas.billing.fee_structure_schemas import FeeStructureCreate
 from sqlalchemy import update
 from logs.logging import logger
+from common.models.billing.student_deposit import StudentDeposit
 
 
 class BillingService:
@@ -181,6 +182,77 @@ class BillingService:
             return None
         return best
 
+    async def auto_apply_deposit_to_invoice(
+        self,
+        db: AsyncSession,
+        student_id: UUID,
+        invoice: Invoice,
+    ) -> bool:
+        """
+        Automatically apply available deposit/advance payment to an invoice.
+        Returns True if deposit was applied, False if no deposit or not applicable.
+        """
+        try:
+            from decimal import Decimal
+            
+            # Get student's deposit if it exists
+            deposit_stmt = select(StudentDeposit).where(StudentDeposit.student_id == student_id)
+            deposit_res = await db.execute(deposit_stmt)
+            deposit = deposit_res.scalar_one_or_none()
+            
+            if not deposit or deposit.available_balance <= 0:
+                return False
+            
+            # Calculate amount to apply (min of available balance and invoice amount)
+            available = Decimal(str(deposit.available_balance))
+            invoice_amount = invoice.balance_due or invoice.amount
+            amount_to_apply = min(available, invoice_amount)
+            
+            if amount_to_apply <= 0:
+                return False
+            
+            # Create line item for the deposit credit
+            line_item = InvoiceLineItem(
+                invoice_id=invoice.id,
+                description="Deposit/Advance Credit Applied",
+                amount=-amount_to_apply,  # Negative = credit/discount
+                discount_amount=0,
+                tax_amount=0,
+                net_amount=-amount_to_apply,
+            )
+            db.add(line_item)
+            
+            # Update deposit tracking
+            deposit.used_amount += amount_to_apply
+            
+            # Add to adjustment history
+            from datetime import datetime
+            adjustment_entry = {
+                "date": datetime.utcnow().isoformat(),
+                "amount": float(amount_to_apply),
+                "invoice_id": str(invoice.id),
+                "applied_by": None,
+            }
+            if deposit.adjustment_history is None:
+                deposit.adjustment_history = []
+            deposit.adjustment_history.append(adjustment_entry)
+            
+            # Update invoice balance_due
+            if invoice.balance_due:
+                invoice.balance_due -= amount_to_apply
+            
+            db.add(deposit)
+            await db.flush()
+            
+            logger.info(
+                f"Auto-applied deposit of {amount_to_apply} to invoice {invoice.id} for student {student_id}"
+            )
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error auto-applying deposit: {str(e)}", exc_info=True)
+            return False
+
     async def lock_student_fee_structure(
         self,
         db: AsyncSession,
@@ -199,6 +271,14 @@ class BillingService:
         student = result.scalar_one_or_none()
         if not student:
             raise ValueError("Student not found")
+
+        from common.models.admission.admission_entry import AdmissionStatusEnum
+        current_status = student.status.value if hasattr(student.status, "value") else str(student.status)
+        if current_status not in (AdmissionStatusEnum.PROVISIONALLY_ALLOTTED.value, "PROVISIONALLY_ALLOTTED"):
+            raise ValueError(
+                f"Constraint Failed: Student must be in '{AdmissionStatusEnum.PROVISIONALLY_ALLOTTED.value}' status "
+                f"before their fee structure can be locked. Current status: {current_status}"
+            )
 
         # Idempotent path: already locked with a structure.
         if student.is_fee_structure_locked and student.fee_structure_id:
@@ -268,34 +348,57 @@ class BillingService:
         created_demands = []
         # Reload items for the found fs
         await db.refresh(fs, ["items"])
+        semesters_per_year = fs.semesters_per_year or 2
         
         for item in fs.items:
-            # Handle amount_by_year
-            if item.amount_by_year:
-                for year_label, year_amount in item.amount_by_year.items():
-                    amount = float(year_amount)
+            head_name = item.fee_head.name if item.fee_head else "Fee"
+
+            # --- Semester-based breakdown (preferred) ---
+            if item.amount_by_semester:
+                for sem_label, sem_amount in item.amount_by_semester.items():
+                    amount = float(sem_amount)
                     if amount > 0:
-                        # Determine Fee Head Name
-                        # We need to load fee_head relationship if not loaded
-                        # await db.refresh(item, ["fee_head"]) 
-                        # Better to eager load in the query above.
-                        
+                        sem_num = int(sem_label)
+                        year_num = ((sem_num - 1) // semesters_per_year) + 1
                         di = DemandItem(
-                            batch_id=None, # Allow ad-hoc demand (model must support nullable)
+                            batch_id=None,
                             student_id=student_id,
                             fee_structure_id=fs.id,
                             fee_structure_item_id=item.id,
                             amount=amount,
                             fee_head_id=item.fee_head_id,
                             fee_sub_head_id=item.fee_sub_head_id,
-                            description=f"{item.fee_head.name} - Year {year_label}" if item.fee_head else f"Fee - Year {year_label}"
+                            semester=sem_num,
+                            year=year_num,
+                            payer_type=item.payer_type,
+                            description=f"{head_name} - Sem {sem_label}",
+                        )
+                        db.add(di)
+                        created_demands.append(di)
+
+            # --- Year-based breakdown (legacy) ---
+            elif item.amount_by_year:
+                for year_label, year_amount in item.amount_by_year.items():
+                    amount = float(year_amount)
+                    if amount > 0:
+                        di = DemandItem(
+                            batch_id=None,
+                            student_id=student_id,
+                            fee_structure_id=fs.id,
+                            fee_structure_item_id=item.id,
+                            amount=amount,
+                            fee_head_id=item.fee_head_id,
+                            fee_sub_head_id=item.fee_sub_head_id,
+                            year=int(year_label) if year_label.isdigit() else None,
+                            payer_type=item.payer_type,
+                            description=f"{head_name} - Year {year_label}",
                         )
                         db.add(di)
                         created_demands.append(di)
             else:
                 amount = float(item.amount)
                 if amount > 0:
-                     di = DemandItem(
+                    di = DemandItem(
                         batch_id=None,
                         student_id=student_id,
                         fee_structure_id=fs.id,
@@ -303,10 +406,11 @@ class BillingService:
                         amount=amount,
                         fee_head_id=item.fee_head_id,
                         fee_sub_head_id=item.fee_sub_head_id,
-                        description=item.fee_head.name if item.fee_head else "Fee"
+                        payer_type=item.payer_type,
+                        description=head_name,
                     )
-                     db.add(di)
-                     created_demands.append(di)
+                    db.add(di)
+                    created_demands.append(di)
         
         return created_demands
 
@@ -597,13 +701,16 @@ class BillingService:
             # validate item amounts
             for it in items:
                 amt = it.get("amount")
-                if amt is None and not it.get("amount_by_year"):
-                    raise ValueError("Each item must have 'amount' or 'amount_by_year'")
+                aby = it.get("amount_by_year")
+                abs_ = it.get("amount_by_semester")
+                if amt is None and not aby and not abs_:
+                    raise ValueError("Each item must have 'amount', 'amount_by_year', or 'amount_by_semester'")
                 if amt is not None and float(amt) < 0:
                     raise ValueError("Item amount must be >= 0")
-                aby = it.get("amount_by_year")
                 if aby and any(float(v) < 0 for v in aby.values()):
                     raise ValueError("Amounts in 'amount_by_year' must be >= 0")
+                if abs_ and any(float(v) < 0 for v in abs_.values()):
+                    raise ValueError("Amounts in 'amount_by_semester' must be >= 0")
 
             fs = FeeStructure(**data)
             db.add(fs)
@@ -614,9 +721,11 @@ class BillingService:
                     FeeStructureItem(
                         fee_structure_id=fs.id,
                         fee_head_id=it.get("fee_head_id"),
-                        fee_sub_head_id=it["fee_sub_head_id"],
+                        fee_sub_head_id=it.get("fee_sub_head_id"),
                         amount=it.get("amount", 0),
                         amount_by_year=it.get("amount_by_year"),
+                        amount_by_semester=it.get("amount_by_semester"),
+                        payer_type=it.get("payer_type", "STUDENT"),
                         order=it.get("order", order_idx),
                     )
                 )
@@ -671,15 +780,55 @@ class BillingService:
         normalized = str(value).strip().casefold()
         return normalized or None
 
-    def _amount_for_year_from_item(self, item: FeeStructureItem, year: str) -> float:
+    def _amount_for_period_from_item(
+        self,
+        item: FeeStructureItem,
+        year: str | None,
+        semester: int | None,
+        semesters_per_year: int,
+    ) -> tuple[float, int | None, int | None]:
+        if semester is not None:
+            sem_key = str(semester)
+            derived_year = ((semester - 1) // semesters_per_year) + 1
+
+            if item.amount_by_semester:
+                raw_value = item.amount_by_semester.get(sem_key)
+                if raw_value not in (None, ""):
+                    return float(raw_value or 0), semester, derived_year
+
+            if item.amount_by_year:
+                raw_value = item.amount_by_year.get(str(derived_year))
+                if raw_value not in (None, ""):
+                    return float(raw_value or 0), semester, derived_year
+
+            if not item.amount_by_semester and not item.amount_by_year and derived_year == 1:
+                return float(item.amount or 0), semester, derived_year
+
+            return 0.0, semester, derived_year
+
+        target_year = str(year or "").strip()
+        if not target_year:
+            return 0.0, None, None
+
         if item.amount_by_year:
-            raw_value = item.amount_by_year.get(str(year))
+            raw_value = item.amount_by_year.get(target_year)
             if raw_value in (None, ""):
-                return 0.0
-            return float(raw_value or 0)
-        if str(year) == "1":
-            return float(item.amount or 0)
-        return 0.0
+                return 0.0, None, int(target_year)
+            return float(raw_value or 0), None, int(target_year)
+
+        if item.amount_by_semester:
+            total = 0.0
+            for sem_label, sem_amount in item.amount_by_semester.items():
+                sem_num = int(sem_label)
+                sem_year = ((sem_num - 1) // semesters_per_year) + 1
+                if sem_year == int(target_year):
+                    total += float(sem_amount or 0)
+            return total, None, int(target_year)
+
+        if target_year == "1":
+            return float(item.amount or 0), None, 1
+
+        return 0.0, None, int(target_year)
 
     def _find_fee_structure_item(
         self,
@@ -796,8 +945,9 @@ class BillingService:
         fee_structure: FeeStructure,
         fee_head_id: UUID,
         fee_sub_head_id: UUID,
-        year: str,
-    ) -> tuple[float, UUID]:
+        year: str | None,
+        semester: int | None,
+    ) -> tuple[float, UUID, int | None, int | None]:
         matched_item = self._find_fee_structure_item(
             fee_structure=fee_structure,
             fee_head_id=fee_head_id,
@@ -808,13 +958,19 @@ class BillingService:
                 "No matching fee structure item for selected fee head and subhead."
             )
 
-        derived_amount = self._amount_for_year_from_item(matched_item, year)
+        derived_amount, resolved_semester, resolved_year = self._amount_for_period_from_item(
+            matched_item,
+            year=year,
+            semester=semester,
+            semesters_per_year=fee_structure.semesters_per_year or 2,
+        )
         if derived_amount <= 0:
+            label = f"Semester {semester}" if semester is not None else f"Year {year}"
             raise ValueError(
-                f"No configured amount found for Year {year} in selected fee structure."
+                f"No configured amount found for {label} in selected fee structure."
             )
 
-        return float(derived_amount), matched_item.id
+        return float(derived_amount), matched_item.id, resolved_semester, resolved_year
 
     async def create_general_demand(self, db: AsyncSession, payload) -> dict:
         from common.models.admission.admission_entry import AdmissionStudent
@@ -825,13 +981,21 @@ class BillingService:
         data = payload.dict(exclude_unset=True)
         institution_id: UUID = data["institution_id"]
         fee_structure_id: UUID = data["fee_structure_id"]
-        year = str(data.get("year") or "").strip()
+        year_raw = data.get("year")
+        year = str(year_raw).strip() if year_raw not in (None, "") else None
+        semester = data.get("semester")
+        if semester not in (None, ""):
+            semester = int(semester)
+        else:
+            semester = None
         fee_head_id: UUID = data["fee_head_id"]
         fee_sub_head_id: UUID = data["fee_sub_head_id"]
         avoid_duplicates = bool(data.get("avoid_duplicates", True))
 
-        if not year:
-            raise ValueError("year is required")
+        if year is None and semester is None:
+            raise ValueError("Either year or semester is required")
+        if year is not None and semester is not None:
+            raise ValueError("Provide either year or semester, not both")
 
         fee_structure_stmt = (
             select(FeeStructure)
@@ -916,12 +1080,20 @@ class BillingService:
 
         amount_value = data.get("amount")
         fee_structure_item_id = matched_item.id if matched_item else None
+        resolved_semester = semester
+        resolved_year = int(year) if year is not None else None
         if amount_value is None:
-            amount_used, fee_structure_item_id = await self._derive_general_demand_amount(
+            (
+                amount_used,
+                fee_structure_item_id,
+                resolved_semester,
+                resolved_year,
+            ) = await self._derive_general_demand_amount(
                 fee_structure=fee_structure,
                 fee_head_id=fee_head_id,
                 fee_sub_head_id=fee_sub_head_id,
                 year=year,
+                semester=semester,
             )
         else:
             amount_used = float(amount_value)
@@ -933,11 +1105,15 @@ class BillingService:
         description_base = (data.get("description") or "").strip()
         if not description_base:
             description_base = f"{fee_head.name} - {fee_sub_head.name}"
-        year_suffix = f"(Year {year})"
+        scope_suffix = (
+            f"(Sem {resolved_semester})"
+            if resolved_semester is not None
+            else f"(Year {resolved_year})"
+        )
         description = (
             description_base
-            if year_suffix.casefold() in description_base.casefold()
-            else f"{description_base} {year_suffix}"
+            if scope_suffix.casefold() in description_base.casefold()
+            else f"{description_base} {scope_suffix}"
         )
 
         batch = DemandBatch(
@@ -946,7 +1122,8 @@ class BillingService:
             fee_structure_id=fee_structure_id,
             filters={
                 "type": "general_demand",
-                "year": year,
+                "year": resolved_year,
+                "semester": resolved_semester,
                 "fee_head_id": str(fee_head_id),
                 "fee_sub_head_id": str(fee_sub_head_id),
                 "description": description,
@@ -968,7 +1145,17 @@ class BillingService:
                     DemandItem.fee_head_id == fee_head_id,
                     DemandItem.fee_sub_head_id == fee_sub_head_id,
                     DemandItem.amount == amount_used,
-                    DemandItem.description.ilike(f"%(Year {year})"),
+                    (
+                        or_(
+                            DemandItem.semester == resolved_semester,
+                            DemandItem.description.ilike(f"%(Sem {resolved_semester})"),
+                        )
+                        if resolved_semester is not None
+                        else or_(
+                            DemandItem.year == resolved_year,
+                            DemandItem.description.ilike(f"%(Year {resolved_year})"),
+                        )
+                    ),
                 )
                 .distinct()
             )
@@ -992,6 +1179,8 @@ class BillingService:
                     fee_sub_head_id=fee_sub_head_id,
                     amount=amount_used,
                     description=description,
+                    semester=resolved_semester,
+                    year=resolved_year,
                     status="pending",
                 )
             )
@@ -1057,7 +1246,11 @@ class BillingService:
         if explicit_students is None:
             explicit_students = normalized.pop("apply_to_students", None)
 
-        stmt = select(AdmissionStudent.id).where(AdmissionStudent.deleted_at.is_(None))
+        # Enforce Rule: Only students with locked fee structures can have demands created.
+        stmt = select(AdmissionStudent.id).where(
+            AdmissionStudent.deleted_at.is_(None),
+            AdmissionStudent.is_fee_structure_locked == True
+        )
 
         institution_uuid = self._parse_uuid(institution_id)
         if institution_uuid:
@@ -1415,10 +1608,17 @@ class BillingService:
         return len(created)
 
     async def create_year_specific_demand(
-        self, db: AsyncSession, student_ids: list[UUID], fee_structure_id: UUID, year: str
+        self,
+        db: AsyncSession,
+        student_ids: list[UUID],
+        fee_structure_id: UUID | None = None,
+        year: str | None = None,
+        semester: int | None = None,
     ) -> dict:
         """
-        Create demand items for multiple students for a specific year only.
+        Create demand items for multiple students for a specific year or semester.
+        Uses each student's own locked fee structure automatically.
+        fee_structure_id is kept as an optional override for backward compatibility.
         Also creates invoices automatically for each student.
         
         Args:
@@ -1426,6 +1626,7 @@ class BillingService:
             student_ids: List of student UUIDs
             fee_structure_id: Fee structure UUID
             year: Year number as string (e.g., "1", "2", "3")
+            semester: Semester number (e.g., 1, 2, 3)
             
         Returns:
             dict with created_count, total_amount, invoice_count, and message
@@ -1435,6 +1636,10 @@ class BillingService:
         
         if not student_ids:
             raise ValueError("No students provided")
+        if year in (None, "") and semester is None:
+            raise ValueError("Either year or semester is required")
+        if year not in (None, "") and semester is not None:
+            raise ValueError("Provide either year or semester, not both")
 
         from common.models.admission.admission_entry import AdmissionStudent
 
@@ -1447,106 +1652,158 @@ class BillingService:
         if missing_student_ids:
             raise ValueError(f"Students not found: {', '.join(missing_student_ids)}")
 
-        locked_mismatch_students = []
+        # Build per-student fee structure mapping
+        fs_id_for_student: dict[UUID, UUID] = {}
+        skipped_students: list[str] = []
+
         for sid in student_ids:
             student = student_map[sid]
-            if not student.is_fee_structure_locked:
-                continue
-            if not student.fee_structure_id:
-                raise ValueError(
-                    f"Student {student.name or sid} has fee lock enabled but no fee structure set"
-                )
-            if student.fee_structure_id != fee_structure_id:
-                locked_mismatch_students.append(student.name or str(sid))
+            if fee_structure_id:
+                # Backward-compat override: skip locked-mismatch students
+                if (student.is_fee_structure_locked and student.fee_structure_id
+                        and student.fee_structure_id != fee_structure_id):
+                    skipped_students.append(student.name or str(sid))
+                else:
+                    fs_id_for_student[sid] = fee_structure_id
+            else:
+                # Auto-resolve: use student's own locked fee structure
+                if not student.is_fee_structure_locked or not student.fee_structure_id:
+                    skipped_students.append(student.name or str(sid))
+                    continue
+                fs_id_for_student[sid] = student.fee_structure_id
 
-        if locked_mismatch_students:
-            mismatched = ", ".join(locked_mismatch_students[:5])
+        if not fs_id_for_student:
             raise ValueError(
-                "Fee structure mismatch for locked students: "
-                f"{mismatched}. Use each student's locked fee structure."
+                "No eligible students found. Ensure students have their fee structure locked."
             )
 
-        # Fetch fee structure
-        stmt = select(FeeStructure).where(FeeStructure.id == fee_structure_id)
-        res = await db.execute(stmt)
-        fs = res.scalar_one_or_none()
-        if not fs:
-            raise ValueError("Fee structure not found")
+        # Fetch all unique fee structures in one query
+        unique_fs_ids = list(set(fs_id_for_student.values()))
+        fs_stmt = (
+            select(FeeStructure)
+            .where(FeeStructure.id.in_(unique_fs_ids))
+            .options(
+                selectinload(FeeStructure.items).selectinload(FeeStructureItem.fee_head),
+                selectinload(FeeStructure.items).selectinload(FeeStructureItem.fee_sub_head),
+            )
+        )
+        fs_res = await db.execute(fs_stmt)
+        fs_map: dict[UUID, FeeStructure] = {fs.id: fs for fs in fs_res.scalars().all()}
 
-        # Get institution_id from first student for the batch
-        institution_id = student_map[student_ids[0]].institution_id
+        # Get institution_id from first eligible student for the batch
+        first_sid = next(iter(fs_id_for_student))
+        institution_id = student_map[first_sid].institution_id
         if not institution_id:
             raise ValueError("Could not determine institution from students")
-        
-        # Create a batch for this operation
+
+        # Create batch
+        period_label = f"Semester {semester}" if semester is not None else f"Year {year}"
         batch = DemandBatch(
-            name=f"Year {year} Demand - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
+            name=f"{period_label} Demand - {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
             institution_id=institution_id,
-            fee_structure_id=fee_structure_id,
+            fee_structure_id=unique_fs_ids[0] if len(unique_fs_ids) == 1 else None,
             status="generated",
             generated_at=datetime.utcnow()
         )
         db.add(batch)
         await db.flush()
-        
+
         created_count = 0
         total_amount = 0.0
         invoice_count = 0
-        
-        # Create demand items for each student
-        for student_id in student_ids:
+        year_int = int(year) if year not in (None, "") else None
+
+        for student_id, fs_id in fs_id_for_student.items():
+            fs = fs_map.get(fs_id)
+            if not fs:
+                skipped_students.append(str(student_id))
+                continue
+
+            semesters_per_year = fs.semesters_per_year or 2
             student_demands = []
-            
+
             for item in fs.items:
-                # Get amount for the specific year
                 amount = 0.0
-                if item.amount_by_year and year in item.amount_by_year:
-                    amount = float(item.amount_by_year[year])
-                elif not item.amount_by_year:
-                    # If no year breakdown, use the flat amount for Year 1 only
-                    if year == "1":
+                demand_year = None
+                demand_semester = None
+
+                if semester is not None:
+                    sem_key = str(semester)
+                    derived_year = ((semester - 1) // semesters_per_year) + 1
+
+                    if item.amount_by_semester and sem_key in item.amount_by_semester:
+                        amount = float(item.amount_by_semester[sem_key] or 0)
+                        demand_semester = semester
+                        demand_year = derived_year
+                    elif item.amount_by_year and str(derived_year) in item.amount_by_year:
+                        amount = float(item.amount_by_year[str(derived_year)] or 0)
+                        demand_semester = semester
+                        demand_year = derived_year
+                    elif not item.amount_by_semester and not item.amount_by_year and derived_year == 1:
                         amount = float(item.amount or 0)
-                
-                # Only create demand if amount > 0
+                        demand_semester = semester
+                        demand_year = derived_year
+                else:
+                    if item.amount_by_semester:
+                        total = 0.0
+                        for sem_label, sem_amount in item.amount_by_semester.items():
+                            sem_num = int(sem_label)
+                            sem_year = ((sem_num - 1) // semesters_per_year) + 1
+                            if sem_year == year_int:
+                                total += float(sem_amount or 0)
+                        amount = total
+                    elif item.amount_by_year and str(year_int) in item.amount_by_year:
+                        amount = float(item.amount_by_year[str(year_int)] or 0)
+                    elif not item.amount_by_year and year_int == 1:
+                        amount = float(item.amount or 0)
+
+                    demand_year = year_int
+
                 if amount > 0:
-                    # Build descriptive name: "Fee Head - Fee Subhead (Year X)"
                     fee_head_name = item.fee_head.name if item.fee_head else "Fee"
                     fee_subhead_name = item.fee_sub_head.name if item.fee_sub_head else ""
-                    
-                    if fee_subhead_name:
-                        description = f"{fee_head_name} - {fee_subhead_name} (Year {year})"
-                    else:
-                        description = f"{fee_head_name} (Year {year})"
-                    
+                    scope_label = f"Sem {semester}" if semester is not None else f"Year {year_int}"
+                    description = (
+                        f"{fee_head_name} - {fee_subhead_name} ({scope_label})"
+                        if fee_subhead_name
+                        else f"{fee_head_name} ({scope_label})"
+                    )
+
                     demand_item = DemandItem(
                         batch_id=batch.id,
                         student_id=student_id,
-                        fee_structure_id=fee_structure_id,
+                        fee_structure_id=fs.id,
                         fee_structure_item_id=item.id,
                         amount=amount,
                         fee_head_id=item.fee_head_id,
                         fee_sub_head_id=item.fee_sub_head_id,
+                        semester=demand_semester,
+                        year=demand_year,
                         description=description
                     )
                     db.add(demand_item)
                     student_demands.append(demand_item)
                     created_count += 1
                     total_amount += amount
-            
-            # Create invoice for this student's demands
+
             if student_demands:
-                await db.flush()  # Flush to get demand IDs
+                await db.flush()
                 invoice = await self.create_invoice_from_demands(db, student_demands)
                 if invoice:
                     invoice_count += 1
-        
+
         await db.commit()
-        
+
         return {
             "created_count": created_count,
             "total_amount": total_amount,
             "invoice_count": invoice_count,
-            "message": f"Created {created_count} demand items and {invoice_count} invoices for {len(student_ids)} student(s) for Year {year}"
+            "skipped_count": len(skipped_students),
+            "message": (
+                f"Created {created_count} demand item(s) and {invoice_count} invoice(s) "
+                f"for {len(fs_id_for_student)} student(s) for {period_label}"
+                + (f". Skipped {len(skipped_students)} student(s)." if skipped_students else "")
+            )
         }
 
 
@@ -1884,24 +2141,45 @@ class BillingService:
 
 
     async def check_year_demand_status(
-        self, db: AsyncSession, student_ids: list[UUID], fee_structure_id: UUID, year: str
+        self,
+        db: AsyncSession,
+        student_ids: list[UUID],
+        fee_structure_id: UUID,
+        year: str | None = None,
+        semester: int | None = None,
     ) -> dict[str, bool]:
         """
-        Check if demands exist for the given students, fee structure, and year.
+        Check if demands exist for the given students and selected period.
         Returns a dict mapping student_id (str) -> bool (True if demand exists).
         """
         from common.models.billing.demand import DemandItem
         
         if not student_ids:
             return {}
+        if year in (None, "") and semester is None:
+            return {}
             
-        # Check for any demand item matching the fee structure and year description pattern
-        # This assumes the description format "(Year X)" is consistently used for year-specific demands
-        stmt = select(DemandItem.student_id).where(
+        conditions = [
             DemandItem.student_id.in_(student_ids),
             DemandItem.fee_structure_id == fee_structure_id,
-            DemandItem.description.ilike(f"%(Year {year})")
-        ).distinct()
+        ]
+        if semester is not None:
+            conditions.append(
+                or_(
+                    DemandItem.semester == semester,
+                    DemandItem.description.ilike(f"%(Sem {semester})"),
+                )
+            )
+        else:
+            year_int = int(year)
+            conditions.append(
+                or_(
+                    DemandItem.year == year_int,
+                    DemandItem.description.ilike(f"%(Year {year_int})"),
+                )
+            )
+
+        stmt = select(DemandItem.student_id).where(*conditions).distinct()
         
         res = await db.execute(stmt)
         existing_student_ids = {str(uid) for uid in res.scalars().all()}

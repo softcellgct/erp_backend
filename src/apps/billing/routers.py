@@ -5,8 +5,11 @@ from fastapi import APIRouter, Depends, Request, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from components.db.db import get_db_session
 from sqlalchemy import select
-from sqlalchemy.orm import joinedload
+from sqlalchemy.orm import joinedload, selectinload
 from components.generator.routes import create_crud_routes
+from components.generator.utils.get_user_from_request import get_user_id
+from fastapi_pagination.ext.sqlalchemy import paginate
+from fastapi_pagination import Page
 from common.models.billing.application_fees import FeeHead
 from common.schemas.billing.fee_head_schemas import (
     FeeHeadCreate,
@@ -14,7 +17,6 @@ from common.schemas.billing.fee_head_schemas import (
     FeeHeadResponse,
 )
 
-# paginate import removed since not used here
 from common.schemas.billing.invoice_schemas import (
     InvoiceCreate,
     InvoiceResponse,
@@ -52,10 +54,6 @@ financial_year_crud = create_crud_routes(
     AllResponseSchema=FinancialYearResponse,
 )
 
-router.include_router(
-    financial_year_crud, prefix="/financial-years", tags=["Billing - Financial Years"]
-)
-
 
 @router.post(
     "/financial-years/{fy_id}/activate",
@@ -90,6 +88,11 @@ async def get_active_financial_year(
             status_code=404, detail="Active financial year not found for institution"
         )
     return fy
+
+
+router.include_router(
+    financial_year_crud, prefix="/financial-years", tags=["Billing - Financial Years"]
+)
 
 
 # Fee SubHeads CRUD
@@ -130,6 +133,50 @@ router.include_router(
     fee_structure_crud, prefix="/fee-structures", tags=["Billing - Fee Structures"]
 )
 
+# Override the default GET for fee-structures to include relationship data
+from common.models.billing.fee_structure import FeeStructureItem
+
+@router.get(
+    "/fee-structures",
+    response_model=Page[FeeStructureResponse],
+    tags=["Billing - Fee Structures"],
+)
+async def list_fee_structures(
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Get all fee structures with relationship data loaded."""
+    stmt = (
+        select(FeeStructure)
+        .options(
+            selectinload(FeeStructure.items).selectinload(FeeStructureItem.fee_head),
+            selectinload(FeeStructure.items).selectinload(FeeStructureItem.fee_sub_head),
+        )
+    )
+    return await paginate(db, stmt)
+
+@router.get(
+    "/fee-structures/{id}",
+    response_model=FeeStructureResponse,
+    tags=["Billing - Fee Structures"],
+)
+async def get_fee_structure(
+    id: UUID, db: AsyncSession = Depends(get_db_session)
+):
+    """Get a single fee structure with all relationship data loaded."""
+    stmt = (
+        select(FeeStructure)
+        .where(FeeStructure.id == id)
+        .options(
+            selectinload(FeeStructure.items).selectinload(FeeStructureItem.fee_head),
+            selectinload(FeeStructure.items).selectinload(FeeStructureItem.fee_sub_head),
+        )
+    )
+    result = await db.execute(stmt)
+    fs = result.scalar_one_or_none()
+    if not fs:
+        raise HTTPException(status_code=404, detail="Fee Structure not found")
+    return fs
+
 # Custom endpoints
 from common.schemas.billing.financial_year_schemas import FinancialYearResponse
 from common.schemas.billing.fee_structure_schemas import (
@@ -167,6 +214,47 @@ async def create_fee_structure(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
+from common.schemas.billing.fee_structure_schemas import FeeStructureUpdate as FeeStructureUpdateSchema
+from common.models.admission.admission_entry import AdmissionStudent
+from core.security import get_current_user
+
+@router.put(
+    "/fee-structures",
+    tags=["Billing - Fee Structures"],
+)
+async def update_fee_structures(
+    request: Request,
+    payload: list[FeeStructureUpdateSchema],
+    db: AsyncSession = Depends(get_db_session),
+    current_user: dict = Depends(get_current_user)
+):
+    try:
+        # Check if user is admin role (to skip lock check)
+        user_role = current_user.get("role", "").upper()
+        # Default role names are SUPERADMIN / ADMIN, adapt based on your auth
+        is_admin = user_role in ("SUPERADMIN", "ADMIN")
+
+        if not is_admin:
+            # Check if any associated student has fee structure locked
+            for item in payload:
+                if not item.id:
+                    continue
+                # Count if any student has this fee structure locked
+                stmt = select(AdmissionStudent.id).where(
+                    AdmissionStudent.fee_structure_id == item.id,
+                    AdmissionStudent.is_fee_structure_locked == True
+                ).limit(1)
+                res = await db.execute(stmt)
+                locked_student = res.scalar_one_or_none()
+                if locked_student:
+                    raise ValueError(f"Fee structure is locked by allotted students and cannot be modified by non-admin users.")
+
+        # Update fee structures using the BaseModel's update pattern
+        count = await FeeStructure.update(request, db, payload)
+        return {"detail": "Fee structures updated successfully", "count": count}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 # Search endpoints for dropdowns
 @router.get(
@@ -355,24 +443,33 @@ async def create_year_specific_demand(
     Returns:
         Created count, total amount, and success message
     """
-    from common.schemas.billing.demand_year_schema import CreateYearDemandRequest, CreateYearDemandResponse
+    from common.schemas.billing.demand_year_schema import CreateYearDemandResponse
     from uuid import UUID
     
     try:
         # Extract and validate data
         student_ids_str = payload.get("student_ids", [])
-        fee_structure_id_str = payload.get("fee_structure_id")
+        fee_structure_id_str = payload.get("fee_structure_id")  # optional
         year = payload.get("year")
+        semester = payload.get("semester")
         
-        if not student_ids_str or not fee_structure_id_str or not year:
-            raise ValueError("Missing required fields: student_ids, fee_structure_id, or year")
+        if not student_ids_str:
+            raise ValueError("Missing required field: student_ids")
+        if (year in (None, "")) and semester is None:
+            raise ValueError("Either year or semester is required")
+        if (year not in (None, "")) and semester is not None:
+            raise ValueError("Provide either year or semester, not both")
         
         # Convert string IDs to UUIDs
         student_uuids = [UUID(sid) for sid in student_ids_str]
-        fs_uuid = UUID(fee_structure_id_str)
+        fs_uuid = UUID(fee_structure_id_str) if fee_structure_id_str else None
         
         result = await billing_service.create_year_specific_demand(
-            db, student_uuids, fs_uuid, year
+            db,
+            student_uuids,
+            fs_uuid,
+            year=str(year) if year not in (None, "") else None,
+            semester=int(semester) if semester is not None else None,
         )
         return CreateYearDemandResponse(**result)
     except ValueError as e:
@@ -400,15 +497,24 @@ async def check_demand_status(
         student_ids_str = payload.get("student_ids", [])
         fee_structure_id_str = payload.get("fee_structure_id")
         year = payload.get("year")
+        semester = payload.get("semester")
         
-        if not fee_structure_id_str or not year:
+        if not fee_structure_id_str:
             return {"status": {}}
+        if (year in (None, "")) and semester is None:
+            return {"status": {}}
+        if (year not in (None, "")) and semester is not None:
+            raise ValueError("Provide either year or semester, not both")
             
         student_uuids = [UUID(sid) for sid in student_ids_str]
         fs_uuid = UUID(fee_structure_id_str)
         
         status_map = await billing_service.check_year_demand_status(
-            db, student_uuids, fs_uuid, year
+            db,
+            student_uuids,
+            fs_uuid,
+            year=str(year) if year not in (None, "") else None,
+            semester=int(semester) if semester is not None else None,
         )
         return {"status": status_map}
     except Exception as e:
@@ -698,6 +804,295 @@ async def cash_counter_pay(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+# --- Student Deposits Management ─────────────────────────
+@router.post(
+    "/invoices/{invoice_id}/apply-deposit",
+    tags=["Billing - Student Deposits"],
+    name="Apply Deposit to Invoice",
+    summary="Manually apply student deposit as credit to specific invoice"
+)
+async def apply_deposit_to_invoice(
+    invoice_id: UUID,
+    payload: dict,
+    db: AsyncSession = Depends(get_db_session),
+    user_id: UUID = Depends(get_user_id),
+):
+    """
+    Manually apply deposit/advance amount to a specific invoice.
+    Updates both invoice balance and deposit tracking.
+    """
+    try:
+        from common.models.billing.student_deposit import StudentDeposit
+        from sqlalchemy import select
+        
+        # Get invoice
+        invoice_stmt = select(Invoice).where(Invoice.id == invoice_id)
+        invoice_res = await db.execute(invoice_stmt)
+        invoice = invoice_res.scalar_one_or_none()
+
+        if not invoice:
+            raise HTTPException(status_code=404, detail="Invoice not found")
+
+        student_id = invoice.student_id
+        amount_to_apply = payload.get("amount_to_apply")
+
+        if not amount_to_apply or amount_to_apply <= 0:
+            raise HTTPException(status_code=400, detail="Amount must be greater than 0")
+
+        # Get student deposit
+        deposit_stmt = select(StudentDeposit).where(StudentDeposit.student_id == student_id)
+        deposit_res = await db.execute(deposit_stmt)
+        deposit = deposit_res.scalar_one_or_none()
+
+        if not deposit or deposit.available_balance <= 0:
+            raise HTTPException(status_code=400, detail="No available deposit balance for this student")
+
+        from decimal import Decimal
+        amount_decimal = Decimal(str(amount_to_apply))
+        
+        if amount_decimal > Decimal(str(deposit.available_balance)):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Amount exceeds available balance of {deposit.available_balance}"
+            )
+
+        # Create line item for the deposit credit
+        line_item = InvoiceLineItem(
+            invoice_id=invoice.id,
+            description="Deposit/Advance Credit Applied",
+            amount=-amount_decimal,  # Negative = credit
+            discount_amount=0,
+            tax_amount=0,
+            net_amount=-amount_decimal,
+        )
+        db.add(line_item)
+
+        # Update deposit
+        deposit.used_amount += amount_decimal
+        
+        from datetime import datetime
+        adjustment_entry = {
+            "date": datetime.utcnow().isoformat(),
+            "amount": float(amount_decimal),
+            "invoice_id": str(invoice.id),
+            "applied_by": str(user_id),
+        }
+        if deposit.adjustment_history is None:
+            deposit.adjustment_history = []
+        deposit.adjustment_history.append(adjustment_entry)
+
+        # Update invoice balance
+        if invoice.balance_due:
+            invoice.balance_due -= amount_decimal
+
+        db.add(deposit)
+        await db.commit()
+
+        return {
+            "success": True,
+            "message": f"Applied deposit of {amount_to_apply} to invoice",
+            "invoice_id": str(invoice.id),
+            "deposit_id": str(deposit.id),
+            "new_invoice_balance": float(invoice.balance_due) if invoice.balance_due else 0,
+            "deposit_available_balance": float(deposit.available_balance),
+        }
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error applying deposit: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post(
+    "/deposits/{student_id}/refund",
+    tags=["Billing - Student Deposits"],
+    name="Refund Deposit",
+    summary="Process refund of student deposit/advance amount"
+)
+async def refund_deposit(
+    student_id: UUID,
+    payload: dict,
+    db: AsyncSession = Depends(get_db_session),
+    user_id: UUID = Depends(get_user_id),
+):
+    """
+    Request refund of available deposit balance.
+    Creates a Refund record for processing.
+    """
+    try:
+        from common.models.billing.student_deposit import StudentDeposit
+        from common.models.billing.refund import Refund, RefundStatusEnum
+        from sqlalchemy import select
+        
+        # Get student deposit
+        deposit_stmt = select(StudentDeposit).where(StudentDeposit.student_id == student_id)
+        deposit_res = await db.execute(deposit_stmt)
+        deposit = deposit_res.scalar_one_or_none()
+
+        if not deposit:
+            raise HTTPException(status_code=404, detail="No deposit found for this student")
+
+        refund_amount = payload.get("amount")
+        refund_method = payload.get("refund_method")
+        notes = payload.get("notes")
+
+        if not refund_amount or refund_amount <= 0:
+            raise HTTPException(status_code=400, detail="Refund amount must be greater than 0")
+
+        if not refund_method:
+            raise HTTPException(status_code=400, detail="Refund method is required")
+
+        from decimal import Decimal
+        refund_decimal = Decimal(str(refund_amount))
+        
+        if refund_decimal > Decimal(str(deposit.available_balance)):
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Refund amount exceeds available balance of {deposit.available_balance}"
+            )
+
+        # Create refund record
+        refund = Refund(
+            student_id=student_id,
+            institution_id=deposit.institution_id,
+            original_payment_id=None,  # Not linked to specific payment, but to deposit
+            original_invoice_id=None,  # Not linked to specific invoice
+            original_amount=refund_decimal,
+            cancellation_fee=Decimal("0"),
+            refund_amount=refund_decimal,
+            refund_method=refund_method,
+            status=RefundStatusEnum.INITIATED,
+            reason=notes,
+            initiated_by=user_id,
+        )
+        db.add(refund)
+
+        # Update deposit
+        deposit.refunds_issued += refund_decimal
+        
+        # Update status based on used and refunded amounts
+        from common.models.billing.student_deposit import DepositStatusEnum
+        if deposit.available_balance == Decimal("0"):
+            if deposit.refunds_issued > 0:
+                deposit.status = DepositStatusEnum.FULLY_REFUNDED
+            else:
+                deposit.status = DepositStatusEnum.FULLY_USED
+        elif deposit.refunds_issued > 0:
+            deposit.status = DepositStatusEnum.PARTIALLY_REFUNDED
+
+        db.add(deposit)
+        await db.commit()
+        await db.refresh(refund)
+
+        return {
+            "success": True,
+            "refund_id": str(refund.id),
+            "student_id": str(student_id),
+            "amount": float(refund_amount),
+            "refund_method": refund_method,
+            "status": refund.status,
+            "created_at": refund.created_at.isoformat(),
+            "deposit_available_balance": float(deposit.available_balance),
+        }
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error refunding deposit: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get(
+    "/deposits",
+    tags=["Billing - Student Deposits"],
+    name="List All Student Deposits",
+    summary="Retrieve all student deposits with filtering"
+)
+async def list_student_deposits(
+    page: int = 1,
+    size: int = 50,
+    institution_id: UUID | None = None,
+    department_id: UUID | None = None,
+    course_id: UUID | None = None,
+    search: str | None = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    List all student deposits with pagination and filtering.
+    Useful for Finance reporting and reconciliation.
+    """
+    try:
+        from common.models.billing.student_deposit import StudentDeposit
+        from common.models.admission.admission_entry import AdmissionStudent
+        from sqlalchemy import func, and_, or_
+        
+        filters = []
+        
+        # Base filter
+        filters.append(StudentDeposit.total_deposited > 0)
+        
+        if institution_id:
+            filters.append(StudentDeposit.institution_id == institution_id)
+        
+        if search:
+            search_pattern = f"%{search}%"
+            filters.append(
+                or_(
+                    StudentDeposit.application_number.ilike(search_pattern),
+                    Student.name.ilike(search_pattern) if hasattr(StudentDeposit, "student") else False,
+                )
+            )
+        
+        # Count total
+        count_stmt = select(func.count(StudentDeposit.id)).where(and_(*filters) if filters else True)
+        count_res = await db.execute(count_stmt)
+        total = count_res.scalar() or 0
+        
+        # Fetch paginated data
+        offset = (page - 1) * size
+        stmt = select(StudentDeposit).options(
+            selectinload(StudentDeposit.student)
+        ).where(and_(*filters) if filters else True).order_by(StudentDeposit.created_at.desc()).offset(offset).limit(size)
+        
+        res = await db.execute(stmt)
+        deposits = res.scalars().all()
+        
+        items = []
+        for deposit in deposits:
+            student_name = None
+            if deposit.student:
+                student_name = deposit.student.name
+            
+            items.append({
+                "id": str(deposit.id),
+                "student_id": str(deposit.student_id),
+                "student_name": student_name,
+                "application_number": deposit.application_number,
+                "total_deposited": float(deposit.total_deposited),
+                "used_amount": float(deposit.used_amount),
+                "available_balance": float(deposit.available_balance),
+                "refunds_issued": float(deposit.refunds_issued),
+                "status": deposit.status,
+                "created_at": deposit.created_at.isoformat(),
+            })
+        
+        pages = (total + size - 1) // size if size > 0 else 1
+        
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "size": size,
+            "pages": pages,
+        }
+    except Exception as e:
+        logger.error(f"Error listing deposits: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
 
 # --- Cash Counters CRUD (Generic /{id} routes must be last) ---
 from common.models.billing.cash_counter import CashCounter

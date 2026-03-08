@@ -38,7 +38,7 @@ router = APIRouter()
     description="A simple health check endpoint to verify the service is running.",
 )
 def check(request: Request):
-    return {"status": "ok", "request": request}
+    return {"status": "ok", "path": str(request.url.path)}
 
 
 # =====================================================

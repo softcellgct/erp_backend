@@ -275,6 +275,13 @@ class AdmissionStudent(Base):
     other_reference = relationship(
         "OtherReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
     )
+    deposits = relationship(
+        "StudentDeposit",
+        back_populates="student",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
+        lazy="selectin",
+    )
 
     def __repr__(self):
         return f"<AdmissionStudent(id={self.id}, name='{self.name}', gate_pass='{self.gate_pass_number}')>"

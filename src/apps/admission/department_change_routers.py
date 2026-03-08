@@ -26,6 +26,10 @@ from components.generator.utils.get_user_from_request import get_user_id
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi_pagination import Page, Params
 from fastapi_pagination.ext.sqlalchemy import paginate
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 department_change_router = APIRouter(
@@ -158,13 +162,16 @@ async def create_department_change_request(
     )
 
     db.add(change_request)
-    await db.commit()
-    await db.refresh(change_request)
-
-    # Load relationships
-    await db.refresh(change_request, ["student", "current_department", "requested_department"])
-
-    return change_request
+    try:
+        await db.commit()
+        await db.refresh(change_request)
+        # Load relationships
+        await db.refresh(change_request, ["student", "current_department", "requested_department"])
+        return change_request
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to create department change request for {data.student_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to create request: {str(e)}")
 
 
 # ========================
@@ -351,10 +358,14 @@ async def approve_department_change_request(
     change_request.reviewed_at = datetime.utcnow()
     change_request.remarks = data.remarks
 
-    await db.commit()
-    await db.refresh(change_request)
-
-    return change_request
+    try:
+        await db.commit()
+        await db.refresh(change_request)
+        return change_request
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to approve department change request {request_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to approve request: {str(e)}")
 
 
 # ========================
@@ -420,10 +431,14 @@ async def reject_department_change_request(
     change_request.reviewed_at = datetime.utcnow()
     change_request.remarks = data.remarks or "Request rejected"
 
-    await db.commit()
-    await db.refresh(change_request)
-
-    return change_request
+    try:
+        await db.commit()
+        await db.refresh(change_request)
+        return change_request
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to reject department change request {request_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to reject request: {str(e)}")
 
 
 # ========================
@@ -466,6 +481,10 @@ async def delete_department_change_request(
     change_request.is_active = False
     change_request.updated_at = datetime.utcnow()
 
-    await db.commit()
-
-    return None
+    try:
+        await db.commit()
+        return None
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to delete department change request {request_id}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Failed to delete request: {str(e)}")

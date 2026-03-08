@@ -2,7 +2,8 @@
 API Routers for Admission Form Verification
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Request, File, UploadFile, Query
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, insert
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import selectinload
 from datetime import datetime
 from uuid import UUID
@@ -29,6 +30,20 @@ from components.generator.utils.get_user_from_request import get_user_id
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi_pagination import Page, add_pagination
 from fastapi_pagination.ext.sqlalchemy import paginate
+from pydantic import ValidationError
+from fastapi.encoders import jsonable_encoder
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+async def _safe_commit(db: AsyncSession, msg: str | None = None):
+    try:
+        await db.commit()
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"{msg or 'DB commit failed'}: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
 
 
 verification_router = APIRouter(
@@ -48,12 +63,13 @@ verification_router = APIRouter(
 )
 async def print_admission_form(
     student_id: UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
-    request: Request = Depends(),
 ):
     """
     Print admission form for a student.
     Creates or updates the verification record and marks form as printed.
+    Uses upsert to handle race conditions safely.
     """
     try:
         user_id = await get_user_id(request)
@@ -73,25 +89,28 @@ async def print_admission_form(
             detail=f"Admission student with ID {student_id} not found",
         )
 
-    # Get or create verification record
-    query = select(AdmissionFormVerification).where(
-        AdmissionFormVerification.student_id == student_id
-    )
-    result = await db.execute(query)
-    verification = result.scalar_one_or_none()
+    # Use upsert to safely handle concurrent requests
+    stmt = pg_insert(AdmissionFormVerification).values(
+        student_id=student_id,
+        form_printed=True,
+        form_printed_at=datetime.utcnow(),
+        form_printed_by=user_id,
+        status=VerificationStatusEnum.FORM_PRINTED,
+    ).on_conflict_do_update(
+        index_elements=['student_id'],
+        set_={
+            'form_printed': True,
+            'form_printed_at': datetime.utcnow(),
+            'form_printed_by': user_id,
+            'status': VerificationStatusEnum.FORM_PRINTED,
+            'updated_at': datetime.utcnow(),
+        }
+    ).returning(AdmissionFormVerification)
 
-    if not verification:
-        verification = AdmissionFormVerification(student_id=student_id)
-        db.add(verification)
-
-    # Update print status
-    verification.form_printed = True
-    verification.form_printed_at = datetime.utcnow()
-    verification.form_printed_by = user_id
-    verification.status = VerificationStatusEnum.FORM_PRINTED
-
-    await db.commit()
-    await db.refresh(verification)
+    result = await db.execute(stmt)
+    verification = result.scalar_one()
+    
+    await _safe_commit(db)
 
     return verification
 
@@ -109,8 +128,8 @@ async def print_admission_form(
 async def verify_certificate(
     student_id: UUID,
     data: VerifyCertificateRequest,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
-    request: Request = Depends(),
 ):
     """
     Verify student certificate (certificate is NOT collected, only verified).
@@ -170,7 +189,7 @@ async def verify_certificate(
     if data.documents_checked:
         verification.documents_checked = data.documents_checked
 
-    await db.commit()
+    await _safe_commit(db)
     await db.refresh(verification)
 
     return verification
@@ -299,7 +318,7 @@ async def initialize_verification(
         student_id=student_id, status=VerificationStatusEnum.PENDING
     )
     db.add(verification)
-    await db.commit()
+    await _safe_commit(db)
     await db.refresh(verification)
 
     return verification
@@ -341,7 +360,7 @@ async def update_verification_remarks(
     if data.documents_checked is not None:
         verification.documents_checked = data.documents_checked
 
-    await db.commit()
+    await _safe_commit(db)
     await db.refresh(verification)
 
     return verification
@@ -360,8 +379,8 @@ async def update_verification_remarks(
 )
 async def mark_application_received(
     student_id: UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
-    request: Request = Depends(),
 ):
     """
     Mark application as received by the Form Verification Team.
@@ -410,7 +429,7 @@ async def mark_application_received(
     verification.application_received_by = user_id
     verification.status = VerificationStatusEnum.APPLICATION_RECEIVED
 
-    await db.commit()
+    await _safe_commit(db)
     await db.refresh(verification)
 
     return verification
@@ -529,7 +548,7 @@ async def submit_certificate(
         # Auto-create form verification record for the student
         form_verification = AdmissionFormVerification(student_id=student_id)
         db.add(form_verification)
-        await db.commit()
+        await _safe_commit(db)
         await db.refresh(form_verification)
 
     # Check if document type exists
@@ -595,7 +614,7 @@ async def submit_certificate(
         )
         db.add(submitted_cert)
 
-    await db.commit()
+    await _safe_commit(db)
     await db.refresh(submitted_cert)
 
     return submitted_cert
@@ -629,7 +648,7 @@ async def get_submitted_certificates(
         # Auto-create form verification record for the student
         form_verification = AdmissionFormVerification(student_id=student_id)
         db.add(form_verification)
-        await db.commit()
+        await _safe_commit(db)
         await db.refresh(form_verification)
 
     # Get all submitted certificates
@@ -654,8 +673,8 @@ async def get_submitted_certificates(
 )
 async def mark_provisionally_allotted(
     student_id: UUID,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
-    request: Request = Depends(),
 ):
     """
     Mark student as provisionally allotted after all certificates are received and verified.
@@ -745,7 +764,7 @@ async def mark_provisionally_allotted(
             detail=f"Fee structure lock failed: {exc}",
         )
 
-    await db.commit()
+    await _safe_commit(db)
     await db.refresh(form_verification)
 
     return form_verification
@@ -761,16 +780,34 @@ async def mark_provisionally_allotted(
     response_model=SubmittedCertificateResponse,
     name="Verify Submitted Certificate",
 )
+
+
 async def verify_submitted_certificate(
     student_id: UUID,
     submitted_certificate_id: UUID,
-    data: SubmittedCertificateUpdate,
+    request: Request,
     db: AsyncSession = Depends(get_db_session),
-    request: Request = Depends(),
 ):
     """
     Update the verification status of a submitted certificate.
     """
+    # Parse body which may be either flat {is_verified, is_received, remarks}
+    # or wrapped { scope: {...}, data: {...} }
+    try:
+        raw = await request.json()
+    except Exception:
+        raw = {}
+
+    if isinstance(raw, dict) and "data" in raw and isinstance(raw["data"], dict):
+        payload = raw["data"]
+    else:
+        payload = raw or {}
+
+    try:
+        data = SubmittedCertificateUpdate(**payload)
+    except ValidationError as ve:
+        raise HTTPException(status_code=422, detail=jsonable_encoder(ve.errors()))
+
     try:
         user_id = await get_user_id(request)
     except Exception:
@@ -818,7 +855,7 @@ async def verify_submitted_certificate(
     if data.remarks is not None:
         submitted_cert.remarks = data.remarks
 
-    await db.commit()
+    await _safe_commit(db)
     await db.refresh(submitted_cert)
 
     return submitted_cert

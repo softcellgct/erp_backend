@@ -32,13 +32,17 @@ from common.models.billing.application_fees import (
 )
 from common.models.billing.cash_counter import CashCounter
 from common.models.billing.demand import DemandBatch, DemandItem
-from common.models.billing.fee_structure import FeeStructure, FeeStructureItem
+from common.models.billing.fee_structure import FeeStructure, FeeStructureItem, PayerTypeEnum
 from common.models.billing.fee_subhead import FeeSubHead
 from common.models.billing.transport import TransportRoute, TransportBus, TransportFeeStructure
 from common.models.billing.hostel import HostelRoom, HostelFeeStructure
 from common.models.billing.concession import Concession, ConcessionAudit
 from common.models.billing.recall import PaymentRecallRequest
 from common.models.billing.financial_year import FinancialYear
+from common.models.billing.scholarship import StudentScholarship, ScholarshipTypeEnum, CertificateStatusEnum
+from common.models.billing.refund import Refund, RefundStatusEnum, RefundMethodEnum
+from common.models.billing.bulk_receipt import BulkReceipt, BulkReceiptItem
+from common.models.billing.student_deposit import StudentDeposit, DepositStatusEnum
 
 
 __all__ = [
@@ -106,4 +110,15 @@ __all__ = [
     "ConcessionAudit",
     "PaymentRecallRequest",
     "FinancialYear",
+    "StudentScholarship",
+    "ScholarshipTypeEnum",
+    "CertificateStatusEnum",
+    "Refund",
+    "RefundStatusEnum",
+    "RefundMethodEnum",
+    "PayerTypeEnum",
+    "BulkReceipt",
+    "BulkReceiptItem",
+    "StudentDeposit",
+    "DepositStatusEnum",
 ]

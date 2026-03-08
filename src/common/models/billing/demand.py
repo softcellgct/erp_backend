@@ -2,8 +2,10 @@ from uuid import UUID
 from datetime import datetime
 from components.db.base_model import Base
 from sqlalchemy import ForeignKey, String, DateTime, Boolean
-from sqlalchemy import JSON, Numeric
+from sqlalchemy import JSON, Numeric, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from common.models.billing.fee_structure import PayerTypeEnum
 
 
 class DemandBatch(Base):
@@ -33,5 +35,12 @@ class DemandItem(Base):
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     fee_head_id: Mapped[UUID | None] = mapped_column(ForeignKey("fee_heads.id", ondelete="SET NULL"), nullable=True, index=True)
     fee_sub_head_id: Mapped[UUID | None] = mapped_column(ForeignKey("fee_sub_heads.id", ondelete="SET NULL"), nullable=True, index=True)
+    semester: Mapped[int | None] = mapped_column(nullable=True)  # Semester number (1, 2, 3, ...)
+    year: Mapped[int | None] = mapped_column(nullable=True)      # Academic year number (1, 2, 3, ...)
+    payer_type: Mapped[PayerTypeEnum] = mapped_column(
+        SAEnum(PayerTypeEnum, name="payer_type_enum", values_callable=lambda obj: [e.value for e in obj], create_constraint=False),
+        default=PayerTypeEnum.STUDENT,
+        nullable=False,
+    )
 
     batch = relationship("DemandBatch", back_populates="demands", lazy="selectin")

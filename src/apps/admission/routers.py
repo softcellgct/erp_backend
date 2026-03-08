@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from components.generator.routes import create_crud_routes
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.inspection import inspect
-from fastapi_pagination import add_pagination, Page
+from fastapi_pagination import add_pagination, Page, Params
 from fastapi_pagination.ext.sqlalchemy import paginate
 from fastapi_querybuilder.dependencies import QueryBuilder
 from fastapi import Request
@@ -52,6 +52,26 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _serialize_admission_student(student: AdmissionStudent) -> dict:
+    """
+    Convert an AdmissionStudent ORM row to a JSON-safe dict using only table columns.
+    Relationships are intentionally excluded to prevent recursive JSON encoding.
+    """
+    mapper = inspect(student.__class__)
+    serialized = {}
+    for column in mapper.columns:
+        value = getattr(student, column.name, None)
+        if isinstance(value, UUID):
+            serialized[column.name] = str(value)
+        elif hasattr(value, "isoformat"):
+            serialized[column.name] = value.isoformat()
+        elif hasattr(value, "value"):
+            serialized[column.name] = value.value
+        else:
+            serialized[column.name] = value
+    return serialized
+
+
 consultancy_router = APIRouter()
 
 consultancy_crud_router = create_crud_routes(
@@ -88,7 +108,8 @@ async def get_admission_student(
     db: AsyncSession = Depends(get_db_session)
 ):
     query = select(AdmissionStudent).options(
-        raiseload("*")
+        selectinload(AdmissionStudent.department),
+        selectinload(AdmissionStudent.course),
     ).where(AdmissionStudent.id == id)
     
     result = await db.execute(query)
@@ -101,17 +122,33 @@ async def get_admission_student(
         )
     
     # Return as dict to avoid circular reference encoding issues
+    # Resolve readable department/course names from relationships (if loaded)
+    dept_name = getattr(student.department, "name", None) if getattr(student, "department", None) else None
+    course_title = getattr(student.course, "title", None) if getattr(student, "course", None) else None
+
+    # Fetch academic year name if academic_year_id is present
+    academic_year_name = None
+    if getattr(student, "academic_year_id", None):
+        from common.models.master.annual_task import AcademicYear
+        ay_stmt = select(AcademicYear.year_name).where(AcademicYear.id == student.academic_year_id)
+        ay_res = await db.execute(ay_stmt)
+        academic_year_name = ay_res.scalar_one_or_none()
+
     return {
         "id": str(student.id),
         "name": student.name,
-        "email": student.email,
+        "email": getattr(student, "email", None),
         "student_mobile": student.student_mobile,
         "enquiry_number": student.enquiry_number,
         "application_number": student.application_number,
         "status": student.status,
         "source": student.source,
         "department_id": str(student.department_id) if student.department_id else None,
+        "department": dept_name,
         "course_id": str(student.course_id) if student.course_id else None,
+        "course": course_title,
+        "academic_year_id": str(student.academic_year_id) if student.academic_year_id else None,
+        "academic_year": academic_year_name,
         "institution_id": str(student.institution_id) if student.institution_id else None,
         "created_at": student.created_at,
         "updated_at": student.updated_at,
@@ -196,6 +233,8 @@ async def get_booked_paid_students(
                     "invoice_id": str(inv.id) if inv else None,
                     "invoice_status": inv.status if inv else None,
                     "status": s.status,
+                    "fee_structure_id": str(s.fee_structure_id) if getattr(s, "fee_structure_id", None) else None,
+                    "is_fee_structure_locked": getattr(s, "is_fee_structure_locked", False),
                 }
             )
 
@@ -264,6 +303,8 @@ async def get_applied_students(
                     "course": course_title,
                     "enrollment_date": s.created_at.isoformat() if getattr(s, "created_at", None) else None,
                     "status": s.status,
+                    "fee_structure_id": str(s.fee_structure_id) if getattr(s, "fee_structure_id", None) else None,
+                    "is_fee_structure_locked": getattr(s, "is_fee_structure_locked", False),
                 }
             )
 
@@ -271,6 +312,151 @@ async def get_applied_students(
 
         return {"items": items, "total": total, "page": page, "pages": pages, "size": size}
     except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@admission_entry_router.post(
+    "/admission-students/{student_id}/set-fee-structure",
+    tags=["Admission - Admission Students"],
+    name="Set Temporary Fee Structure",
+    summary="Set temporary fee structure for booked/applied student",
+)
+async def set_temporary_fee_structure(
+    student_id: str,
+    payload: dict,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Set temporary fee structure for BOOKED/APPLIED students (without locking).
+    Can be changed later until fee structure is locked.
+    """
+    try:
+        from uuid import UUID
+        from sqlalchemy import update
+        
+        # Convert student_id to UUID
+        student_uuid = UUID(student_id)
+        
+        # Get the student
+        stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_uuid)
+        res = await db.execute(stmt)
+        student = res.scalar_one_or_none()
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        # Check if student is in allowed status
+        current_status = student.status
+        allowed_statuses = {"BOOKED", "APPLIED"}
+        if current_status not in allowed_statuses:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Fee structure can only be set for BOOKED or APPLIED students, current status: {current_status}",
+            )
+
+        # Check if already locked
+        if getattr(student, "is_fee_structure_locked", False):
+            raise HTTPException(
+                status_code=409,
+                detail="Fee structure is locked for this student. Cannot modify.",
+            )
+
+        # Update fee structure
+        fee_structure_id = payload.get("fee_structure_id")
+        update_stmt = (
+            update(AdmissionStudent)
+            .where(AdmissionStudent.id == student_uuid)
+            .values(fee_structure_id=fee_structure_id)
+        )
+        await db.execute(update_stmt)
+        await db.commit()
+
+        # Fetch and return updated student
+        refreshed_stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_uuid)
+        refreshed_res = await db.execute(refreshed_stmt)
+        updated_student = refreshed_res.scalar_one_or_none()
+
+        return {
+            "id": str(updated_student.id),
+            "application_number": updated_student.application_number,
+            "name": updated_student.name,
+            "fee_structure_id": str(updated_student.fee_structure_id) if updated_student.fee_structure_id else None,
+            "is_fee_structure_locked": getattr(updated_student, "is_fee_structure_locked", False),
+            "status": updated_student.status,
+        }
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@admission_entry_router.post(
+    "/admission-students/{student_id}/provisionally-allot",
+    tags=["Admission - Admission Students"],
+    name="Provisionally Allot Student",
+    summary="Change student status to PROVISIONALLY_ALLOTTED",
+)
+async def provisionally_allot_student(
+    student_id: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Change student status from APPLIED to PROVISIONALLY_ALLOTTED.
+    Does NOT require fee structure to be set.
+    Fee structure can be set/locked later.
+    """
+    try:
+        from uuid import UUID
+        from sqlalchemy import update
+        
+        # Convert student_id to UUID
+        student_uuid = UUID(student_id)
+        
+        # Get the student
+        stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_uuid)
+        res = await db.execute(stmt)
+        student = res.scalar_one_or_none()
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        # Check current status
+        current_status = student.status
+        if current_status != "APPLIED":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Student must be in APPLIED status to provisionally allot, current status: {current_status}",
+            )
+
+        # Update status to PROVISIONALLY_ALLOTTED
+        update_stmt = (
+            update(AdmissionStudent)
+            .where(AdmissionStudent.id == student_uuid)
+            .values(status="PROVISIONALLY_ALLOTTED")
+        )
+        await db.execute(update_stmt)
+        await db.commit()
+
+        # Fetch and return updated student
+        refreshed_stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_uuid)
+        refreshed_res = await db.execute(refreshed_stmt)
+        updated_student = refreshed_res.scalar_one_or_none()
+
+        return {
+            "id": str(updated_student.id),
+            "application_number": updated_student.application_number,
+            "name": updated_student.name,
+            "status": updated_student.status,
+            "fee_structure_id": str(updated_student.fee_structure_id) if updated_student.fee_structure_id else None,
+            "is_fee_structure_locked": getattr(updated_student, "is_fee_structure_locked", False),
+        }
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
 
 
@@ -360,6 +546,10 @@ async def list_admission_students(
                         "updated_at": AdmissionStudent.updated_at,
                     }
 
+                    boolean_columns = {
+                        "is_fee_structure_locked": AdmissionStudent.is_fee_structure_locked,
+                    }
+
                     if field_name == "status":
                         status_column = cast(AdmissionStudent.status, String)
                         if operator == "$in" and isinstance(raw_value, list):
@@ -434,6 +624,16 @@ async def list_admission_students(
                                 return column <= dt_value
                             if operator == "$lt":
                                 return column < dt_value
+                        return None
+                        
+                    if field_name in boolean_columns:
+                        column = boolean_columns[field_name]
+                        # Handle strings from JSON like "true", "false", or boolean true/false
+                        bool_value = str(raw_value).strip().lower() in {'true', '1', 'yes', 'y'}
+                        if operator == "$eq":
+                            return column == bool_value
+                        elif operator == "$ne":
+                            return column != bool_value
                         return None
 
                     return None
@@ -593,7 +793,7 @@ async def bulk_update_admission_student_status(
     if payload.new_status != AdmissionStatusEnum.PROVISIONALLY_ALLOTTED:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Only PROVISIONALLY_ALLOTTED bulk update is supported",
+            detail="Only PROVISIONALLY_ALLOTTED bulk update is supported via this endpoint. Use /bulk-waitlist or /bulk-cancel for other statuses.",
         )
 
     query = select(AdmissionStudent).where(
@@ -607,6 +807,9 @@ async def bulk_update_admission_student_status(
     updated_count = 0
     changes_made = 0
     results: List[BulkAdmissionStatusUpdateResult] = []
+
+    # Allow both APPLIED and WAITLISTED → PROVISIONALLY_ALLOTTED
+    valid_source_statuses = {AdmissionStatusEnum.APPLIED.value, AdmissionStatusEnum.WAITLISTED.value}
 
     for student_id in payload.student_ids:
         student = student_map.get(student_id)
@@ -653,7 +856,7 @@ async def bulk_update_admission_student_status(
             )
             continue
 
-        if current_status != AdmissionStatusEnum.APPLIED.value:
+        if current_status != AdmissionStatusEnum.APPLIED.value and current_status not in valid_source_statuses:
             results.append(
                 BulkAdmissionStatusUpdateResult(
                     student_id=student_id,
@@ -687,7 +890,12 @@ async def bulk_update_admission_student_status(
         )
 
     if changes_made > 0:
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            logger.error(f"Failed during bulk admission status update: {str(e)}", exc_info=True)
+            raise HTTPException(status_code=400, detail=f"Bulk update failed: {str(e)}")
 
     failed_count = len([item for item in results if not item.success])
 
@@ -697,6 +905,148 @@ async def bulk_update_admission_student_status(
         failed_count=failed_count,
         results=results,
     )
+
+
+# ── Bulk Waitlist ─────────────────────────────────────
+@admission_entry_router.post(
+    "/admission-students/bulk-waitlist",
+    tags=["Admission - Admission Students"],
+    name="Bulk Waitlist Students",
+)
+async def bulk_waitlist_students(
+    payload: BulkAdmissionStatusUpdateRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Bulk transition APPLIED students → WAITLISTED."""
+    if not payload.student_ids:
+        raise HTTPException(status_code=400, detail="student_ids cannot be empty")
+
+    query = select(AdmissionStudent).where(
+        AdmissionStudent.id.in_(payload.student_ids),
+        AdmissionStudent.deleted_at.is_(None),
+    )
+    result = await db.execute(query)
+    student_map = {s.id: s for s in result.scalars().all()}
+
+    updated, results = 0, []
+    valid_from = {AdmissionStatusEnum.APPLIED.value, "APPLIED"}
+
+    for sid in payload.student_ids:
+        student = student_map.get(sid)
+        if not student:
+            results.append(BulkAdmissionStatusUpdateResult(student_id=sid, success=False, message="Student not found"))
+            continue
+        cur = student.status.value if hasattr(student.status, "value") else str(student.status)
+        if cur not in valid_from:
+            results.append(BulkAdmissionStatusUpdateResult(student_id=sid, success=False, message=f"Cannot waitlist from {cur}"))
+            continue
+        student.status = AdmissionStatusEnum.WAITLISTED
+        updated += 1
+        results.append(BulkAdmissionStatusUpdateResult(student_id=sid, success=True, message="Moved to WAITLISTED"))
+
+    if updated:
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=400, detail=str(e))
+
+    return BulkAdmissionStatusUpdateResponse(
+        total_requested=len(payload.student_ids),
+        updated_count=updated,
+        failed_count=len([r for r in results if not r.success]),
+        results=results,
+    )
+
+
+# ── Bulk Cancel (Withdraw) ───────────────────────────
+@admission_entry_router.post(
+    "/admission-students/bulk-cancel",
+    tags=["Admission - Admission Students"],
+    name="Bulk Cancel Admission Students",
+)
+async def bulk_cancel_students(
+    payload: BulkAdmissionStatusUpdateRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Bulk transition students → WITHDRAWN (cancel admission)."""
+    if not payload.student_ids:
+        raise HTTPException(status_code=400, detail="student_ids cannot be empty")
+
+    query = select(AdmissionStudent).where(
+        AdmissionStudent.id.in_(payload.student_ids),
+        AdmissionStudent.deleted_at.is_(None),
+    )
+    result = await db.execute(query)
+    student_map = {s.id: s for s in result.scalars().all()}
+
+    valid_from = {
+        AdmissionStatusEnum.APPLIED.value,
+        AdmissionStatusEnum.PROVISIONALLY_ALLOTTED.value,
+        AdmissionStatusEnum.WAITLISTED.value,
+        "APPLIED", "PROVISIONALLY_ALLOTTED", "WAITLISTED",
+    }
+
+    updated, results = 0, []
+    for sid in payload.student_ids:
+        student = student_map.get(sid)
+        if not student:
+            results.append(BulkAdmissionStatusUpdateResult(student_id=sid, success=False, message="Student not found"))
+            continue
+        cur = student.status.value if hasattr(student.status, "value") else str(student.status)
+        if cur not in valid_from:
+            results.append(BulkAdmissionStatusUpdateResult(student_id=sid, success=False, message=f"Cannot cancel from {cur}"))
+            continue
+        student.status = AdmissionStatusEnum.WITHDRAWN
+        updated += 1
+        results.append(BulkAdmissionStatusUpdateResult(student_id=sid, success=True, message="Cancelled (WITHDRAWN)"))
+
+    if updated:
+        try:
+            await db.commit()
+        except Exception as e:
+            await db.rollback()
+            raise HTTPException(status_code=400, detail=str(e))
+
+    return BulkAdmissionStatusUpdateResponse(
+        total_requested=len(payload.student_ids),
+        updated_count=updated,
+        failed_count=len([r for r in results if not r.success]),
+        results=results,
+    )
+
+
+# ── Reinstate Waitlisted → Provisionally Allotted ────
+@admission_entry_router.post(
+    "/admission-students/{student_id}/reinstate",
+    tags=["Admission - Admission Students"],
+    name="Reinstate Waitlisted Student",
+)
+async def reinstate_student(
+    student_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Move a WAITLISTED student back to PROVISIONALLY_ALLOTTED with fee lock."""
+    from apps.billing.services import billing_service
+
+    student = (await db.execute(
+        select(AdmissionStudent).where(AdmissionStudent.id == student_id, AdmissionStudent.deleted_at.is_(None))
+    )).scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    cur = student.status.value if hasattr(student.status, "value") else str(student.status)
+    if cur != AdmissionStatusEnum.WAITLISTED.value:
+        raise HTTPException(status_code=400, detail=f"Cannot reinstate from {cur}; must be WAITLISTED")
+
+    try:
+        await billing_service.lock_student_fee_structure(db, student.id)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Fee structure lock failed: {exc}")
+
+    student.status = AdmissionStatusEnum.PROVISIONALLY_ALLOTTED
+    await db.commit()
+    return {"message": "Student reinstated to PROVISIONALLY_ALLOTTED", "student_id": str(student_id)}
 
 
 # Include only specific CRUD endpoints (excluding auto-generated GET list which causes JSON column search errors)
@@ -1283,7 +1633,8 @@ lead_followup_router.include_router(
 async def get_lead_students(
     request: Request,
     db: AsyncSession = Depends(get_db_session),
-    query=QueryBuilder(AdmissionStudent)
+    query=QueryBuilder(AdmissionStudent),
+    params: Params = Depends()
 ):
     """
     Get all admission students who are in the 'lead' stage.
@@ -1328,7 +1679,7 @@ async def get_lead_students(
     else:
         query = query.distinct()
 
-    return await paginate(db, query)
+    return await paginate(db, query, params)
 
 
 admission_router = APIRouter()
@@ -1459,10 +1810,11 @@ async def update_course_and_fees(
         
         await db.commit()
         await db.refresh(student)
-        return student
+        return _serialize_admission_student(student)
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
+
 
 
 @admission_router.post(
@@ -1519,25 +1871,15 @@ async def set_fee_structure_and_lock(
         )
         await db.commit()
 
-        # Re-fetch with eager loads used by AdmissionStudentResponse
-        # to avoid lazy-load failures during response validation.
-        refreshed_query = (
-            select(AdmissionStudent)
-            .options(
-                selectinload(AdmissionStudent.sslc_details),
-                selectinload(AdmissionStudent.hsc_details),
-                selectinload(AdmissionStudent.diploma_details),
-                selectinload(AdmissionStudent.pg_details),
-            )
-            .where(AdmissionStudent.id == student_id)
-        )
+        # Re-fetch updated row and serialize only columns to avoid recursion.
+        refreshed_query = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
         refreshed_result = await db.execute(refreshed_query)
         refreshed_student = refreshed_result.scalar_one_or_none()
 
         if not refreshed_student:
             raise HTTPException(status_code=404, detail="Student not found after update")
 
-        return refreshed_student
+        return _serialize_admission_student(refreshed_student)
     except HTTPException:
         await db.rollback()
         raise
@@ -1583,7 +1925,7 @@ async def assign_roll_number(
     db.add(student)
     await db.commit()
     await db.refresh(student)
-    return student
+    return _serialize_admission_student(student)
 
 
 @admission_router.post(
@@ -1611,7 +1953,7 @@ async def assign_section(
     db.add(student)
     await db.commit()
     await db.refresh(student)
-    return student
+    return _serialize_admission_student(student)
 
 
 @admission_router.post(
@@ -1667,7 +2009,7 @@ async def activate_sem1(
     db.add(student)
     await db.commit()
     await db.refresh(student)
-    return student
+    return _serialize_admission_student(student)
 
 
 @admission_router.post(
@@ -1712,7 +2054,7 @@ async def grant_admission(
         db.add(student)
         await db.commit()
         await db.refresh(student)
-        return student
+        return _serialize_admission_student(student)
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
@@ -1753,7 +2095,7 @@ async def mark_student_applied(
         db.add(student)
         await db.commit()
         await db.refresh(student)
-        return student
+        return _serialize_admission_student(student)
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
@@ -1801,6 +2143,222 @@ async def update_admission_student_status(
     await db.commit()
 
     return {"message": "Status updated successfully", "id": str(id), "new_status": new_status.value}
+
+
+# ── Student Deposit Management ─────────────────────────
+@admission_entry_router.post(
+    "/admission-students/{student_id}/record-deposit",
+    tags=["Admission - Student Deposits"],
+    name="Record Student Deposit",
+    summary="Record advance/deposit payment for student before admission"
+)
+async def record_deposit(
+    student_id: UUID,
+    payload: dict,
+    db: AsyncSession = Depends(get_db_session),
+    user_id: UUID = Depends(get_user_id),
+):
+    """
+    Record a deposit/advance payment from a student.
+    Creates or updates StudentDeposit record.
+    """
+    try:
+        from common.models.billing.student_deposit import StudentDeposit
+        from datetime import datetime
+        
+        # Get the student
+        student_stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+        student_res = await db.execute(student_stmt)
+        student = student_res.scalar_one_or_none()
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        # Check if deposit record exists
+        deposit_stmt = select(StudentDeposit).where(StudentDeposit.student_id == student_id)
+        deposit_res = await db.execute(deposit_stmt)
+        deposit = deposit_res.scalar_one_or_none()
+
+        # Extract payload
+        amount = payload.get("amount")
+        payment_method = payload.get("payment_method")
+        transaction_id = payload.get("transaction_id")
+        notes = payload.get("notes")
+
+        if not amount or amount <= 0:
+            raise HTTPException(status_code=400, detail="Amount must be greater than 0")
+
+        if not payment_method:
+            raise HTTPException(status_code=400, detail="Payment method is required")
+
+        # Create deposit record if doesn't exist
+        if not deposit:
+            deposit = StudentDeposit(
+                student_id=student_id,
+                institution_id=student.institution_id,
+                application_number=student.application_number,
+                total_deposited=0,
+                used_amount=0,
+                refunds_issued=0,
+                created_by=user_id,
+                last_modified_by=user_id,
+            )
+            db.add(deposit)
+
+        # Update deposit amounts and history
+        from decimal import Decimal
+        amount_decimal = Decimal(str(amount))
+        deposit.total_deposited += amount_decimal
+        deposit.last_modified_by = user_id
+
+        # Add to receipt history
+        receipt_entry = {
+            "date": datetime.utcnow().isoformat(),
+            "amount": float(amount),
+            "payment_method": payment_method,
+            "receipt_number": transaction_id,
+            "notes": notes,
+        }
+        
+        # Get existing receipts or create new list
+        receipts = list(deposit.deposit_receipts) if deposit.deposit_receipts else []
+        receipts.append(receipt_entry)
+        # Explicitly assign to trigger SQLAlchemy change detection for JSON field
+        deposit.deposit_receipts = receipts
+
+        await db.commit()
+        await db.refresh(deposit)
+
+        return {
+            "id": str(deposit.id),
+            "student_id": str(deposit.student_id),
+            "application_number": deposit.application_number,
+            "total_deposited": float(deposit.total_deposited),
+            "used_amount": float(deposit.used_amount),
+            "available_balance": float(deposit.available_balance),
+            "status": deposit.status,
+            "created_at": deposit.created_at.isoformat(),
+        }
+    except HTTPException:
+        await db.rollback()
+        raise
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Error recording deposit: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@admission_entry_router.get(
+    "/admission-students/{student_id}/deposit",
+    tags=["Admission - Student Deposits"],
+    name="Get Student Deposit",
+    summary="View student deposit details and transaction history"
+)
+async def get_student_deposit(
+    student_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Retrieve complete deposit details for a student including balance and history.
+    """
+    try:
+        from common.models.billing.student_deposit import StudentDeposit
+        
+        # Check if student exists
+        student_stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+        student_res = await db.execute(student_stmt)
+        student = student_res.scalar_one_or_none()
+
+        if not student:
+            raise HTTPException(status_code=404, detail="Student not found")
+
+        # Get deposit if exists
+        deposit_stmt = select(StudentDeposit).where(StudentDeposit.student_id == student_id)
+        deposit_res = await db.execute(deposit_stmt)
+        deposit = deposit_res.scalar_one_or_none()
+
+        if not deposit:
+            return {
+                "student_id": str(student_id),
+                "application_number": student.application_number,
+                "total_deposited": 0,
+                "used_amount": 0,
+                "available_balance": 0,
+                "status": "ACTIVE",
+                "message": "No deposits recorded for this student",
+            }
+
+        return {
+            "id": str(deposit.id),
+            "student_id": str(deposit.student_id),
+            "application_number": deposit.application_number,
+            "total_deposited": float(deposit.total_deposited),
+            "used_amount": float(deposit.used_amount),
+            "refunds_issued": float(deposit.refunds_issued),
+            "available_balance": float(deposit.available_balance),
+            "status": deposit.status,
+            "notes": deposit.notes,
+            "deposit_receipts": deposit.deposit_receipts or [],
+            "adjustment_history": deposit.adjustment_history or [],
+            "created_at": deposit.created_at.isoformat(),
+            "updated_at": deposit.updated_at.isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting deposit: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@admission_entry_router.get(
+    "/deposits/by-application",
+    tags=["Admission - Student Deposits"],
+    name="Get Deposit by Application Number",
+    summary="Quick lookup of deposit by application number"
+)
+async def get_deposit_by_application(
+    application_number: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Retrieve deposit details by application number for quick lookup by Finance staff.
+    """
+    try:
+        from common.models.billing.student_deposit import StudentDeposit
+        
+        # Get deposit by application number
+        deposit_stmt = select(StudentDeposit).where(
+            StudentDeposit.application_number == application_number
+        )
+        deposit_res = await db.execute(deposit_stmt)
+        deposit = deposit_res.scalar_one_or_none()
+
+        if not deposit:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No deposit found for application number {application_number}"
+            )
+
+        return {
+            "id": str(deposit.id),
+            "student_id": str(deposit.student_id),
+            "application_number": deposit.application_number,
+            "total_deposited": float(deposit.total_deposited),
+            "used_amount": float(deposit.used_amount),
+            "refunds_issued": float(deposit.refunds_issued),
+            "available_balance": float(deposit.available_balance),
+            "status": deposit.status,
+            "notes": deposit.notes,
+            "deposit_receipts": deposit.deposit_receipts or [],
+            "adjustment_history": deposit.adjustment_history or [],
+            "created_at": deposit.created_at.isoformat(),
+            "updated_at": deposit.updated_at.isoformat(),
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting deposit by application: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 add_pagination(admission_router)

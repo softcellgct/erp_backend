@@ -74,11 +74,15 @@ class StaffReferenceRead(BaseModel):
 
 
 class StudentReferenceCreate(BaseModel):
-    student_id: UUID
+    student_name: str
+    roll_number: str
+    contact_number: str
 
 class StudentReferenceRead(BaseModel):
     id: UUID
-    student_id: UUID
+    student_name: str
+    roll_number: str
+    contact_number: str
     class Config:
         from_attributes = True
 
@@ -178,7 +182,8 @@ class AdmissionVisitorRead(BaseModel):
 
 
 class AdmissionVisitorPassOutRequest(BaseModel):
-    check_out_remarks: Optional[str] = None
+    check_out_time: Optional[datetime] = None
+    remarks: Optional[str] = None
 
 
 class AdmissionVisitorPassOutResponse(BaseModel):

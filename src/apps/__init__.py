@@ -29,6 +29,9 @@ from .admission.routers import consultancy_router, admission_entry_router, admis
 from .admission.verification_routers import verification_router
 from .admission.department_change_routers import department_change_router
 from .billing.routers import router as billing_router
+from .billing.scholarship_routers import router as scholarship_router
+from .billing.refund_routers import router as refund_router
+from .billing.finance_routers import router as finance_router
 from .meta.routers import religion_router, community_router, caste_router
 from .master.routers import hostel_router
 
@@ -61,6 +64,9 @@ ROUTERS = [
     (verification_router, "/api/admission"),
     (department_change_router, "/api/admission"),
     (billing_router, "/api/billing"),
+    (scholarship_router, "/api/billing/scholarships"),
+    (refund_router, "/api/billing/refunds"),
+    (finance_router, "/api/finance"),
     (hostel_router, "/api/master"),
     (admission_masters_router, "/api/master"),
     (school_router, "/api/master"),

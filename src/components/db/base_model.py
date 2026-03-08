@@ -4,8 +4,9 @@ from typing import Any, List, Optional
 from fastapi import Request
 from sqlalchemy import UUID, DateTime, ForeignKey, Index, delete, func, select, update
 from sqlalchemy.ext.declarative import as_declarative, declared_attr
-from sqlalchemy.orm import Mapped, mapped_column, defer, selectinload
+from sqlalchemy.orm import Mapped, mapped_column, defer, selectinload,raiseload
 from sqlalchemy.ext.asyncio import AsyncSession
+
 
 # Audit fields to exclude from nested objects
 _AUDIT_FIELDS = {"created_at", "updated_at", "deleted_at", "created_by", "updated_by", "deleted_by"}
@@ -130,7 +131,7 @@ async def _dict_to_instance(model_class, data: dict, session: AsyncSession):
         if existing:
             mapper = inspect(model_class)
             for key, val in data.items():
-                if key == "id" or not hasattr(existing, key):
+                if key == "id" or (key not in mapper.columns and key not in mapper.relationships):
                     continue
                 if key in mapper.relationships:
                     rel = mapper.relationships[key]
@@ -281,11 +282,11 @@ class Base:  # noqa: F811
                 raise ValueError("Each object must have an 'id' field.")
             obj_ids.append(obj_id)
 
-        # Fetch all existing records without eager loading relationships to avoid circular references
-        from sqlalchemy.orm import raiseload
-        
+        # Fetch all existing records
+        # Note: Don't use raiseload("*") here as it prevents relationship access
+        # The model's relationship lazy loading strategy will be used instead
         result = await session.execute(
-            select(cls).where(cls.id.in_(obj_ids), cls.deleted_at.is_(None)).options(raiseload("*"))
+            select(cls).where(cls.id.in_(obj_ids), cls.deleted_at.is_(None))
         )
         existing_objs = result.scalars().all()
         existing_objs_map = {obj.id: obj for obj in existing_objs}
@@ -310,7 +311,8 @@ class Base:  # noqa: F811
             mapper = inspect(type(instance))
 
             for key, value in data.items():
-                if not hasattr(instance, key):
+                # Check if key exists in mapper columns or relationships without triggering lazy load
+                if key not in mapper.columns and key not in mapper.relationships:
                     continue
 
                 # If this key is a relationship, convert dicts/lists into model instances
@@ -333,12 +335,26 @@ class Base:  # noqa: F811
                                     fk_value = getattr(instance, fk_col.name, None)
                                     if fk_value:
                                         # Query for existing related object by FK value
-                                        res = await session.execute(
-                                            select(related_model)
-                                            .where(getattr(related_model, rel.remote_side[0].name) == fk_value)
-                                            .options(raiseload("*"))
-                                        )
-                                        existing_related = res.scalars().one_or_none()
+                                        # remote_side may be a set; iterate safely to get a column
+                                        remote_col = None
+                                        if rel.remote_side:
+                                            # rel.remote_side could be a set or list
+                                            try:
+                                                remote_col = next(iter(rel.remote_side))
+                                            except TypeError:
+                                                # fallback if not iterable
+                                                remote_col = None
+                                        if remote_col is not None:
+                                            res = await session.execute(
+                                                select(related_model)
+                                                .where(getattr(related_model, remote_col.name) == fk_value)
+                                                .options(raiseload("*"))
+                                            )
+                                        else:
+                                            res = None
+                                        existing_related = None
+                                        if res:
+                                            existing_related = res.scalars().one_or_none()
                                         if existing_related and hasattr(existing_related, "id"):
                                             value["id"] = existing_related.id
                             

@@ -26,6 +26,11 @@ class FineCalculationEnum(str, enum.Enum):
     PERCENTAGE = "Percentage"
     PER_DAY = "Per day"
 
+class PayerTypeEnum(str, enum.Enum):
+    STUDENT = "STUDENT"
+    GOVERNMENT = "GOVERNMENT"
+    SCHOLARSHIP = "SCHOLARSHIP"
+
 class FeeStructure(Base):
     __tablename__ = "fee_structures"
 
@@ -44,8 +49,12 @@ class FeeStructure(Base):
     department_id: Mapped[UUID | None] = mapped_column(ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True)
     
     course_duration_years: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    semesters_per_year: Mapped[int] = mapped_column(Integer, default=2, nullable=False)
     fg_applicable: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     sc_st_scholarship: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    fg_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    sc_st_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    fg_amount_by_semester: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {"1": 5000, "2": 5000, ...}
     batch: Mapped[str] = mapped_column(String(100), nullable=True, index=True)
     status: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -67,7 +76,7 @@ class FeeStructureItem(Base):
 
     fee_structure_id: Mapped[UUID] = mapped_column(ForeignKey("fee_structures.id", ondelete="CASCADE"), nullable=False, index=True)
     fee_head_id: Mapped[UUID | None] = mapped_column(ForeignKey("fee_heads.id", ondelete="SET NULL"), nullable=True, index=True)
-    fee_sub_head_id: Mapped[UUID] = mapped_column(ForeignKey("fee_sub_heads.id", ondelete="CASCADE"), nullable=False, index=True)
+    fee_sub_head_id: Mapped[UUID | None] = mapped_column(ForeignKey("fee_sub_heads.id", ondelete="SET NULL"), nullable=True, index=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     
     # New fields for item details
@@ -77,6 +86,12 @@ class FeeStructureItem(Base):
     fine_ceiling: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True, default=0)
     
     amount_by_year: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    amount_by_semester: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {"1": 25000, "2": 25000, ...}
+    payer_type: Mapped[PayerTypeEnum] = mapped_column(
+        SAEnum(PayerTypeEnum, name="payer_type_enum", values_callable=lambda obj: [e.value for e in obj]),
+        default=PayerTypeEnum.STUDENT,
+        nullable=False,
+    )
     order: Mapped[int] = mapped_column(nullable=True)
 
     # Relationships — lazy="selectin" to avoid circular eager load with FeeStructure

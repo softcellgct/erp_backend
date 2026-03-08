@@ -39,6 +39,7 @@ class DemandItemBase(BaseModel):
     fee_sub_head_id: Optional[UUID] = None
     amount: float
     status: Optional[str] = "pending"
+    payer_type: Optional[str] = "STUDENT"  # STUDENT | GOVERNMENT | SCHOLARSHIP
 
 
 class DemandBatchCreate(BaseModel):
@@ -46,6 +47,8 @@ class DemandBatchCreate(BaseModel):
     institution_id: UUID
     admission_year_id: Optional[UUID] = None
     fee_structure_id: UUID
+    semester: Optional[int] = None  # Target semester for semester-wise demand generation
+    year: Optional[int] = None     # Target academic year number
     filters: Optional[DemandFilterSchema] = None
     apply_to_students: Optional[List[UUID]] = None
 
@@ -118,7 +121,8 @@ class GeneralDemandCreateRequest(BaseModel):
     student_ids: List[UUID] = Field(default_factory=list)
     identifiers: List[str] = Field(default_factory=list)
     fee_structure_id: UUID
-    year: str
+    year: Optional[str] = None
+    semester: Optional[int] = None
     fee_head_id: UUID
     fee_sub_head_id: UUID
     amount: Optional[float] = None

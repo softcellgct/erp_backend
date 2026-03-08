@@ -183,7 +183,7 @@ class StudentReference(Base):
     )
 
     student_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    course: Mapped[str] = mapped_column(String(255), nullable=False)
+    roll_number: Mapped[str] = mapped_column(String(255), nullable=False)
     contact_number: Mapped[str] = mapped_column(String(20), nullable=False)
 
 
