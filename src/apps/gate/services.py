@@ -225,7 +225,6 @@ class AdmissionVisitorCRUD:
             dup_stmt = select(AdmissionStudent.id).where(
                 AdmissionStudent.aadhaar_number == aadhar_val,
                 AdmissionStudent.id != student_id,
-                AdmissionStudent.deleted_at.is_(None),
             )
             dup_res = await db.execute(dup_stmt)
             if dup_res.scalar_one_or_none():
@@ -238,8 +237,19 @@ class AdmissionVisitorCRUD:
             if hasattr(student, field):
                 setattr(student, field, value)
 
-        await db.commit()
-        await db.refresh(student)
+        try:
+            await db.commit()
+            await db.refresh(student)
+        except Exception as exc:
+            await db.rollback()
+            # Catch DB-level unique constraint violations (e.g. soft-deleted records)
+            exc_str = str(exc).lower()
+            if "unique" in exc_str or "duplicate" in exc_str or "aadhaar" in exc_str:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Aadhar number {update_data.get('aadhaar_number', '')} already exists",
+                )
+            raise
         return student
 
     async def delete(self, db: AsyncSession, student_id: UUID):

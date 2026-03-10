@@ -205,6 +205,15 @@ async def get_booked_paid_students(
         students = res.scalars().all()
 
         items = []
+        # Batch-load fee structure names for all students
+        fee_structure_ids = {s.fee_structure_id for s in students if getattr(s, "fee_structure_id", None)}
+        fee_structure_name_map = {}
+        if fee_structure_ids:
+            from common.models.billing.fee_structure import FeeStructure
+            fs_stmt = select(FeeStructure.id, FeeStructure.name).where(FeeStructure.id.in_(fee_structure_ids))
+            fs_res = await db.execute(fs_stmt)
+            fee_structure_name_map = {str(row[0]): row[1] for row in fs_res.all()}
+
         for s in students:
             # Get latest application-fee invoice for this student (paid or unpaid)
             inv_stmt = select(Invoice).join(InvoiceLineItem).where(
@@ -221,6 +230,8 @@ async def get_booked_paid_students(
             if getattr(s, "course", None):
                 course_title = getattr(s.course, "title", None)
 
+            fs_id_str = str(s.fee_structure_id) if getattr(s, "fee_structure_id", None) else None
+
             items.append(
                 {
                     "id": str(s.id),
@@ -233,7 +244,8 @@ async def get_booked_paid_students(
                     "invoice_id": str(inv.id) if inv else None,
                     "invoice_status": inv.status if inv else None,
                     "status": s.status,
-                    "fee_structure_id": str(s.fee_structure_id) if getattr(s, "fee_structure_id", None) else None,
+                    "fee_structure_id": fs_id_str,
+                    "fee_structure_name": fee_structure_name_map.get(fs_id_str) if fs_id_str else None,
                     "is_fee_structure_locked": getattr(s, "is_fee_structure_locked", False),
                 }
             )
@@ -286,6 +298,16 @@ async def get_applied_students(
         students = res.scalars().all()
 
         items = []
+
+        # Batch-load fee structure names for all students
+        fee_structure_ids = {s.fee_structure_id for s in students if getattr(s, "fee_structure_id", None)}
+        fee_structure_name_map = {}
+        if fee_structure_ids:
+            from common.models.billing.fee_structure import FeeStructure
+            fs_stmt = select(FeeStructure.id, FeeStructure.name).where(FeeStructure.id.in_(fee_structure_ids))
+            fs_res = await db.execute(fs_stmt)
+            fee_structure_name_map = {str(row[0]): row[1] for row in fs_res.all()}
+
         for s in students:
             dept_name = None
             course_title = None
@@ -293,6 +315,8 @@ async def get_applied_students(
                 dept_name = getattr(s.department, "name", None)
             if getattr(s, "course", None):
                 course_title = getattr(s.course, "title", None)
+
+            fs_id_str = str(s.fee_structure_id) if getattr(s, "fee_structure_id", None) else None
 
             items.append(
                 {
@@ -303,7 +327,8 @@ async def get_applied_students(
                     "course": course_title,
                     "enrollment_date": s.created_at.isoformat() if getattr(s, "created_at", None) else None,
                     "status": s.status,
-                    "fee_structure_id": str(s.fee_structure_id) if getattr(s, "fee_structure_id", None) else None,
+                    "fee_structure_id": fs_id_str,
+                    "fee_structure_name": fee_structure_name_map.get(fs_id_str) if fs_id_str else None,
                     "is_fee_structure_locked": getattr(s, "is_fee_structure_locked", False),
                 }
             )
