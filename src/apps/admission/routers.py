@@ -180,6 +180,7 @@ async def get_booked_paid_students(
             or_(
                 AdmissionStudent.status == AdmissionStatusEnum.BOOKED.value,
                 AdmissionStudent.status == AdmissionStatusEnum.APPLIED.value,
+                AdmissionStudent.status == "PROVISIONALLY_ALLOTTED",
             )
         ]
 
@@ -272,8 +273,13 @@ async def get_applied_students(
     Return students with status APPLIED.
     """
     try:
+        from sqlalchemy import or_
         filters = [
-            AdmissionStudent.status == AdmissionStatusEnum.APPLIED.value,
+            or_(
+                AdmissionStudent.status == AdmissionStatusEnum.BOOKED.value,
+                AdmissionStudent.status == AdmissionStatusEnum.APPLIED.value,
+                AdmissionStudent.status == "PROVISIONALLY_ALLOTTED",
+            )
         ]
 
         if q:

@@ -127,7 +127,7 @@ Thumbs.db
 
 # Project specific
 keys.json
-logs/
+# logs/
 app.log
 
 

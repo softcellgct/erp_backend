@@ -274,11 +274,6 @@ class BillingService:
 
         from common.models.admission.admission_entry import AdmissionStatusEnum
         current_status = student.status.value if hasattr(student.status, "value") else str(student.status)
-        if current_status not in (AdmissionStatusEnum.PROVISIONALLY_ALLOTTED.value, "PROVISIONALLY_ALLOTTED"):
-            raise ValueError(
-                f"Constraint Failed: Student must be in '{AdmissionStatusEnum.PROVISIONALLY_ALLOTTED.value}' status "
-                f"before their fee structure can be locked. Current status: {current_status}"
-            )
 
         # Idempotent path: already locked with a structure.
         if student.is_fee_structure_locked and student.fee_structure_id:
