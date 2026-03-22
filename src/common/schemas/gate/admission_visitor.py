@@ -44,6 +44,7 @@ class ReferenceType(str, Enum):
     STAFF = "staff"
     STUDENT = "student"
     OTHER = "other"
+    DIRECT_ADMISSION = "direct_admission"
 
 
 # ── reference sub-schemas ────────────────────────────────────────────
@@ -88,13 +89,11 @@ class StudentReferenceRead(BaseModel):
 
 
 class OtherReferenceCreate(BaseModel):
-    name: str
-    phone: Optional[str] = None
+    description: Optional[str] = None
 
 class OtherReferenceRead(BaseModel):
     id: UUID
-    name: str
-    phone: Optional[str] = None
+    description: Optional[str] = None
     class Config:
         from_attributes = True
 
@@ -169,6 +168,7 @@ class AdmissionVisitorRead(BaseModel):
     check_out_remarks: Optional[str] = None
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    status: Optional[str] = None
 
     # ↓↓ nested references ↓↓
     consultancy_reference: Optional[ConsultancyReferenceRead] = None

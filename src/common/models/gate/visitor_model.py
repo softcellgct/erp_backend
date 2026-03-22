@@ -45,7 +45,7 @@ class ReferenceType(str, enum.Enum):
     STAFF = "staff"
     STUDENT = "student"
     OTHER = "other"
-
+    DIRECT_ADMISSION = "direct_admission"  # For visitors who come without any reference (e.g., general visitors)
 
 class PersonType(Base):
     """

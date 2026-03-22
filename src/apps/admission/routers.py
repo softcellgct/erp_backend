@@ -110,6 +110,18 @@ async def get_admission_student(
     query = select(AdmissionStudent).options(
         selectinload(AdmissionStudent.department),
         selectinload(AdmissionStudent.course),
+        selectinload(AdmissionStudent.institution),
+        selectinload(AdmissionStudent.admission_quota),
+        selectinload(AdmissionStudent.admission_type),
+        selectinload(AdmissionStudent.fee_structure),
+        selectinload(AdmissionStudent.sslc_details),
+        selectinload(AdmissionStudent.hsc_details),
+        selectinload(AdmissionStudent.diploma_details),
+        selectinload(AdmissionStudent.pg_details),
+        selectinload(AdmissionStudent.consultancy_reference),
+        selectinload(AdmissionStudent.staff_reference),
+        selectinload(AdmissionStudent.student_reference),
+        selectinload(AdmissionStudent.other_reference),
     ).where(AdmissionStudent.id == id)
     
     result = await db.execute(query)
@@ -125,6 +137,9 @@ async def get_admission_student(
     # Resolve readable department/course names from relationships (if loaded)
     dept_name = getattr(student.department, "name", None) if getattr(student, "department", None) else None
     course_title = getattr(student.course, "title", None) if getattr(student, "course", None) else None
+    institution_name = getattr(student.institution, "name", None) if getattr(student, "institution", None) else None
+    admission_quota_name = getattr(student.admission_quota, "name", None) if getattr(student, "admission_quota", None) else None
+    admission_type_name = getattr(student.admission_type, "name", None) if getattr(student, "admission_type", None) else None
 
     # Fetch academic year name if academic_year_id is present
     academic_year_name = None
@@ -134,22 +149,75 @@ async def get_admission_student(
         ay_res = await db.execute(ay_stmt)
         academic_year_name = ay_res.scalar_one_or_none()
 
+    # Helper function to convert nested objects to dict
+    def obj_to_dict(obj):
+        if obj is None:
+            return None
+        return {col.name: getattr(obj, col.name, None) for col in obj.__table__.columns}
+
     return {
         "id": str(student.id),
         "name": student.name,
         "email": getattr(student, "email", None),
+        "father_name": student.father_name,
+        "gender": student.gender,
+        "date_of_birth": student.date_of_birth,
         "student_mobile": student.student_mobile,
+        "parent_mobile": student.parent_mobile,
+        "aadhaar_number": student.aadhaar_number,
         "enquiry_number": student.enquiry_number,
         "application_number": student.application_number,
+        "gate_pass_number": student.gate_pass_number,
+        "reference_type": student.reference_type,
+        "religion": student.religion,
+        "community": student.community,
+        "caste": student.caste,
+        "parent_income": float(student.parent_income) if student.parent_income else None,
+        "door_no": student.door_no,
+        "street_name": student.street_name,
+        "village_name": student.village_name,
+        "taluk": student.taluk,
+        "district": student.district,
+        "state": student.state,
+        "pincode": student.pincode,
+        "parent_address": student.parent_address,
+        "permanent_address": student.permanent_address,
+        "campus": student.campus,
+        "has_vehicle": student.has_vehicle,
+        "vehicle_number": student.vehicle_number,
         "status": student.status,
         "source": student.source,
+        "category": student.category,
+        "quota_type": student.quota_type,
+        "special_quota": student.special_quota,
+        "scholarships": student.scholarships,
+        "boarding_place": student.boarding_place,
+        "previous_academic_level": student.previous_academic_level,
+        "is_lateral_entry": student.is_lateral_entry,
+        "roll_number": student.roll_number,
+        "section": student.section,
+        "current_semester": student.current_semester,
+        "enrolled_at": student.enrolled_at,
         "department_id": str(student.department_id) if student.department_id else None,
         "department": dept_name,
         "course_id": str(student.course_id) if student.course_id else None,
         "course": course_title,
+        "institution_id": str(student.institution_id) if student.institution_id else None,
+        "institution": institution_name,
+        "admission_quota_id": str(student.admission_quota_id) if student.admission_quota_id else None,
+        "admission_quota": admission_quota_name,
+        "admission_type_id": str(student.admission_type_id) if student.admission_type_id else None,
+        "admission_type": admission_type_name,
         "academic_year_id": str(student.academic_year_id) if student.academic_year_id else None,
         "academic_year": academic_year_name,
-        "institution_id": str(student.institution_id) if student.institution_id else None,
+        "sslc_details": obj_to_dict(student.sslc_details),
+        "hsc_details": obj_to_dict(student.hsc_details),
+        "diploma_details": obj_to_dict(student.diploma_details),
+        "pg_details": obj_to_dict(student.pg_details),
+        "consultancy_reference": obj_to_dict(student.consultancy_reference),
+        "staff_reference": obj_to_dict(student.staff_reference),
+        "student_reference": obj_to_dict(student.student_reference),
+        "other_reference": obj_to_dict(student.other_reference),
         "created_at": student.created_at,
         "updated_at": student.updated_at,
         "fee_structure_id": str(student.fee_structure_id) if student.fee_structure_id else None,

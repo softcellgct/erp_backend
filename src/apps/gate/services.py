@@ -198,11 +198,26 @@ class AdmissionVisitorCRUD:
     async def get_all(self, db: AsyncSession, query):
         # Ensure only gate enquiries are returned
         query = query.where(AdmissionStudent.source == SourceEnum.GATE_ENQUIRY)
-        # Use DISTINCT ON primary key to avoid DISTINCT across joined JSON columns
+        # Apply DISTINCT ON only when joins are present; otherwise preserve
+        # caller-provided sorting (e.g. created_at:desc) without reordering.
+        has_joins = bool(getattr(query, "_setup_joins", None))
         pk = getattr(AdmissionStudent, "id", None)
-        if pk is not None:
+        if has_joins and pk is not None:
             query = query.distinct(pk)
-        else:
+
+            # PostgreSQL requires DISTINCT ON expressions to match the initial
+            # ORDER BY expressions; ensure primary key is ordered first.
+            try:
+                existing_order_by = getattr(query, "_order_by_clause", None)
+                if existing_order_by is not None and len(existing_order_by) > 0:
+                    query = query.order_by(None)
+                    query = query.order_by(pk, *list(existing_order_by))
+                else:
+                    query = query.order_by(pk)
+            except Exception:
+                # Fall back to DISTINCT ON without modifying order if inspection fails.
+                pass
+        elif has_joins:
             query = query.distinct()
 
         return await paginate(db, query)
