@@ -21,6 +21,7 @@ from common.models.billing.application_fees import (
     PaymentStatusEnum,
 )
 from common.models.billing.bulk_receipt import BulkReceipt, BulkReceiptItem
+from common.models.billing.multi_receipt import MultiReceipt, MultiReceiptItem
 from common.models.billing.demand import DemandBatch, DemandItem
 from common.models.billing.fee_structure import (
     FeeStructure,
@@ -28,6 +29,7 @@ from common.models.billing.fee_structure import (
     PayerTypeEnum,
 )
 from common.models.billing.concession import Concession
+from common.models.billing.scholarship import StudentScholarship
 from logs.logging import logger
 
 
@@ -853,6 +855,431 @@ class FinanceService:
                     "student_id": item.student_id,
                     "amount": float(item.amount),
                     "created_at": item.created_at,
+                }
+                for item in (receipt.items or [])
+            ],
+        }
+
+    async def _generate_multi_receipt_number(
+        self, db: AsyncSession, institution_id: UUID
+    ) -> str:
+        from sqlalchemy import text
+
+        today = datetime.utcnow().strftime("%Y%m%d")
+        prefix = f"MR-{institution_id.hex[:6].upper()}-{today}-"
+        result = await db.execute(
+            text(
+                "SELECT receipt_number FROM multi_receipts "
+                "WHERE receipt_number LIKE :prefix "
+                "ORDER BY receipt_number DESC LIMIT 1"
+            ),
+            {"prefix": f"{prefix}%"},
+        )
+        last = result.scalar_one_or_none()
+        if not last:
+            seq = 1
+        else:
+            try:
+                seq = int(last.split("-")[-1]) + 1
+            except Exception:
+                seq = 1
+        return f"{prefix}{seq:04d}"
+
+    async def list_eligible_multi_receipt_students(
+        self,
+        db: AsyncSession,
+        institution_id: UUID,
+        fee_head_id: UUID,
+        fee_sub_head_id: UUID | None = None,
+        scholarship_type: str | None = None,
+        scholarship_received_only: bool = True,
+        academic_year_id: UUID | None = None,
+        department_id: UUID | None = None,
+        course_id: UUID | None = None,
+        batch: str | None = None,
+        gender: str | None = None,
+        admission_quota_id: UUID | None = None,
+    ) -> list[dict]:
+        from common.models.admission.admission_entry import AdmissionStudent
+
+        demand_stmt = (
+            select(
+                DemandItem.student_id,
+                func.sum(DemandItem.amount).label("outstanding_amount"),
+            )
+            .where(
+                DemandItem.deleted_at.is_(None),
+                DemandItem.status.in_(["pending", "invoiced", "partial"]),
+                DemandItem.amount > 0,
+                DemandItem.fee_head_id == fee_head_id,
+            )
+            .group_by(DemandItem.student_id)
+        )
+
+        if fee_sub_head_id:
+            demand_stmt = demand_stmt.where(DemandItem.fee_sub_head_id == fee_sub_head_id)
+
+        demand_rows = await db.execute(demand_stmt)
+        by_student = {
+            row.student_id: Decimal(str(row.outstanding_amount or 0))
+            for row in demand_rows.all()
+            if Decimal(str(row.outstanding_amount or 0)) > 0
+        }
+        if not by_student:
+            return []
+
+        stmt = (
+            select(AdmissionStudent)
+            .options(
+                selectinload(AdmissionStudent.department),
+                selectinload(AdmissionStudent.course),
+            )
+            .where(
+                AdmissionStudent.deleted_at.is_(None),
+                AdmissionStudent.institution_id == institution_id,
+                AdmissionStudent.id.in_(list(by_student.keys())),
+            )
+        )
+
+        if academic_year_id:
+            stmt = stmt.where(AdmissionStudent.academic_year_id == academic_year_id)
+        if department_id:
+            stmt = stmt.where(AdmissionStudent.department_id == department_id)
+        if course_id:
+            stmt = stmt.where(AdmissionStudent.course_id == course_id)
+        if batch:
+            stmt = stmt.where(AdmissionStudent.year == batch)
+        if gender:
+            stmt = stmt.where(AdmissionStudent.gender == gender)
+        if admission_quota_id:
+            stmt = stmt.where(AdmissionStudent.admission_quota_id == admission_quota_id)
+
+        if scholarship_type:
+            scholarship_stmt = select(StudentScholarship.student_id).where(
+                StudentScholarship.institution_id == institution_id,
+                StudentScholarship.scholarship_type == scholarship_type,
+                StudentScholarship.deleted_at.is_(None),
+            )
+            if scholarship_received_only:
+                scholarship_stmt = scholarship_stmt.where(StudentScholarship.amount_received.is_(True))
+            scholarship_result = await db.execute(scholarship_stmt)
+            scholarship_student_ids = list(set(scholarship_result.scalars().all()))
+            if not scholarship_student_ids:
+                return []
+            stmt = stmt.where(AdmissionStudent.id.in_(scholarship_student_ids))
+
+        result = await db.execute(stmt)
+        students = result.scalars().all()
+
+        response: list[dict] = []
+        for student in students:
+            response.append(
+                {
+                    "student_id": student.id,
+                    "application_number": student.application_number,
+                    "student_name": student.name,
+                    "department_name": student.department.name if student.department else None,
+                    "course_name": student.course.name if student.course else None,
+                    "academic_year_id": student.academic_year_id,
+                    "scholarship_type": scholarship_type,
+                    "outstanding_amount": by_student.get(student.id, Decimal("0")),
+                }
+            )
+        response.sort(key=lambda item: item.get("student_name") or "")
+        return response
+
+    async def generate_multi_receipt(self, db: AsyncSession, payload) -> dict:
+        from common.models.admission.admission_entry import AdmissionStudent
+
+        data = payload.dict(exclude_unset=True)
+        institution_id = data["institution_id"]
+        fee_head_id = data["fee_head_id"]
+        fee_sub_head_id = data.get("fee_sub_head_id")
+        student_ids = data["student_ids"]
+        amount_per_student = Decimal(str(data["amount_per_student"]))
+        payment_method = data.get("payment_method", "MULTI_RECEIPT")
+        payment_date = data.get("payment_date") or datetime.utcnow()
+
+        try:
+            payer_type = PayerTypeEnum(data.get("payer_type", "GOVERNMENT"))
+        except ValueError:
+            raise ValueError(f"Invalid payer_type: {data.get('payer_type')}")
+
+        if amount_per_student <= 0:
+            raise ValueError("amount_per_student must be greater than zero")
+
+        receipt_number = await self._generate_multi_receipt_number(db, institution_id)
+        multi_receipt = MultiReceipt(
+            institution_id=institution_id,
+            fee_head_id=fee_head_id,
+            fee_sub_head_id=fee_sub_head_id,
+            payer_type=payer_type,
+            receipt_number=receipt_number,
+            amount_per_student=amount_per_student,
+            total_amount=Decimal("0"),
+            student_count=0,
+            payment_date=payment_date,
+            description=data.get("description"),
+            status="processed",
+        )
+        db.add(multi_receipt)
+        await db.flush()
+
+        student_map_stmt = select(AdmissionStudent).where(AdmissionStudent.id.in_(student_ids))
+        student_map_result = await db.execute(student_map_stmt)
+        student_map = {s.id: s for s in student_map_result.scalars().all()}
+
+        total_amount = Decimal("0")
+        paid_student_ids: set[UUID] = set()
+        result_items: list[dict] = []
+        skipped_students: list[dict] = []
+
+        for student_id in student_ids:
+            student = student_map.get(student_id)
+            if not student:
+                skipped_students.append(
+                    {"student_id": str(student_id), "reason": "Student not found"}
+                )
+                continue
+
+            remaining = amount_per_student
+            demand_stmt = (
+                select(DemandItem)
+                .where(
+                    DemandItem.student_id == student_id,
+                    DemandItem.deleted_at.is_(None),
+                    DemandItem.fee_head_id == fee_head_id,
+                    DemandItem.status.in_(["pending", "invoiced", "partial"]),
+                    DemandItem.amount > 0,
+                )
+                .order_by(DemandItem.created_at.asc())
+            )
+            if fee_sub_head_id:
+                demand_stmt = demand_stmt.where(DemandItem.fee_sub_head_id == fee_sub_head_id)
+
+            demand_result = await db.execute(demand_stmt)
+            demands = demand_result.scalars().all()
+            if not demands:
+                skipped_students.append(
+                    {
+                        "student_id": str(student_id),
+                        "student_name": student.name,
+                        "reason": "No outstanding demand for selected fee head",
+                    }
+                )
+                continue
+
+            for demand in demands:
+                if remaining <= 0:
+                    break
+
+                demand_before = Decimal(str(demand.amount or 0))
+                if demand_before <= 0:
+                    continue
+
+                invoice = None
+                if demand.invoice_id:
+                    inv_stmt = select(Invoice).where(Invoice.id == demand.invoice_id)
+                    inv_result = await db.execute(inv_stmt)
+                    invoice = inv_result.scalar_one_or_none()
+
+                if not invoice:
+                    invoice_number = await self._generate_invoice_number(db, institution_id)
+                    invoice = Invoice(
+                        institution_id=institution_id,
+                        student_id=student_id,
+                        invoice_number=invoice_number,
+                        amount=demand_before,
+                        paid_amount=Decimal("0"),
+                        balance_due=demand_before,
+                        status=PaymentStatusEnum.PENDING,
+                        issue_date=date.today(),
+                        due_date=date.today(),
+                        notes="Auto-generated for multi receipt",
+                    )
+                    db.add(invoice)
+                    await db.flush()
+
+                    line_item = InvoiceLineItem(
+                        invoice_id=invoice.id,
+                        fee_head_id=demand.fee_head_id,
+                        description=demand.description or "Fee",
+                        amount=demand_before,
+                        net_amount=demand_before,
+                    )
+                    db.add(line_item)
+                    demand.invoice_id = invoice.id
+                    demand.status = "invoiced"
+                    db.add(demand)
+
+                invoice_balance = Decimal(str(invoice.balance_due or 0))
+                if invoice_balance <= 0:
+                    continue
+
+                pay_amount = min(remaining, demand_before, invoice_balance)
+                if pay_amount <= 0:
+                    continue
+
+                payment = Payment(
+                    invoice_id=invoice.id,
+                    amount=pay_amount,
+                    payment_method=payment_method,
+                    payment_date=payment_date,
+                    receipt_number=receipt_number,
+                    notes="Multi receipt payment",
+                )
+                db.add(payment)
+                await db.flush()
+
+                old_status = invoice.status
+                invoice.paid_amount = Decimal(str(invoice.paid_amount or 0)) + pay_amount
+                invoice.balance_due = max(Decimal("0"), Decimal(str(invoice.amount)) - invoice.paid_amount)
+                if invoice.paid_amount >= Decimal(str(invoice.amount)):
+                    invoice.status = PaymentStatusEnum.PAID
+                elif invoice.paid_amount > 0:
+                    invoice.status = PaymentStatusEnum.PARTIAL
+
+                db.add(
+                    InvoiceStatusHistory(
+                        invoice_id=invoice.id,
+                        from_status=old_status,
+                        to_status=invoice.status,
+                        remarks=f"Multi receipt {receipt_number}",
+                    )
+                )
+
+                demand_after = max(Decimal("0"), demand_before - pay_amount)
+                demand.amount = demand_after
+                if demand_after == 0:
+                    demand.status = "paid"
+                else:
+                    demand.status = "partial"
+                db.add(demand)
+
+                mri = MultiReceiptItem(
+                    multi_receipt_id=multi_receipt.id,
+                    student_id=student_id,
+                    demand_item_id=demand.id,
+                    invoice_id=invoice.id,
+                    payment_id=payment.id,
+                    demanded_amount_before=demand_before,
+                    paid_amount=pay_amount,
+                    demanded_amount_after=demand_after,
+                )
+                db.add(mri)
+
+                total_amount += pay_amount
+                remaining -= pay_amount
+                paid_student_ids.add(student_id)
+                result_items.append(
+                    {
+                        "student_id": student_id,
+                        "student_name": student.name,
+                        "demand_item_id": demand.id,
+                        "invoice_id": invoice.id,
+                        "payment_id": payment.id,
+                        "paid_amount": pay_amount,
+                    }
+                )
+
+            if remaining > 0:
+                skipped_students.append(
+                    {
+                        "student_id": str(student_id),
+                        "student_name": student.name,
+                        "reason": f"Only {str(amount_per_student - remaining)} applied due to insufficient outstanding demand",
+                    }
+                )
+
+        if total_amount <= 0:
+            raise ValueError("No payments could be applied for selected students")
+
+        multi_receipt.total_amount = total_amount
+        multi_receipt.student_count = len(paid_student_ids)
+        db.add(multi_receipt)
+
+        await db.commit()
+
+        return {
+            "multi_receipt_id": multi_receipt.id,
+            "receipt_number": receipt_number,
+            "student_count": len(paid_student_ids),
+            "amount_per_student": amount_per_student,
+            "total_amount": total_amount,
+            "items": result_items,
+            "skipped_students": skipped_students,
+        }
+
+    async def list_multi_receipts(
+        self,
+        db: AsyncSession,
+        institution_id: UUID,
+    ) -> list[dict]:
+        stmt = (
+            select(MultiReceipt)
+            .where(MultiReceipt.institution_id == institution_id)
+            .order_by(MultiReceipt.created_at.desc())
+        )
+        result = await db.execute(stmt)
+        receipts = result.scalars().all()
+        return [
+            {
+                "id": rec.id,
+                "receipt_number": rec.receipt_number,
+                "institution_id": rec.institution_id,
+                "fee_head_id": rec.fee_head_id,
+                "fee_sub_head_id": rec.fee_sub_head_id,
+                "payer_type": rec.payer_type.value,
+                "student_count": rec.student_count,
+                "amount_per_student": rec.amount_per_student,
+                "total_amount": rec.total_amount,
+                "payment_date": rec.payment_date,
+                "status": rec.status,
+            }
+            for rec in receipts
+        ]
+
+    async def get_multi_receipt(self, db: AsyncSession, receipt_id: UUID) -> dict:
+        from common.models.admission.admission_entry import AdmissionStudent
+
+        stmt = (
+            select(MultiReceipt)
+            .options(selectinload(MultiReceipt.items))
+            .where(MultiReceipt.id == receipt_id)
+        )
+        result = await db.execute(stmt)
+        receipt = result.scalar_one_or_none()
+        if not receipt:
+            raise ValueError("Multi receipt not found")
+
+        student_ids = [item.student_id for item in (receipt.items or [])]
+        student_map: dict[UUID, AdmissionStudent] = {}
+        if student_ids:
+            students_stmt = select(AdmissionStudent).where(AdmissionStudent.id.in_(student_ids))
+            students_result = await db.execute(students_stmt)
+            student_map = {student.id: student for student in students_result.scalars().all()}
+
+        return {
+            "id": receipt.id,
+            "receipt_number": receipt.receipt_number,
+            "institution_id": receipt.institution_id,
+            "fee_head_id": receipt.fee_head_id,
+            "fee_sub_head_id": receipt.fee_sub_head_id,
+            "payer_type": receipt.payer_type.value,
+            "student_count": receipt.student_count,
+            "amount_per_student": receipt.amount_per_student,
+            "total_amount": receipt.total_amount,
+            "payment_date": receipt.payment_date,
+            "description": receipt.description,
+            "status": receipt.status,
+            "items": [
+                {
+                    "student_id": item.student_id,
+                    "student_name": student_map[item.student_id].name if student_map.get(item.student_id) else None,
+                    "demand_item_id": item.demand_item_id,
+                    "invoice_id": item.invoice_id,
+                    "payment_id": item.payment_id,
+                    "paid_amount": item.paid_amount,
                 }
                 for item in (receipt.items or [])
             ],

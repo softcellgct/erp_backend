@@ -16,6 +16,14 @@ from common.schemas.billing.bulk_receipt_schemas import (
     GenerateBulkReceiptRequest,
     GenerateBulkReceiptResponse,
 )
+from common.schemas.billing.multi_receipt_schemas import (
+    EligibleMultiReceiptStudentResponse,
+    GenerateMultiReceiptRequest,
+    GenerateMultiReceiptResponse,
+    MultiReceiptDetail,
+    MultiReceiptStudentFilterRequest,
+    MultiReceiptSummary,
+)
 
 router = APIRouter()
 
@@ -237,6 +245,93 @@ async def get_bulk_receipt(
 ):
     try:
         return await finance_service.get_bulk_receipt(db, receipt_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+# ── Multi Receipts ───────────────────────────────────
+
+
+@router.post(
+    "/multi-receipts/eligible-students",
+    tags=["Finance - Multi Receipts"],
+    summary="List eligible students for multi receipt generation",
+    response_model=EligibleMultiReceiptStudentResponse,
+)
+async def list_eligible_multi_receipt_students(
+    payload: MultiReceiptStudentFilterRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        students = await finance_service.list_eligible_multi_receipt_students(
+            db=db,
+            institution_id=payload.institution_id,
+            fee_head_id=payload.fee_head_id,
+            fee_sub_head_id=payload.fee_sub_head_id,
+            scholarship_type=payload.scholarship_type,
+            scholarship_received_only=payload.scholarship_received_only,
+            academic_year_id=payload.academic_year_id,
+            department_id=payload.department_id,
+            course_id=payload.course_id,
+            batch=payload.batch,
+            gender=payload.gender,
+            admission_quota_id=payload.admission_quota_id,
+        )
+        return {"count": len(students), "students": students}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post(
+    "/multi-receipts/generate",
+    tags=["Finance - Multi Receipts"],
+    summary="Generate a consolidated multi receipt and reduce student demands",
+    response_model=GenerateMultiReceiptResponse,
+)
+async def generate_multi_receipt(
+    payload: GenerateMultiReceiptRequest,
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        return await finance_service.generate_multi_receipt(db=db, payload=payload)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get(
+    "/multi-receipts",
+    tags=["Finance - Multi Receipts"],
+    summary="List consolidated multi receipts",
+    response_model=list[MultiReceiptSummary],
+)
+async def list_multi_receipts(
+    institution_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        return await finance_service.list_multi_receipts(db=db, institution_id=institution_id)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get(
+    "/multi-receipts/{receipt_id}",
+    tags=["Finance - Multi Receipts"],
+    summary="Get consolidated multi receipt details",
+    response_model=MultiReceiptDetail,
+)
+async def get_multi_receipt(
+    receipt_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+):
+    try:
+        return await finance_service.get_multi_receipt(db=db, receipt_id=receipt_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
