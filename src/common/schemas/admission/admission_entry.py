@@ -44,6 +44,7 @@ class SSLCDetailsBase(BaseModel):
     register_number: Optional[str] = None
     school_name: Optional[str] = None
     school_block: Optional[str] = None
+    school_district: Optional[str] = None
     board: Optional[str] = None  # State Board, CBSE, ICSE, etc.
     year_of_passing: Optional[str] = None
     marks: Optional[float] = None
@@ -77,6 +78,7 @@ class HSCDetailsBase(BaseModel):
     register_number: Optional[str] = None
     school_name: Optional[str] = None
     school_block: Optional[str] = None
+    school_district: Optional[str] = None
     board: Optional[str] = None  # State Board, CBSE, ICSE, etc.
     year_of_passing: Optional[str] = None
     total_marks: Optional[float] = None
@@ -260,6 +262,7 @@ class SSLCDetailsUpdate(BaseModel):
     register_number: Optional[str] = None
     school_name: Optional[str] = None
     school_block: Optional[str] = None
+    school_district: Optional[str] = None
     board: Optional[str] = None
     year_of_passing: Optional[str] = None
     marks: Optional[float] = None
@@ -272,6 +275,7 @@ class HSCDetailsUpdate(BaseModel):
     register_number: Optional[str] = None
     school_name: Optional[str] = None
     school_block: Optional[str] = None
+    school_district: Optional[str] = None
     board: Optional[str] = None
     year_of_passing: Optional[str] = None
     total_marks: Optional[float] = None

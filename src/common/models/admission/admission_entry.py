@@ -445,6 +445,7 @@ class SSLCDetails(Base):
     register_number = Column(String(50), nullable=True)
     school_name = Column(String(200), nullable=True)
     school_block = Column(String(200), nullable=True)
+    school_district = Column(String(200), nullable=True)
     board = Column(String(100), nullable=True)  # State Board, CBSE, ICSE, etc.
     year_of_passing = Column(String(4), nullable=True)
     marks = Column(Float, nullable=True)
@@ -475,6 +476,7 @@ class HSCDetails(Base):
     register_number = Column(String(50), nullable=True)
     school_name = Column(String(200), nullable=True)
     school_block = Column(String(200), nullable=True)
+    school_district = Column(String(200), nullable=True)
     board = Column(String(100), nullable=True)  # State Board, CBSE, ICSE, etc.
     year_of_passing = Column(String(4), nullable=True)
     total_marks = Column(Float, nullable=True)

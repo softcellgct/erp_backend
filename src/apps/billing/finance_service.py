@@ -990,15 +990,33 @@ class FinanceService:
 
     async def generate_multi_receipt(self, db: AsyncSession, payload) -> dict:
         from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.master.admission_masters import SchoolMaster
 
         data = payload.dict(exclude_unset=True)
         institution_id = data["institution_id"]
         fee_head_id = data["fee_head_id"]
         fee_sub_head_id = data.get("fee_sub_head_id")
+        school_master_id = data.get("school_master_id")
         student_ids = data["student_ids"]
         amount_per_student = Decimal(str(data["amount_per_student"]))
         payment_method = data.get("payment_method", "MULTI_RECEIPT")
         payment_date = data.get("payment_date") or datetime.utcnow()
+
+        school_name = None
+        school_block = None
+        school_district = None
+        if school_master_id:
+            school_stmt = select(SchoolMaster).where(
+                SchoolMaster.id == school_master_id,
+                SchoolMaster.deleted_at.is_(None),
+            )
+            school_result = await db.execute(school_stmt)
+            school = school_result.scalar_one_or_none()
+            if not school:
+                raise ValueError("Selected school not found")
+            school_name = school.name
+            school_block = school.block
+            school_district = school.district
 
         try:
             payer_type = PayerTypeEnum(data.get("payer_type", "GOVERNMENT"))
@@ -1013,6 +1031,10 @@ class FinanceService:
             institution_id=institution_id,
             fee_head_id=fee_head_id,
             fee_sub_head_id=fee_sub_head_id,
+            school_master_id=school_master_id,
+            school_name=school_name,
+            school_block=school_block,
+            school_district=school_district,
             payer_type=payer_type,
             receipt_number=receipt_number,
             amount_per_student=amount_per_student,
@@ -1203,6 +1225,10 @@ class FinanceService:
         return {
             "multi_receipt_id": multi_receipt.id,
             "receipt_number": receipt_number,
+            "school_master_id": multi_receipt.school_master_id,
+            "school_name": multi_receipt.school_name,
+            "school_block": multi_receipt.school_block,
+            "school_district": multi_receipt.school_district,
             "student_count": len(paid_student_ids),
             "amount_per_student": amount_per_student,
             "total_amount": total_amount,
@@ -1229,6 +1255,10 @@ class FinanceService:
                 "institution_id": rec.institution_id,
                 "fee_head_id": rec.fee_head_id,
                 "fee_sub_head_id": rec.fee_sub_head_id,
+                "school_master_id": rec.school_master_id,
+                "school_name": rec.school_name,
+                "school_block": rec.school_block,
+                "school_district": rec.school_district,
                 "payer_type": rec.payer_type.value,
                 "student_count": rec.student_count,
                 "amount_per_student": rec.amount_per_student,
@@ -1265,6 +1295,10 @@ class FinanceService:
             "institution_id": receipt.institution_id,
             "fee_head_id": receipt.fee_head_id,
             "fee_sub_head_id": receipt.fee_sub_head_id,
+            "school_master_id": receipt.school_master_id,
+            "school_name": receipt.school_name,
+            "school_block": receipt.school_block,
+            "school_district": receipt.school_district,
             "payer_type": receipt.payer_type.value,
             "student_count": receipt.student_count,
             "amount_per_student": receipt.amount_per_student,

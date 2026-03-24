@@ -40,6 +40,7 @@ class GenerateMultiReceiptRequest(BaseModel):
     institution_id: UUID
     fee_head_id: UUID
     fee_sub_head_id: Optional[UUID] = None
+    school_master_id: Optional[UUID] = None
     student_ids: list[UUID] = Field(..., min_length=1)
     amount_per_student: Decimal = Field(..., gt=0)
     payer_type: str = "GOVERNMENT"
@@ -60,6 +61,10 @@ class MultiReceiptItemResponse(BaseModel):
 class GenerateMultiReceiptResponse(BaseModel):
     multi_receipt_id: UUID
     receipt_number: str
+    school_master_id: Optional[UUID] = None
+    school_name: Optional[str] = None
+    school_block: Optional[str] = None
+    school_district: Optional[str] = None
     student_count: int
     amount_per_student: Decimal
     total_amount: Decimal
@@ -73,6 +78,10 @@ class MultiReceiptSummary(BaseModel):
     institution_id: UUID
     fee_head_id: Optional[UUID] = None
     fee_sub_head_id: Optional[UUID] = None
+    school_master_id: Optional[UUID] = None
+    school_name: Optional[str] = None
+    school_block: Optional[str] = None
+    school_district: Optional[str] = None
     payer_type: str
     student_count: int
     amount_per_student: Decimal
@@ -87,6 +96,10 @@ class MultiReceiptDetail(BaseModel):
     institution_id: UUID
     fee_head_id: Optional[UUID] = None
     fee_sub_head_id: Optional[UUID] = None
+    school_master_id: Optional[UUID] = None
+    school_name: Optional[str] = None
+    school_block: Optional[str] = None
+    school_district: Optional[str] = None
     payer_type: str
     student_count: int
     amount_per_student: Decimal

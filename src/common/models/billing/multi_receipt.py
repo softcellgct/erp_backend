@@ -35,6 +35,12 @@ class MultiReceipt(Base):
     fee_sub_head_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("fee_sub_heads.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    school_master_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("school_master.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    school_name: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    school_block: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    school_district: Mapped[str | None] = mapped_column(String(200), nullable=True)
     payer_type: Mapped[PayerTypeEnum] = mapped_column(
         SAEnum(
             PayerTypeEnum,
@@ -65,6 +71,7 @@ class MultiReceipt(Base):
     institution = relationship("Institution", lazy="selectin")
     fee_head = relationship("FeeHead", lazy="selectin")
     fee_sub_head = relationship("FeeSubHead", lazy="selectin")
+    school_master = relationship("SchoolMaster", lazy="selectin")
     creator = relationship("User", foreign_keys=[created_by], lazy="selectin")
 
     __table_args__ = (
