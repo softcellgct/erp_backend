@@ -75,7 +75,6 @@ visitor_router.include_router(
 
 
 from .services import admission_crud
-from fastapi_querybuilder.dependencies import QueryBuilder
 
 admission_visitor_router = APIRouter(
     prefix="/admission-visitors",
@@ -223,10 +222,20 @@ async def get_admission_visitor(
 async def get_all_admission_visitors(
     request: Request,
     db: AsyncSession = Depends(get_db_session),
-    query = QueryBuilder(AdmissionStudent),
-
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=50, ge=1, le=200),
+    search: str | None = Query(default=None),
+    sort: str = Query(default="created_at:desc"),
+    filters: str | None = Query(default=None),
 ):
-    visitors = await admission_crud.get_all(db, query)
+    visitors = await admission_crud.get_all_filtered(
+        db,
+        page=page,
+        size=size,
+        search=search,
+        sort=sort,
+        filters=filters,
+    )
     return visitors
 
 

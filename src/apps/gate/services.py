@@ -1,11 +1,13 @@
 import csv
+import json
 import math
 from datetime import date, datetime, time, timezone
 from io import StringIO
 from uuid import UUID
 
+from fastapi_pagination import Params
 from fastapi_pagination.ext.sqlalchemy import paginate
-from sqlalchemy import and_, func, or_, select, text
+from sqlalchemy import and_, asc, desc, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -43,6 +45,157 @@ _FIELD_MAP = {
 
 
 class AdmissionVisitorCRUD:
+    @staticmethod
+    def _to_model_field(field_name: str) -> str:
+        field_map = {
+            "gate_pass_no": "gate_pass_number",
+            "student_name": "name",
+            "mobile_number": "student_mobile",
+            "parent_or_guardian_name": "father_name",
+            "aadhar_number": "aadhaar_number",
+            "vehicle": "has_vehicle",
+        }
+        return field_map.get(field_name, field_name)
+
+    @staticmethod
+    def _normalize_bool(value):
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            lowered = value.strip().lower()
+            if lowered in {"true", "1", "yes"}:
+                return True
+            if lowered in {"false", "0", "no"}:
+                return False
+        return value
+
+    def _build_filter_expression(self, field_name: str, operator: str, value):
+        model_field_name = self._to_model_field(field_name)
+        column = getattr(AdmissionStudent, model_field_name, None)
+        if column is None:
+            return None
+
+        op = (operator or "eq").strip().lower()
+        normalized_value = self._normalize_bool(value)
+
+        if op in {"eq", "$eq"}:
+            return column == normalized_value
+        if op in {"ne", "$ne"}:
+            return column != normalized_value
+        if op in {"contains", "$contains"} and isinstance(value, str):
+            return column.ilike(f"%{value}%")
+        if op in {"startswith", "$startswith"} and isinstance(value, str):
+            return column.ilike(f"{value}%")
+        if op in {"endswith", "$endswith"} and isinstance(value, str):
+            return column.ilike(f"%{value}")
+        if op in {"in", "$in"} and isinstance(value, list):
+            values = [self._normalize_bool(v) for v in value]
+            return column.in_(values)
+
+        return None
+
+    def _apply_filters(self, stmt, filters_raw: str | None):
+        if not filters_raw:
+            return stmt
+
+        try:
+            parsed = json.loads(filters_raw) if isinstance(filters_raw, str) else filters_raw
+        except Exception:
+            return stmt
+
+        expressions = []
+
+        # Supports querybuilder shape: {"operator":"and","conditions":[...]}
+        if isinstance(parsed, dict) and isinstance(parsed.get("conditions"), list):
+            for condition in parsed["conditions"]:
+                if not isinstance(condition, dict):
+                    continue
+                expr = self._build_filter_expression(
+                    condition.get("field", ""),
+                    condition.get("operator", "eq"),
+                    condition.get("value"),
+                )
+                if expr is not None:
+                    expressions.append(expr)
+
+        # Supports simple shape: {"field": value}
+        elif isinstance(parsed, dict):
+            for field, value in parsed.items():
+                if isinstance(value, dict):
+                    for op_key, op_val in value.items():
+                        expr = self._build_filter_expression(field, op_key, op_val)
+                        if expr is not None:
+                            expressions.append(expr)
+                else:
+                    expr = self._build_filter_expression(field, "eq", value)
+                    if expr is not None:
+                        expressions.append(expr)
+
+        if expressions:
+            stmt = stmt.where(and_(*expressions))
+
+        return stmt
+
+    async def get_all_filtered(
+        self,
+        db: AsyncSession,
+        page: int = 1,
+        size: int = 50,
+        search: str | None = None,
+        sort: str = "created_at:desc",
+        filters: str | None = None,
+    ):
+        stmt = (
+            select(AdmissionStudent)
+            .options(
+                selectinload(AdmissionStudent.consultancy_reference),
+                selectinload(AdmissionStudent.staff_reference),
+                selectinload(AdmissionStudent.student_reference),
+                selectinload(AdmissionStudent.other_reference),
+            )
+            .where(
+                AdmissionStudent.deleted_at.is_(None),
+                AdmissionStudent.source == SourceEnum.GATE_ENQUIRY,
+            )
+        )
+
+        if search and search.strip():
+            pattern = f"%{search.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    AdmissionStudent.gate_pass_number.ilike(pattern),
+                    AdmissionStudent.enquiry_number.ilike(pattern),
+                    AdmissionStudent.application_number.ilike(pattern),
+                    AdmissionStudent.name.ilike(pattern),
+                    AdmissionStudent.father_name.ilike(pattern),
+                    AdmissionStudent.student_mobile.ilike(pattern),
+                    AdmissionStudent.parent_mobile.ilike(pattern),
+                    AdmissionStudent.aadhaar_number.ilike(pattern),
+                    AdmissionStudent.reference_type.ilike(pattern),
+                    AdmissionStudent.vehicle_number.ilike(pattern),
+                )
+            )
+
+        stmt = self._apply_filters(stmt, filters)
+
+        sort_field = "created_at"
+        sort_dir = "desc"
+        if isinstance(sort, str) and ":" in sort:
+            raw_field, raw_dir = sort.split(":", 1)
+            sort_field = (raw_field or "created_at").strip()
+            sort_dir = (raw_dir or "desc").strip().lower()
+
+        sort_column = getattr(AdmissionStudent, sort_field, None)
+        if sort_column is None:
+            sort_column = AdmissionStudent.created_at
+
+        stmt = stmt.order_by(
+            asc(sort_column) if sort_dir == "asc" else desc(sort_column),
+            desc(AdmissionStudent.id),
+        )
+
+        return await paginate(db, stmt, Params(page=page, size=size))
+
     async def create(self, db: AsyncSession, payload: AdmissionVisitorCreate):
         try:
             data = payload.dict(exclude_unset=True)
