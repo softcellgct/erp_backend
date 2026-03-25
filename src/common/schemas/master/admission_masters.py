@@ -94,6 +94,14 @@ class SchoolMasterResponse(SchoolMasterBase):
     class Config:
         from_attributes = True
 
+
+class SchoolMasterPaginatedResponse(BaseModel):
+    items: List[SchoolMasterResponse]
+    total: int
+    page: int
+    size: int
+    pages: int
+
 class SchoolMasterListResponse(BaseModel):
     """Simple response for dropdown list"""
     id: UUID

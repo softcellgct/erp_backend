@@ -11,6 +11,7 @@ from components.middleware import is_superadmin
 from apps.master.services.school_master import SchoolMasterService
 from common.schemas.master.admission_masters import (
     SchoolMasterCreate,
+    SchoolMasterPaginatedResponse,
     SchoolMasterUpdate,
     SchoolMasterResponse,
     SchoolMasterListResponse,
@@ -20,19 +21,36 @@ from common.schemas.master.admission_masters import (
 school_router = APIRouter(tags=["School Master"])
 
 
-@school_router.get("/schools", response_model=List[SchoolMasterResponse])
+@school_router.get("/schools", response_model=SchoolMasterPaginatedResponse)
 @is_superadmin
 async def list_schools(
     request: Request,
     search: Optional[str] = None,
     block: Optional[str] = None,
     district: Optional[str] = None,
-    skip: int = 0,
-    limit: int = 100,
+    is_active: Optional[bool] = None,
+    filters: Optional[str] = None,
+    sort: Optional[str] = None,
+    page: int = 1,
+    size: int = 100,
+    skip: Optional[int] = None,
+    limit: Optional[int] = None,
     db: AsyncSession = Depends(get_db_session),
 ):
     """Get paginated list of schools with optional search and filters."""
-    return await SchoolMasterService(db).list_schools(search, block, district, skip, limit)
+    resolved_limit = limit if limit is not None else size
+    resolved_skip = skip if skip is not None else max(page - 1, 0) * resolved_limit
+
+    return await SchoolMasterService(db).list_schools(
+        search=search,
+        block=block,
+        district=district,
+        is_active=is_active,
+        filters=filters,
+        sort=sort,
+        skip=resolved_skip,
+        limit=resolved_limit,
+    )
 
 
 @school_router.get("/schools/list", response_model=List[SchoolMasterListResponse])
