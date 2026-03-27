@@ -1,4 +1,4 @@
-from sqlalchemy import select, update
+from sqlalchemy import select, update, or_, func
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 from common.models.master.institution import Institution, Department, Course, Class
@@ -212,3 +212,62 @@ class InstitutionService:
         result = await self.db.execute(stmt)
         year_courses = result.scalars().all()
         return [yc.course for yc in year_courses if yc.course and yc.course.is_active]
+
+    async def list_admission_eligible_programs(self, institution_id: UUID, academic_year_id: UUID):
+        """
+        Return departments and courses eligible for admission entry selection.
+
+        Eligibility rule:
+        - Department is active
+        - Course is active
+        - AcademicYearCourse config exists for selected year
+        - AcademicYearCourse config is active
+        - AcademicYearCourse.application_fee > 0
+        """
+        stmt = (
+            select(Department, Course)
+            .join(Course, Course.department_id == Department.id)
+            .join(AcademicYearCourse, AcademicYearCourse.course_id == Course.id)
+            .where(
+                Department.institution_id == institution_id,
+                or_(Department.is_active == True, Department.is_active.is_(None)),
+                Department.deleted_at.is_(None),
+                or_(Course.is_active == True, Course.is_active.is_(None)),
+                Course.deleted_at.is_(None),
+                AcademicYearCourse.academic_year_id == academic_year_id,
+                or_(AcademicYearCourse.is_active == True, AcademicYearCourse.is_active.is_(None)),
+                func.coalesce(AcademicYearCourse.application_fee, 0) > 0,
+                AcademicYearCourse.deleted_at.is_(None),
+            )
+            .order_by(Department.name, Course.title)
+        )
+
+        result = await self.db.execute(stmt)
+        rows = result.all()
+
+        dept_map: dict[str, dict] = {}
+        courses: list[dict] = []
+
+        for dept, course in rows:
+            dept_key = str(dept.id)
+            if dept_key not in dept_map:
+                dept_map[dept_key] = {
+                    "id": dept.id,
+                    "name": dept.name,
+                    "code": getattr(dept, "code", None),
+                }
+
+            courses.append(
+                {
+                    "id": course.id,
+                    "title": course.title,
+                    "short_name": getattr(course, "short_name", None),
+                    "level": getattr(course, "level", None),
+                    "department_id": course.department_id,
+                }
+            )
+
+        return {
+            "departments": list(dept_map.values()),
+            "courses": courses,
+        }

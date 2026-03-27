@@ -63,6 +63,33 @@ async def get_active_courses_for_year(
     from uuid import UUID
     return await InstitutionService(db).list_active_courses_for_year(UUID(academic_year_id))
 
+
+@academic_year_router.get(
+    "/academic-years/{academic_year_id}/eligible-programs",
+    tags=["Academic Years"],
+)
+async def get_admission_eligible_programs(
+    request: Request,
+    academic_year_id: str,
+    institution_id: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    """
+    Get admission-eligible departments and courses for one institution + academic year.
+
+    Eligibility:
+    - department active
+    - course active
+    - academic year course config active
+    - application_fee > 0
+    """
+    from apps.master.services.institution import InstitutionService
+    from uuid import UUID
+
+    return await InstitutionService(db).list_admission_eligible_programs(
+        UUID(institution_id), UUID(academic_year_id)
+    )
+
 @academic_year_router.post(
     "/academic-years/{academic_year_id}/courses",
     response_model=AcademicYearCourseResponse,

@@ -591,6 +591,7 @@ async def list_admission_students(
             query_filters.append(
                 or_(
                     AdmissionStudent.name.ilike(search_pattern),
+                    AdmissionStudent.gate_pass_number.ilike(search_pattern),
                     AdmissionStudent.enquiry_number.ilike(search_pattern),
                     AdmissionStudent.application_number.ilike(search_pattern),
                     AdmissionStudent.roll_number.ilike(search_pattern),

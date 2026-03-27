@@ -5,9 +5,11 @@ ERP Backend — Application entry point.
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_pagination import add_pagination
+from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from apps import ROUTERS
 from core.config import settings
@@ -48,6 +50,27 @@ add_pagination(app)
 @public_route
 async def health_check():
     return {"status": "ok"}
+
+
+@app.exception_handler(IntegrityError)
+async def handle_integrity_error(_: Request, exc: IntegrityError):
+    error_message = str(getattr(exc, "orig", exc)).lower()
+
+    if (
+        "admission_students_aadhaar_number_key" in error_message
+        or ("duplicate key" in error_message and "aadhaar" in error_message)
+    ):
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": "Aadhaar number already exists. Please use the existing gate pass/admission record for this Aadhaar."
+            },
+        )
+
+    return JSONResponse(
+        status_code=400,
+        content={"detail": "Database integrity error"},
+    )
 
 
 # ── Register routers ─────────────────────────────────
