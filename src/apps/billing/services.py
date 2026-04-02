@@ -2030,6 +2030,15 @@ class BillingService:
              student = res.scalar_one_or_none()
              
         if not student:
+            # Fallback try roll_number just in case
+             stmt = select(AdmissionStudent).options(
+                selectinload(AdmissionStudent.department),
+                selectinload(AdmissionStudent.course)
+             ).where(AdmissionStudent.roll_number == application_number)
+             res = await db.execute(stmt)
+             student = res.scalar_one_or_none()
+             
+        if not student:
             raise ValueError("Student not found")
             
         # 2. Fetch Invoices not fully paid
