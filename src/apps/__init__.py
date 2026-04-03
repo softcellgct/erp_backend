@@ -28,6 +28,7 @@ from .master.files.routers import router as file_router
 from .admission.routers import consultancy_router, admission_entry_router, admission_router, lead_followup_router
 from .admission.verification_routers import verification_router
 from .admission.department_change_routers import department_change_router
+from .admission.ocr_router import ocr_router
 from .billing.routers import router as billing_router
 from .billing.scholarship_routers import router as scholarship_router
 from .billing.refund_routers import router as refund_router
@@ -62,6 +63,7 @@ ROUTERS = [
     (admission_router, "/api/admission/admitted"),
     (lead_followup_router, "/api/admission/follow-up"),
     (verification_router, "/api/admission"),
+    (ocr_router, "/api/admission"),
     (department_change_router, "/api/admission"),
     (billing_router, "/api/billing"),
     (scholarship_router, "/api/billing/scholarships"),
