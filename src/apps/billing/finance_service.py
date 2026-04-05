@@ -9,7 +9,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import func, select, and_
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -118,7 +118,6 @@ class FinanceService:
         If *year* is provided (without semester), all semesters for that year
         are generated. If neither, all configured amounts are generated.
         """
-        from common.models.admission.admission_entry import AdmissionStudent
 
         # 1. Load fee structure with items
         fs_stmt = (
@@ -355,9 +354,7 @@ class FinanceService:
         institution_id: UUID | None = None,
     ) -> list[UUID]:
         """Resolve student IDs matching the given filters."""
-        from common.models.admission.admission_entry import AdmissionStudent
-        from common.models.master.institution import Course, Department
-        from common.models.master.admission_masters import SeatQuota
+        from common.models.admission.admission_entry import AdmissionStudent, AdmissionStudentPersonalDetails
 
         filters = filters or {}
         stmt = select(AdmissionStudent.id).where(
@@ -407,7 +404,7 @@ class FinanceService:
         Generate invoices from pending demand items. Groups demands by
         (student_id, payer_type) and creates one invoice per group.
         """
-        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.admission.admission_entry import AdmissionStudent, AdmissionStudentPersonalDetails
 
         stmt = select(DemandItem).where(
             DemandItem.status == "pending",
@@ -503,7 +500,7 @@ class FinanceService:
         payer_type demands/invoices (for student portal). Admin portal
         passes include_government=True.
         """
-        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.admission.admission_entry import AdmissionStudent, AdmissionStudentPersonalDetails
 
         stu_stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
         stu_res = await db.execute(stu_stmt)
@@ -548,7 +545,7 @@ class FinanceService:
 
         return {
             "student_id": student.id,
-            "name": student.name,
+            "name": getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None),
             "total_demand": round(total_demand, 2),
             "total_paid": round(total_paid, 2),
             "balance_due": round(max(0, balance), 2),
@@ -900,7 +897,7 @@ class FinanceService:
         gender: str | None = None,
         admission_quota_id: UUID | None = None,
     ) -> list[dict]:
-        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.admission.admission_entry import AdmissionStudent, AdmissionStudentPersonalDetails
 
         demand_stmt = (
             select(
@@ -977,7 +974,7 @@ class FinanceService:
                 {
                     "student_id": student.id,
                     "application_number": student.application_number,
-                    "student_name": student.name,
+                    "student_name": getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None),
                     "department_name": student.department.name if student.department else None,
                     "course_name": student.course.name if student.course else None,
                     "academic_year_id": student.academic_year_id,
@@ -989,7 +986,7 @@ class FinanceService:
         return response
 
     async def generate_multi_receipt(self, db: AsyncSession, payload) -> dict:
-        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.admission.admission_entry import AdmissionStudent, AdmissionStudentPersonalDetails
         from common.models.master.admission_masters import SchoolMaster
 
         data = payload.dict(exclude_unset=True)
@@ -1085,7 +1082,7 @@ class FinanceService:
                 skipped_students.append(
                     {
                         "student_id": str(student_id),
-                        "student_name": student.name,
+                        "student_name": getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None),
                         "reason": "No outstanding demand for selected fee head",
                     }
                 )
@@ -1196,7 +1193,7 @@ class FinanceService:
                 result_items.append(
                     {
                         "student_id": student_id,
-                        "student_name": student.name,
+                        "student_name": getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None),
                         "demand_item_id": demand.id,
                         "invoice_id": invoice.id,
                         "payment_id": payment.id,
@@ -1208,7 +1205,7 @@ class FinanceService:
                 skipped_students.append(
                     {
                         "student_id": str(student_id),
-                        "student_name": student.name,
+                        "student_name": getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None),
                         "reason": f"Only {str(amount_per_student - remaining)} applied due to insufficient outstanding demand",
                     }
                 )
@@ -1270,7 +1267,7 @@ class FinanceService:
         ]
 
     async def get_multi_receipt(self, db: AsyncSession, receipt_id: UUID) -> dict:
-        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.admission.admission_entry import AdmissionStudent, AdmissionStudentPersonalDetails
 
         stmt = (
             select(MultiReceipt)
@@ -1333,11 +1330,12 @@ class FinanceService:
         status: str | None = None,
     ) -> list[dict]:
         """List demand items with optional filters."""
-        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.admission.admission_entry import AdmissionStudent, AdmissionStudentPersonalDetails
 
         stmt = (
-            select(DemandItem, AdmissionStudent.name)
-            .join(AdmissionStudent, DemandItem.student_id == AdmissionStudent.id)
+            select(DemandItem, AdmissionStudentPersonalDetails.name)
+            .join(AdmissionStudent, DemandItem.student_id == AdmissionStudent.id) \
+            .outerjoin(AdmissionStudentPersonalDetails, AdmissionStudent.id == AdmissionStudentPersonalDetails.admission_student_id)
             .where(DemandItem.deleted_at.is_(None))
         )
 

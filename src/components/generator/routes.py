@@ -146,6 +146,7 @@ def create_crud_routes(
             return {
                 "detail": f"{split_name} data created successfully",
                 "created": result.get("created", 0),
+                "ids": result.get("ids", []),
                 "skipped": result.get("skipped", 0),
                 "errors": result.get("errors", []),
             }

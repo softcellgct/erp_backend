@@ -1,9 +1,7 @@
-from datetime import timedelta
 from uuid import UUID
-from fastapi import HTTPException, Request
-from sqlalchemy import and_, delete, null, or_, select
+from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from common.models.master.user import Role, User
 from common.schemas.master.user import RoleCreateSchema, UserCreateSchema

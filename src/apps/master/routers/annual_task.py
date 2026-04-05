@@ -7,7 +7,6 @@ from common.schemas.master.annual_task import (
     AcademicYearResponse,
     AcademicYearSchema,
     UpdateAcademicYearSchema,
-    UpdateAcademicYearSchema,
     AcademicYearCourseCreate,
     AcademicYearCourseResponse,
     SemesterPeriodCreate,

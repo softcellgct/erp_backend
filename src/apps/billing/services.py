@@ -1,6 +1,6 @@
 from datetime import date, datetime, time
 from uuid import UUID
-from sqlalchemy.orm import sessionmaker, joinedload, selectinload
+from sqlalchemy.orm import joinedload, selectinload
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -272,7 +272,6 @@ class BillingService:
         if not student:
             raise ValueError("Student not found")
 
-        from common.models.admission.admission_entry import AdmissionStatusEnum
         current_status = student.status.value if hasattr(student.status, "value") else str(student.status)
 
         # Idempotent path: already locked with a structure.
@@ -326,7 +325,7 @@ class BillingService:
         if not fs:
             logger.warning(
                 "No fee structure found for student %s (institution=%s, year=%s, course=%s, type=%s, quota=%s)",
-                student.name,
+                getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None),
                 student.institution_id,
                 student.academic_year_id,
                 student.course_id,
@@ -417,21 +416,26 @@ class BillingService:
         from common.models.master.annual_task import AcademicYearCourse
         from common.models.billing.application_fees import FeeHead
         from common.models.billing.demand import DemandItem
+        from sqlalchemy.orm import selectinload
         
         # 1. Fetch Student
-        stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+        stmt = select(AdmissionStudent).options(selectinload(AdmissionStudent.program_details)).where(AdmissionStudent.id == student_id)
         res = await db.execute(stmt)
         student = res.scalar_one_or_none()
         if not student:
             raise ValueError("Student not found")
             
-        if not student.course_id or not student.academic_year_id:
+        course_id = student.program_details.course_id if student.program_details else getattr(student, "course_id", None)
+        academic_year_id = student.academic_year_id or (student.program_details.academic_year_id if student.program_details else None)
+        institution_id = student.program_details.institution_id if student.program_details else getattr(student, "institution_id", None)
+
+        if not course_id or not academic_year_id:
             return None # No course/year assigned
             
         # 2. Fetch Config
         stmt = select(AcademicYearCourse).where(
-            AcademicYearCourse.academic_year_id == student.academic_year_id,
-            AcademicYearCourse.course_id == student.course_id
+            AcademicYearCourse.academic_year_id == academic_year_id,
+            AcademicYearCourse.course_id == course_id
         )
         res = await db.execute(stmt)
         config = res.scalar_one_or_none()
@@ -439,7 +443,7 @@ class BillingService:
         if config and config.application_fee and config.application_fee > 0:
             # 3. Find 'Application Fee' Head
             stmt_head = select(FeeHead).where(
-                FeeHead.institution_id == student.institution_id,
+                FeeHead.institution_id == institution_id,
                 FeeHead.name.ilike("Application Fee")
             )
             res_head = await db.execute(stmt_head)
@@ -534,12 +538,16 @@ class BillingService:
         # We need institution_id. Ideally demand has it, or we fetch from student.
         # DemandItem doesn't have institution_id. We fetch it from student.
         from common.models.admission.admission_entry import AdmissionStudent
-        stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+        stmt = select(AdmissionStudent).options(selectinload(AdmissionStudent.program_details)).where(AdmissionStudent.id == student_id)
         res = await db.execute(stmt)
         student = res.scalar_one_or_none()
         if not student:
             raise ValueError("Student not found for demands")
-        institution_id = student.institution_id
+        
+        institution_id = student.program_details.institution_id if student.program_details else getattr(student, "institution_id", None)
+        
+        if not institution_id:
+            raise ValueError("Student missing institution_id")
         
         total_amount = sum([d.amount for d in demands])
         
@@ -668,7 +676,7 @@ class BillingService:
 
     async def set_active_financial_year(self, db: AsyncSession, financial_year_id: UUID):
         # Activate the provided financial year and deactivate others for the same institution in one transaction
-        from sqlalchemy import update, select
+        from sqlalchemy import select
         # fetch fy
         stmt = select(FinancialYear).where(FinancialYear.id == financial_year_id)
         res = await db.execute(stmt)
@@ -920,7 +928,7 @@ class BillingService:
         matched_students = [
             {
                 "id": student.id,
-                "name": student.name,
+                "name": getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None),
                 "application_number": student.application_number,
                 "roll_number": student.roll_number,
                 "department": student.department.name if student.department else None,
@@ -1445,7 +1453,7 @@ class BillingService:
             sample_students.append(
                 {
                     "id": str(student.id),
-                    "name": student.name,
+                    "name": getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None),
                     "batch": student.year,
                     "gender": student.gender.value if student.gender else None,
                     "department_id": str(student.department_id) if student.department_id else None,
@@ -1657,13 +1665,13 @@ class BillingService:
                 # Backward-compat override: skip locked-mismatch students
                 if (student.is_fee_structure_locked and student.fee_structure_id
                         and student.fee_structure_id != fee_structure_id):
-                    skipped_students.append(student.name or str(sid))
+                    skipped_students.append(getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None) or str(sid))
                 else:
                     fs_id_for_student[sid] = fee_structure_id
             else:
                 # Auto-resolve: use student's own locked fee structure
                 if not student.is_fee_structure_locked or not student.fee_structure_id:
-                    skipped_students.append(student.name or str(sid))
+                    skipped_students.append(getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None) or str(sid))
                     continue
                 fs_id_for_student[sid] = student.fee_structure_id
 
@@ -1966,9 +1974,7 @@ class BillingService:
         Collect application fee from a student.
         Validates the fee amount against the AcademicYearDepartment configuration.
         """
-        from common.models.billing.application_fees import ApplicationTransaction, PaymentStatusEnum
         from common.models.master.annual_task import AcademicYearCourse
-        import uuid
         
         data = payload.dict(exclude_unset=True)
         academic_year_id = data["academic_year_id"]
@@ -2007,15 +2013,17 @@ class BillingService:
         # get count for today to generate seq
         
     async def get_student_dues_by_application_number(self, db: AsyncSession, application_number: str):
-        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.admission.admission_entry import AdmissionStudent, AdmissionStudentProgramDetails
         from common.models.billing.application_fees import Invoice, PaymentStatusEnum
+        from sqlalchemy.orm import selectinload
         
         # 1. Find Student
         # We search by application_number OR enquiry_number to be safe? 
         # Request asked for application_number.
         stmt = select(AdmissionStudent).options(
-            selectinload(AdmissionStudent.department),
-            selectinload(AdmissionStudent.course)
+            selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.department),
+            selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.course),
+            selectinload(AdmissionStudent.personal_details)
         ).where(AdmissionStudent.application_number == application_number)
         res = await db.execute(stmt)
         student = res.scalar_one_or_none()
@@ -2023,8 +2031,9 @@ class BillingService:
         if not student:
             # Fallback try enquiry_number just in case
              stmt = select(AdmissionStudent).options(
-                selectinload(AdmissionStudent.department),
-                selectinload(AdmissionStudent.course)
+                selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.department),
+                selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.course),
+                selectinload(AdmissionStudent.personal_details)
              ).where(AdmissionStudent.enquiry_number == application_number)
              res = await db.execute(stmt)
              student = res.scalar_one_or_none()
@@ -2032,8 +2041,9 @@ class BillingService:
         if not student:
             # Fallback try roll_number just in case
              stmt = select(AdmissionStudent).options(
-                selectinload(AdmissionStudent.department),
-                selectinload(AdmissionStudent.course)
+                selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.department),
+                selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.course),
+                selectinload(AdmissionStudent.personal_details)
              ).where(AdmissionStudent.roll_number == application_number)
              res = await db.execute(stmt)
              student = res.scalar_one_or_none()
@@ -2059,14 +2069,18 @@ class BillingService:
         invoices = res.scalars().all()
         
         # 3. Construct Response
+        name_val = getattr(student, "name", None)
+        if hasattr(student, "personal_details") and student.personal_details:
+            name_val = getattr(student.personal_details, "name", name_val)
+
         return {
             "student_id": student.id,
-
             "application_number": student.application_number,
-            "name": student.name,
-            "department": student.department.name if student.department else None,
-            "course": student.course.title if student.course else None,
-            "batch": student.year,
+            "name": name_val,
+            "department": student.program_details.department.name if student.program_details and student.program_details.department else None,
+            "course": student.program_details.course.title if student.program_details and student.program_details.course else None,
+            "batch": student.program_details.year if student.program_details else None,
+            "status": getattr(student, "status", None),
             "invoices": invoices
         }
 
@@ -2293,7 +2307,8 @@ class BillingService:
         start_dt = self._to_start_datetime(from_date)
         end_dt = self._to_end_datetime(to_date)
 
-        names_stmt = select(AdmissionStudent.id, AdmissionStudent.name).where(
+        from common.models.admission.admission_entry import AdmissionStudentPersonalDetails
+        names_stmt = select(AdmissionStudent.id, AdmissionStudentPersonalDetails.name).join(AdmissionStudentPersonalDetails, AdmissionStudent.id == AdmissionStudentPersonalDetails.admission_student_id).where(
             AdmissionStudent.id.in_(student_ids)
         )
         names_res = await db.execute(names_stmt)

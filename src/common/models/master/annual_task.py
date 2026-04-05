@@ -1,9 +1,9 @@
 from datetime import date
 from decimal import Decimal
 from uuid import UUID
-from typing import TYPE_CHECKING, Optional, List
+from typing import TYPE_CHECKING, List
 from components.db.base_model import Base
-from sqlalchemy import String, Date, Boolean, CheckConstraint, ForeignKey, Numeric, Integer, UniqueConstraint
+from sqlalchemy import String, Date, Boolean, CheckConstraint, ForeignKey, Numeric, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:

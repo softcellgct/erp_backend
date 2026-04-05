@@ -10,18 +10,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from components.generator.routes import create_crud_routes
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.inspection import inspect
-from fastapi_pagination import add_pagination, Page, Params
+from fastapi_pagination import add_pagination, Params
 from fastapi_pagination.ext.sqlalchemy import paginate
 from fastapi_querybuilder.dependencies import QueryBuilder
 from fastapi import Request
 
-from common.models.admission.admission_entry import AdmissionStudent, AdmissionStatusEnum, SourceEnum
+from common.models.admission.admission_entry import AdmissionGateEntry, AdmissionStudent, AdmissionStudentProgramDetails, AdmissionStatusEnum
 from common.models.admission.lead_followup import LeadFollowUp
 from common.schemas.admission.admission_entry import (
     AdmissionStudentCreate,
     AdmissionStudentResponse,
     AdmissionStudentUpdate,
-    AdmissionStudentGrantAdmission,
     AssignRollNumberRequest,
     AssignSectionRequest,
     ActivateSem1Request,
@@ -35,7 +34,6 @@ from common.schemas.admission.lead_followup import (
     LeadFollowUpResponse,
     LeadFollowUpUpdate,
 )
-from apps.admission.services import generate_enquiry_number
 from sqlalchemy import select, desc, and_, or_, cast, String
 from sqlalchemy import func
 from sqlalchemy.orm import selectinload, raiseload
@@ -45,7 +43,7 @@ from datetime import datetime, time
 from common.models.master.institution import Department, Course
 from common.models.master.annual_task import AcademicYear
 
-from common.models.billing.application_fees import Invoice, InvoiceLineItem, PaymentStatusEnum as InvoicePaymentStatus
+from common.models.billing.application_fees import Invoice, InvoiceLineItem
 from components.generator.utils.get_user_from_request import get_user_id
 import logging
 
@@ -88,15 +86,6 @@ consultancy_router.include_router(
 
 admission_entry_router = APIRouter()
 
-admission_entry_crud_router = create_crud_routes(
-    AdmissionStudent,
-    AdmissionStudentCreate,
-    AdmissionStudentUpdate,
-    AdmissionStudentResponse,
-    AdmissionStudentResponse
-)
-
-
 # Custom GET endpoint with eager loading
 @admission_entry_router.get(
     "/admission-students/{id}",
@@ -108,20 +97,17 @@ async def get_admission_student(
     db: AsyncSession = Depends(get_db_session)
 ):
     query = select(AdmissionStudent).options(
-        selectinload(AdmissionStudent.department),
-        selectinload(AdmissionStudent.course),
-        selectinload(AdmissionStudent.institution),
         selectinload(AdmissionStudent.admission_quota),
         selectinload(AdmissionStudent.admission_type),
         selectinload(AdmissionStudent.fee_structure),
-        selectinload(AdmissionStudent.sslc_details),
-        selectinload(AdmissionStudent.hsc_details),
-        selectinload(AdmissionStudent.diploma_details),
-        selectinload(AdmissionStudent.pg_details),
         selectinload(AdmissionStudent.consultancy_reference),
         selectinload(AdmissionStudent.staff_reference),
         selectinload(AdmissionStudent.student_reference),
         selectinload(AdmissionStudent.other_reference),
+        selectinload(AdmissionStudent.gate_entry),
+        selectinload(AdmissionStudent.personal_details),
+        selectinload(AdmissionStudent.program_details),
+        selectinload(AdmissionStudent.previous_academic_details),
     ).where(AdmissionStudent.id == id)
     
     result = await db.execute(query)
@@ -135,19 +121,41 @@ async def get_admission_student(
     
     # Return as dict to avoid circular reference encoding issues
     # Resolve readable department/course names from relationships (if loaded)
-    dept_name = getattr(student.department, "name", None) if getattr(student, "department", None) else None
-    course_title = getattr(student.course, "title", None) if getattr(student, "course", None) else None
-    institution_name = getattr(student.institution, "name", None) if getattr(student, "institution", None) else None
+    from common.models.master.institution import Department, Course, Institution
+    dept_name = None
+    course_title = None
+    institution_name = None
+    if student.program_details:
+        if student.program_details.department_id:
+            dept = await db.scalar(select(Department.name).where(Department.id == student.program_details.department_id))
+            dept_name = dept
+        if student.program_details.course_id:
+            course = await db.scalar(select(Course.title).where(Course.id == student.program_details.course_id))
+            course_title = course
+        if student.program_details.institution_id:
+            inst = await db.scalar(select(Institution.name).where(Institution.id == student.program_details.institution_id))
+            institution_name = inst
+            
     admission_quota_name = getattr(student.admission_quota, "name", None) if getattr(student, "admission_quota", None) else None
-    admission_type_name = getattr(student.admission_type, "name", None) if getattr(student, "admission_type", None) else None
+    if not admission_quota_name and student.program_details and getattr(student.program_details, 'admission_quota_id', None):
+        from common.models.master.admission_masters import SeatQuota
+        admission_quota_name = await db.scalar(select(SeatQuota.name).where(SeatQuota.id == student.program_details.admission_quota_id))
 
-    # Fetch academic year name if academic_year_id is present
+    admission_type_name = getattr(student.admission_type, "name", None) if getattr(student, "admission_type", None) else None
+    if not admission_type_name and student.program_details and getattr(student.program_details, 'admission_type_id', None):
+        from common.models.master.admission_masters import AdmissionType
+        admission_type_name = await db.scalar(select(AdmissionType.name).where(AdmissionType.id == student.program_details.admission_type_id))
+
     academic_year_name = None
-    if getattr(student, "academic_year_id", None):
+    ay_id_to_check = getattr(student, "academic_year_id", None) or (student.program_details.academic_year_id if student.program_details else None)
+    if ay_id_to_check:
         from common.models.master.annual_task import AcademicYear
-        ay_stmt = select(AcademicYear.year_name).where(AcademicYear.id == student.academic_year_id)
-        ay_res = await db.execute(ay_stmt)
-        academic_year_name = ay_res.scalar_one_or_none()
+        academic_year_name = await db.scalar(select(AcademicYear.year_name).where(AcademicYear.id == ay_id_to_check))
+
+    staff_name = None
+    if student.staff_reference and student.staff_reference.staff_id:
+        from common.models.master.institution import Staff
+        staff_name = await db.scalar(select(Staff.name).where(Staff.id == student.staff_reference.staff_id))
 
     # Helper function to convert nested objects to dict
     def obj_to_dict(obj):
@@ -155,69 +163,114 @@ async def get_admission_student(
             return None
         return {col.name: getattr(obj, col.name, None) for col in obj.__table__.columns}
 
+    # Helper to safely get nested attribute
+    def get_nested(obj, *attrs, default=None):
+        for attr in attrs:
+            if not obj:
+                return default
+            obj = getattr(obj, attr, None)
+        return obj if obj is not None else default
+
+    prog = student.program_details
+    pers = student.personal_details
+    prev = student.previous_academic_details
+    gate = student.gate_entry
+
+    religion_val = get_nested(pers, "religion")
+    community_val = get_nested(pers, "community")
+    caste_val = get_nested(pers, "caste")
+
+    import uuid
+    def is_valid_uuid(val):
+        try:
+            uuid.UUID(str(val))
+            return True
+        except (ValueError, TypeError):
+            return False
+
+    if is_valid_uuid(religion_val):
+        from common.models.meta.models import Religion
+        real_religion = await db.scalar(select(Religion.name).where(Religion.id == uuid.UUID(str(religion_val))))
+        if real_religion: religion_val = real_religion
+
+    if is_valid_uuid(community_val):
+        from common.models.meta.models import Community
+        real_community = await db.scalar(select(Community.name).where(Community.id == uuid.UUID(str(community_val))))
+        if real_community: community_val = real_community
+
+    if is_valid_uuid(caste_val):
+        from common.models.meta.models import Caste
+        real_caste = await db.scalar(select(Caste.name).where(Caste.id == uuid.UUID(str(caste_val))))
+        if real_caste: caste_val = real_caste
+
     return {
         "id": str(student.id),
-        "name": student.name,
-        "email": getattr(student, "email", None),
-        "father_name": student.father_name,
-        "gender": student.gender,
-        "date_of_birth": student.date_of_birth,
-        "student_mobile": student.student_mobile,
-        "parent_mobile": student.parent_mobile,
-        "aadhaar_number": student.aadhaar_number,
+        "name": get_nested(pers, "name"),
+        "email": get_nested(pers, "email"),
+        "father_name": get_nested(pers, "father_name"),
+        "gender": get_nested(pers, "gender"),
+        "date_of_birth": get_nested(pers, "date_of_birth"),
+        "student_mobile": get_nested(pers, "student_mobile"),
+        "parent_mobile": get_nested(pers, "parent_mobile"),
+        "aadhaar_number": get_nested(pers, "aadhaar_number"),
         "enquiry_number": student.enquiry_number,
         "application_number": student.application_number,
-        "gate_pass_number": student.gate_pass_number,
-        "reference_type": student.reference_type,
-        "religion": student.religion,
-        "community": student.community,
-        "caste": student.caste,
-        "parent_income": float(student.parent_income) if student.parent_income else None,
-        "door_no": student.door_no,
-        "street_name": student.street_name,
-        "village_name": student.village_name,
-        "taluk": student.taluk,
-        "district": student.district,
-        "state": student.state,
-        "pincode": student.pincode,
-        "parent_address": student.parent_address,
-        "permanent_address": student.permanent_address,
-        "campus": student.campus,
-        "has_vehicle": student.has_vehicle,
-        "vehicle_number": student.vehicle_number,
+        "gate_pass_number": get_nested(gate, "gate_pass_number"),
+        "reference_type": get_nested(gate, "reference_type"),
+        "gate_entry_id": str(student.gate_entry_id) if student.gate_entry_id else None,
+        "religion": religion_val,
+        "community": community_val,
+        "caste": caste_val,
+        "parent_income": float(get_nested(pers, "parent_income")) if get_nested(pers, "parent_income") else None,
+        "door_no": get_nested(pers, "door_no"),
+        "street_name": get_nested(pers, "street_name"),
+        "village_name": get_nested(pers, "village_name"),
+        "taluk": get_nested(pers, "taluk"),
+        "district": get_nested(pers, "district"),
+        "state": get_nested(pers, "state"),
+        "pincode": get_nested(pers, "pincode"),
+        "parent_address": get_nested(pers, "parent_address"),
+        "permanent_address": get_nested(pers, "permanent_address"),
+        "campus": get_nested(prog, "campus"),
+        "has_vehicle": get_nested(gate, "vehicle", default=False),
+        "vehicle_number": get_nested(gate, "vehicle_number"),
         "status": student.status,
-        "source": student.source,
+        "source": getattr(student, "source", None),
         "category": student.category,
         "quota_type": student.quota_type,
         "special_quota": student.special_quota,
         "scholarships": student.scholarships,
         "boarding_place": student.boarding_place,
-        "previous_academic_level": student.previous_academic_level,
-        "is_lateral_entry": student.is_lateral_entry,
+        "previous_academic_level": get_nested(prog, "previous_academic_level"),
+        "is_lateral_entry": get_nested(prog, "is_lateral_entry", default=False),
         "roll_number": student.roll_number,
         "section": student.section,
         "current_semester": student.current_semester,
         "enrolled_at": student.enrolled_at,
-        "department_id": str(student.department_id) if student.department_id else None,
+        "department_id": str(get_nested(prog, "department_id")) if get_nested(prog, "department_id") else None,
         "department": dept_name,
-        "course_id": str(student.course_id) if student.course_id else None,
+        "course_id": str(get_nested(prog, "course_id")) if get_nested(prog, "course_id") else None,
         "course": course_title,
-        "institution_id": str(student.institution_id) if student.institution_id else None,
+        "institution_id": str(get_nested(prog, "institution_id")) if get_nested(prog, "institution_id") else None,
         "institution": institution_name,
         "admission_quota_id": str(student.admission_quota_id) if student.admission_quota_id else None,
         "admission_quota": admission_quota_name,
         "admission_type_id": str(student.admission_type_id) if student.admission_type_id else None,
         "admission_type": admission_type_name,
-        "academic_year_id": str(student.academic_year_id) if student.academic_year_id else None,
+        "academic_year_id": str(ay_id_to_check) if ay_id_to_check else None,
         "academic_year": academic_year_name,
-        "sslc_details": obj_to_dict(student.sslc_details),
-        "hsc_details": obj_to_dict(student.hsc_details),
-        "diploma_details": obj_to_dict(student.diploma_details),
-        "pg_details": obj_to_dict(student.pg_details),
+        "sslc_details": get_nested(prev, "sslc"),
+        "hsc_details": get_nested(prev, "hsc"),
+        "diploma_details": get_nested(prev, "diploma"),
+        "pg_details": get_nested(prev, "degree"),
         "consultancy_reference": obj_to_dict(student.consultancy_reference),
-        "staff_reference": obj_to_dict(student.staff_reference),
+        "staff_reference": {**obj_to_dict(student.staff_reference), "staff_name": staff_name} if student.staff_reference else None,
         "student_reference": obj_to_dict(student.student_reference),
         "other_reference": obj_to_dict(student.other_reference),
+        "gate_entry": obj_to_dict(student.gate_entry),
+        "personal_details": obj_to_dict(student.personal_details),
+        "program_details": obj_to_dict(student.program_details),
+        "previous_academic_details": obj_to_dict(student.previous_academic_details),
         "created_at": student.created_at,
         "updated_at": student.updated_at,
         "fee_structure_id": str(student.fee_structure_id) if student.fee_structure_id else None,
@@ -225,6 +278,45 @@ async def get_admission_student(
         "fee_structure_locked_at": student.fee_structure_locked_at,
         "fee_structure_locked_by": str(student.fee_structure_locked_by) if student.fee_structure_locked_by else None
     }
+
+
+@admission_entry_router.get(
+    "/admission-students/by-gate-pass/{gate_pass_no:path}",
+    name="Get Admission Student By Gate Pass",
+    tags=["Admission - Admission Students"],
+)
+async def get_admission_student_by_gate_pass(
+    gate_pass_no: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    normalized_gate_pass = (gate_pass_no or "").strip()
+    if not normalized_gate_pass:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="gate_pass_no is required",
+        )
+
+    query = (
+        select(AdmissionStudent.id)
+        .where(
+            AdmissionStudent.deleted_at.is_(None),
+            AdmissionStudent.gate_entry.has(
+                AdmissionGateEntry.gate_pass_number == normalized_gate_pass
+            ),
+        )
+        .order_by(desc(AdmissionStudent.updated_at), desc(AdmissionStudent.created_at))
+        .limit(1)
+    )
+
+    result = await db.execute(query)
+    student_id = result.scalar_one_or_none()
+    if not student_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Admission student with gate pass {normalized_gate_pass} not found",
+        )
+
+    return await get_admission_student(student_id, db)
 
 
 @admission_entry_router.get(
@@ -242,6 +334,7 @@ async def get_booked_paid_students(
     Return students with status BOOKED or APPLIED (both paid and unpaid invoices).
     """
     try:
+        from common.models.admission.admission_entry import AdmissionStudentPersonalDetails, AdmissionStudentProgramDetails
         # Base filters: student.status == BOOKED or APPLIED
         from sqlalchemy import or_
         filters = [
@@ -255,20 +348,19 @@ async def get_booked_paid_students(
         if q:
             qfilter = f"%{q}%"
             filters.append(
-                (AdmissionStudent.name.ilike(qfilter)) | (AdmissionStudent.application_number.ilike(qfilter))
+                (AdmissionStudentPersonalDetails.name.ilike(qfilter)) | (AdmissionStudent.application_number.ilike(qfilter))
             )
 
         # Total count
-        count_stmt = select(func.count(AdmissionStudent.id)).where(*filters)
+        count_stmt = select(func.count(AdmissionStudent.id)).outerjoin(AdmissionStudentPersonalDetails).where(*filters)
         total_res = await db.execute(count_stmt)
         total = total_res.scalar() or 0
 
         # Paging
         offset = (page - 1) * size
 
-        stmt = select(AdmissionStudent).options(
-            selectinload(AdmissionStudent.department),
-            selectinload(AdmissionStudent.course),
+        stmt = select(AdmissionStudent).outerjoin(AdmissionStudentPersonalDetails).options(
+            selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.department), selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.course), selectinload(AdmissionStudent.personal_details)
         ).where(*filters).order_by(desc(AdmissionStudent.created_at)).offset(offset).limit(size)
         res = await db.execute(stmt)
         students = res.scalars().all()
@@ -294,18 +386,21 @@ async def get_booked_paid_students(
 
             dept_name = None
             course_title = None
-            if getattr(s, "department", None):
-                dept_name = getattr(s.department, "name", None)
-            if getattr(s, "course", None):
-                course_title = getattr(s.course, "title", None)
-
+            pd = getattr(s, "program_details", None)
+            if pd and getattr(pd, "department", None):
+                dept_name = getattr(pd.department, "name", None)
+            if pd and getattr(pd, "course", None):
+                course_title = getattr(pd.course, "title", None)
+                
             fs_id_str = str(s.fee_structure_id) if getattr(s, "fee_structure_id", None) else None
+            
+            s_name = getattr(s.personal_details, "name", None) if getattr(s, "personal_details", None) else getattr(s, "name", None)
 
             items.append(
                 {
                     "id": str(s.id),
                     "application_number": s.application_number,
-                    "name": s.name,
+                    "name": s_name,
                     "department": dept_name,
                     "course": course_title,
                     "booking_date": s.created_at.isoformat() if getattr(s, "created_at", None) else None,
@@ -341,6 +436,7 @@ async def get_applied_students(
     Return students with status APPLIED.
     """
     try:
+        from common.models.admission.admission_entry import AdmissionStudentPersonalDetails, AdmissionStudentProgramDetails
         from sqlalchemy import or_
         filters = [
             or_(
@@ -353,20 +449,19 @@ async def get_applied_students(
         if q:
             qfilter = f"%{q}%"
             filters.append(
-                (AdmissionStudent.name.ilike(qfilter)) | (AdmissionStudent.application_number.ilike(qfilter))
+                (AdmissionStudentPersonalDetails.name.ilike(qfilter)) | (AdmissionStudent.application_number.ilike(qfilter))
             )
 
         # Total count
-        count_stmt = select(func.count(AdmissionStudent.id)).where(*filters)
+        count_stmt = select(func.count(AdmissionStudent.id)).outerjoin(AdmissionStudentPersonalDetails).where(*filters)
         total_res = await db.execute(count_stmt)
         total = total_res.scalar() or 0
 
         # Paging
         offset = (page - 1) * size
 
-        stmt = select(AdmissionStudent).options(
-            selectinload(AdmissionStudent.department),
-            selectinload(AdmissionStudent.course),
+        stmt = select(AdmissionStudent).outerjoin(AdmissionStudentPersonalDetails).options(
+            selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.department), selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.course), selectinload(AdmissionStudent.personal_details)
         ).where(*filters).order_by(desc(AdmissionStudent.created_at)).offset(offset).limit(size)
         res = await db.execute(stmt)
         students = res.scalars().all()
@@ -385,18 +480,21 @@ async def get_applied_students(
         for s in students:
             dept_name = None
             course_title = None
-            if getattr(s, "department", None):
-                dept_name = getattr(s.department, "name", None)
-            if getattr(s, "course", None):
-                course_title = getattr(s.course, "title", None)
-
+            pd = getattr(s, "program_details", None)
+            if pd and getattr(pd, "department", None):
+                dept_name = getattr(pd.department, "name", None)
+            if pd and getattr(pd, "course", None):
+                course_title = getattr(pd.course, "title", None)
+                
             fs_id_str = str(s.fee_structure_id) if getattr(s, "fee_structure_id", None) else None
+            
+            s_name = getattr(s.personal_details, "name", None) if getattr(s, "personal_details", None) else getattr(s, "name", None)
 
             items.append(
                 {
                     "id": str(s.id),
                     "application_number": s.application_number,
-                    "name": s.name,
+                    "name": s_name,
                     "department": dept_name,
                     "course": course_title,
                     "enrollment_date": s.created_at.isoformat() if getattr(s, "created_at", None) else None,
@@ -446,11 +544,11 @@ async def set_temporary_fee_structure(
 
         # Check if student is in allowed status
         current_status = student.status
-        allowed_statuses = {"BOOKED", "APPLIED"}
+        allowed_statuses = {"BOOKED", "APPLIED", "PROVISIONALLY_ALLOTTED", "ENROLLED"}
         if current_status not in allowed_statuses:
             raise HTTPException(
                 status_code=400,
-                detail=f"Fee structure can only be set for BOOKED or APPLIED students, current status: {current_status}",
+                detail=f"Fee structure can be set for BOOKED, APPLIED, PROVISIONALLY_ALLOTTED, or ENROLLED students, current status: {current_status}",
             )
 
         # Check if already locked
@@ -478,7 +576,7 @@ async def set_temporary_fee_structure(
         return {
             "id": str(updated_student.id),
             "application_number": updated_student.application_number,
-            "name": updated_student.name,
+            "name": getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None),
             "fee_structure_id": str(updated_student.fee_structure_id) if updated_student.fee_structure_id else None,
             "is_fee_structure_locked": getattr(updated_student, "is_fee_structure_locked", False),
             "status": updated_student.status,
@@ -546,7 +644,7 @@ async def provisionally_allot_student(
         return {
             "id": str(updated_student.id),
             "application_number": updated_student.application_number,
-            "name": updated_student.name,
+            "name": getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None),
             "status": updated_student.status,
             "fee_structure_id": str(updated_student.fee_structure_id) if updated_student.fee_structure_id else None,
             "is_fee_structure_locked": getattr(updated_student, "is_fee_structure_locked", False),
@@ -580,6 +678,7 @@ async def list_admission_students(
     try:
         import json
         import logging
+        from common.models.admission.admission_entry import AdmissionStudentPersonalDetails, AdmissionGateEntry, AdmissionStudentProgramDetails
         logger = logging.getLogger(__name__)
         
         # Build base query
@@ -590,14 +689,14 @@ async def list_admission_students(
             search_pattern = f"%{search}%"
             query_filters.append(
                 or_(
-                    AdmissionStudent.name.ilike(search_pattern),
-                    AdmissionStudent.gate_pass_number.ilike(search_pattern),
+                    AdmissionStudentPersonalDetails.name.ilike(search_pattern),
+                    AdmissionGateEntry.gate_pass_number.ilike(search_pattern),
                     AdmissionStudent.enquiry_number.ilike(search_pattern),
                     AdmissionStudent.application_number.ilike(search_pattern),
                     AdmissionStudent.roll_number.ilike(search_pattern),
-                    AdmissionStudent.student_mobile.ilike(search_pattern),
-                    AdmissionStudent.parent_mobile.ilike(search_pattern),
-                    AdmissionStudent.father_name.ilike(search_pattern),
+                    AdmissionStudentPersonalDetails.student_mobile.ilike(search_pattern),
+                    AdmissionStudentPersonalDetails.parent_mobile.ilike(search_pattern),
+                    AdmissionStudentPersonalDetails.father_name.ilike(search_pattern),
                 )
             )
         
@@ -625,19 +724,20 @@ async def list_admission_students(
 
                 def parse_condition(field_name, operator, raw_value):
                     string_columns = {
-                        "name": AdmissionStudent.name,
+                        "name": AdmissionStudentPersonalDetails.name,
                         "enquiry_number": AdmissionStudent.enquiry_number,
                         "application_number": AdmissionStudent.application_number,
                         "roll_number": AdmissionStudent.roll_number,
-                        "student_mobile": AdmissionStudent.student_mobile,
-                        "parent_mobile": AdmissionStudent.parent_mobile,
-                        "father_name": AdmissionStudent.father_name,
+                        "student_mobile": AdmissionStudentPersonalDetails.student_mobile,
+                        "parent_mobile": AdmissionStudentPersonalDetails.parent_mobile,
+                        "father_name": AdmissionStudentPersonalDetails.father_name,
+                        "gate_pass_number": AdmissionGateEntry.gate_pass_number,
                     }
 
                     uuid_columns = {
-                        "institution_id": AdmissionStudent.institution_id,
-                        "department_id": AdmissionStudent.department_id,
-                        "course_id": AdmissionStudent.course_id,
+                        "institution_id": AdmissionStudentProgramDetails.institution_id,
+                        "department_id": AdmissionStudentProgramDetails.department_id,
+                        "course_id": AdmissionStudentProgramDetails.course_id,
                         "academic_year_id": AdmissionStudent.academic_year_id,
                     }
 
@@ -792,22 +892,24 @@ async def list_admission_students(
                 pass
         
         # Count total
-        count_query = select(func.count(AdmissionStudent.id)).where(and_(*query_filters))
+        count_query = select(func.count(AdmissionStudent.id)).outerjoin(AdmissionStudentPersonalDetails).outerjoin(AdmissionStudentProgramDetails).outerjoin(AdmissionGateEntry).where(and_(*query_filters))
         count_result = await db.execute(count_query)
         total = count_result.scalar() or 0
         
         # Fetch paginated data
         offset = (page - 1) * size
-        data_query = select(AdmissionStudent).options(
-            selectinload(AdmissionStudent.department),
-            selectinload(AdmissionStudent.course),
+        data_query = select(AdmissionStudent).outerjoin(AdmissionStudentPersonalDetails).outerjoin(AdmissionStudentProgramDetails).outerjoin(AdmissionGateEntry).options(
+            selectinload(AdmissionStudent.program_details), 
+            selectinload(AdmissionStudent.personal_details),
+            selectinload(AdmissionStudent.previous_academic_details),
+            selectinload(AdmissionStudent.gate_entry)
         ).where(and_(*query_filters)).order_by(desc(AdmissionStudent.created_at)).offset(offset).limit(size)
         
         result = await db.execute(data_query)
         students = result.scalars().all()
         
-        department_ids = {student.department_id for student in students if student.department_id}
-        course_ids = {student.course_id for student in students if student.course_id}
+        department_ids = {student.program_details.department_id for student in students if student.program_details and student.program_details.department_id}
+        course_ids = {student.program_details.course_id for student in students if student.program_details and student.program_details.course_id}
         academic_year_ids = {student.academic_year_id for student in students if student.academic_year_id}
 
         department_name_map = {}
@@ -852,8 +954,32 @@ async def list_admission_students(
                 else:
                     student_dict[column.name] = value
 
-            student_dict["department_name"] = department_name_map.get(str(student.department_id))
-            student_dict["course_title"] = course_title_map.get(str(student.course_id))
+            # Serialize relationships
+            def serialize_model(model_obj):
+                if not model_obj:
+                    return None
+                model_dict = {}
+                m_mapper = inspect(model_obj.__class__)
+                for col in m_mapper.columns:
+                    val = getattr(model_obj, col.name)
+                    if hasattr(val, 'isoformat'):
+                        model_dict[col.name] = val.isoformat()
+                    elif hasattr(val, 'value'):
+                        model_dict[col.name] = val.value
+                    elif hasattr(val, 'hex'):
+                        model_dict[col.name] = str(val)
+                    else:
+                        model_dict[col.name] = val
+                return model_dict
+
+            student_dict["personal_details"] = serialize_model(student.personal_details)
+            student_dict["program_details"] = serialize_model(student.program_details)
+            student_dict["previous_academic_details"] = serialize_model(student.previous_academic_details)
+            student_dict["gate_entry"] = serialize_model(student.gate_entry)
+            student_dict["gate_pass_number"] = getattr(student.gate_entry, "gate_pass_number", None) if getattr(student, "gate_entry", None) else None
+
+            student_dict["department_name"] = department_name_map.get(str(student.program_details.department_id)) if student.program_details and getattr(student.program_details, 'department_id', None) else None
+            student_dict["course_title"] = course_title_map.get(str(student.program_details.course_id)) if student.program_details and getattr(student.program_details, 'course_id', None) else None
             student_dict["academic_year_name"] = academic_year_name_map.get(str(student.academic_year_id))
 
             student_dicts.append(student_dict)
@@ -926,27 +1052,6 @@ async def bulk_update_admission_student_status(
         current_status = student.status.value if hasattr(student.status, "value") else str(student.status)
 
         if current_status == "PROVISIONALLY_ALLOTTED":
-            if not getattr(student, "is_fee_structure_locked", False):
-                try:
-                    await billing_service.lock_student_fee_structure(db, student.id)
-                    changes_made += 1
-                    results.append(
-                        BulkAdmissionStatusUpdateResult(
-                            student_id=student_id,
-                            success=True,
-                            message="Already in PROVISIONALLY_ALLOTTED status; fee structure locked",
-                        )
-                    )
-                except Exception as exc:
-                    results.append(
-                        BulkAdmissionStatusUpdateResult(
-                            student_id=student_id,
-                            success=False,
-                            message=f"Already provisionally allotted but fee lock failed: {exc}",
-                        )
-                    )
-                continue
-
             results.append(
                 BulkAdmissionStatusUpdateResult(
                     student_id=student_id,
@@ -962,18 +1067,6 @@ async def bulk_update_admission_student_status(
                     student_id=student_id,
                     success=False,
                     message=f"Invalid transition from {current_status}",
-                )
-            )
-            continue
-
-        try:
-            await billing_service.lock_student_fee_structure(db, student.id)
-        except Exception as exc:
-            results.append(
-                BulkAdmissionStatusUpdateResult(
-                    student_id=student_id,
-                    success=False,
-                    message=f"Fee structure lock failed: {exc}",
                 )
             )
             continue
@@ -1139,11 +1232,6 @@ async def reinstate_student(
     if cur != AdmissionStatusEnum.WAITLISTED.value:
         raise HTTPException(status_code=400, detail=f"Cannot reinstate from {cur}; must be WAITLISTED")
 
-    try:
-        await billing_service.lock_student_fee_structure(db, student.id)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"Fee structure lock failed: {exc}")
-
     student.status = AdmissionStatusEnum.PROVISIONALLY_ALLOTTED
     await db.commit()
     return {"message": "Student reinstated to PROVISIONALLY_ALLOTTED", "student_id": str(student_id)}
@@ -1169,167 +1257,6 @@ admission_entry_router.include_router(
     admission_entry_crud_router_no_list, prefix="/admission-students", tags=["Admission - Admission Students"]
 )
 
-# Custom POST endpoint for granting admission
-@admission_entry_router.post(
-    "/admission-students",
-    status_code=status.HTTP_201_CREATED,
-    tags=["Admission - Admission Students"],
-    name="Create Admission Student",
-    description="Create an admission student record and update the visitor status to APPLIED"
-)
-async def create_admission_student(
-    payload: AdmissionStudentGrantAdmission,
-    db: AsyncSession = Depends(get_db_session)
-):
-    """
-    Create admission student record with automatic application number generation.
-    
-    If visitor_id is provided (i.e. the student came from a gate enquiry):
-    1. Finds the existing AdmissionStudent record (source=GATE_ENQUIRY)
-    2. Updates it with the new payload data and promotes status to ENQUIRED
-    
-    If visitor_id is not provided (direct entry):
-    1. Creates a new AdmissionStudent record (source=DIRECT_ENTRY)
-    
-    Args:
-        payload: Admission student details (may include visitor_id)
-        
-    Returns:
-        Created / updated admission student record
-    """
-    try:
-        visitor_id = payload.visitor_id
-        
-        if visitor_id:
-            # Promote existing gate-enquiry record
-            result = await db.execute(
-                select(AdmissionStudent).where(AdmissionStudent.id == visitor_id)
-            )
-            admission_student = result.scalar_one_or_none()
-            
-            if not admission_student:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Gate enquiry record with ID {visitor_id} not found"
-                )
-            
-            # Generate enquiry number if not already set
-            if not admission_student.enquiry_number:
-                admission_student.enquiry_number = await generate_enquiry_number(
-                    db, admission_student.institution_id
-                )
-            
-            # Update fields from payload
-            update_data = payload.dict(exclude_unset=True)
-            update_data.pop("visitor_id", None)
-            
-            if "status" not in update_data or update_data["status"] is None:
-                update_data["status"] = AdmissionStatusEnum.ENQUIRED.value
-            
-            # Handle nested relationships
-            mapper = inspect(AdmissionStudent)
-            for rel_name, rel in mapper.relationships.items():
-                if rel_name in update_data and update_data[rel_name] is not None:
-                    rel_data = update_data.pop(rel_name)
-                    related_model = rel.mapper.class_
-                    if not rel.uselist and isinstance(rel_data, dict):
-                        setattr(admission_student, rel_name, related_model(**rel_data))
-                    elif rel.uselist and isinstance(rel_data, list):
-                        setattr(admission_student, rel_name, [
-                            related_model(**item) if isinstance(item, dict) else item
-                            for item in rel_data
-                        ])
-                elif rel_name in update_data:
-                    update_data.pop(rel_name)
-            
-            for field, value in update_data.items():
-                setattr(admission_student, field, value)
-            
-            await db.commit()
-            await db.refresh(admission_student)
-            
-            # Return as dict to avoid circular reference encoding issues
-            return {
-                "id": str(admission_student.id),
-                "name": admission_student.name,
-                "email": admission_student.email,
-                "student_mobile": admission_student.student_mobile,
-                "enquiry_number": admission_student.enquiry_number,
-                "application_number": admission_student.application_number,
-                "status": admission_student.status,
-                "source": admission_student.source,
-                "department_id": str(admission_student.department_id) if admission_student.department_id else None,
-                "course_id": str(admission_student.course_id) if admission_student.course_id else None,
-                "institution_id": str(admission_student.institution_id) if admission_student.institution_id else None,
-                "created_at": admission_student.created_at,
-                "updated_at": admission_student.updated_at,
-                "fee_structure_id": str(admission_student.fee_structure_id) if admission_student.fee_structure_id else None,
-                "is_fee_structure_locked": admission_student.is_fee_structure_locked,
-                "fee_structure_locked_at": admission_student.fee_structure_locked_at,
-                "fee_structure_locked_by": str(admission_student.fee_structure_locked_by) if admission_student.fee_structure_locked_by else None
-            }
-        
-        else:
-            # Direct entry — create new record
-            enquiry_number = await generate_enquiry_number(db)
-            
-            student_data = payload.dict(exclude_unset=True)
-            student_data.pop("visitor_id", None)
-            student_data["enquiry_number"] = enquiry_number
-            student_data.setdefault("source", SourceEnum.DIRECT_ENTRY.value)
-            
-            if "status" not in student_data or student_data["status"] is None:
-                student_data["status"] = AdmissionStatusEnum.ENQUIRED.value
-            
-            # Handle nested relationships
-            mapper = inspect(AdmissionStudent)
-            for rel_name, rel in mapper.relationships.items():
-                if rel_name in student_data and student_data[rel_name] is not None:
-                    rel_data = student_data[rel_name]
-                    related_model = rel.mapper.class_
-                    if not rel.uselist and isinstance(rel_data, dict):
-                        student_data[rel_name] = related_model(**rel_data)
-                    elif rel.uselist and isinstance(rel_data, list):
-                        student_data[rel_name] = [
-                            related_model(**item) if isinstance(item, dict) else item
-                            for item in rel_data
-                        ]
-            
-            admission_student = AdmissionStudent(**student_data)
-            db.add(admission_student)
-            await db.commit()
-            await db.refresh(admission_student)
-            
-            # Return as dict to avoid circular reference encoding issues
-            return {
-                "id": str(admission_student.id),
-                "name": admission_student.name,
-                "email": admission_student.email,
-                "student_mobile": admission_student.student_mobile,
-                "enquiry_number": admission_student.enquiry_number,
-                "application_number": admission_student.application_number,
-                "status": admission_student.status,
-                "source": admission_student.source,
-                "department_id": str(admission_student.department_id) if admission_student.department_id else None,
-                "course_id": str(admission_student.course_id) if admission_student.course_id else None,
-                "institution_id": str(admission_student.institution_id) if admission_student.institution_id else None,
-                "created_at": admission_student.created_at,
-                "updated_at": admission_student.updated_at,
-                "fee_structure_id": str(admission_student.fee_structure_id) if admission_student.fee_structure_id else None,
-                "is_fee_structure_locked": admission_student.is_fee_structure_locked,
-                "fee_structure_locked_at": admission_student.fee_structure_locked_at,
-                "fee_structure_locked_by": str(admission_student.fee_structure_locked_by) if admission_student.fee_structure_locked_by else None
-            }
-        
-    except HTTPException:
-        await db.rollback()
-        raise
-    except Exception as e:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to create admission student: {str(e)}"
-        )
 
 
 # Dashboard Analytics Endpoints
@@ -1410,13 +1337,14 @@ async def get_admission_dashboard_metrics(
     total_app = total_applied.scalar()
     conversion_rate = round((total_app / total_enq * 100), 2) if total_enq > 0 else 0
     
-    # Source breakdown (from AdmissionStudent reference_type)
+    # Source breakdown (from AdmissionGateEntry reference_type)
+    from common.models.admission.admission_entry import AdmissionGateEntry
     stmt_source = select(
-        AdmissionStudent.reference_type,
+        AdmissionGateEntry.reference_type,
         func.count(AdmissionStudent.id)
-    ).where(
-        AdmissionStudent.reference_type.isnot(None)
-    ).group_by(AdmissionStudent.reference_type)
+    ).join(AdmissionStudent, AdmissionStudent.gate_entry_id == AdmissionGateEntry.id).where(
+        AdmissionGateEntry.reference_type.isnot(None)
+    ).group_by(AdmissionGateEntry.reference_type)
     
     res_source = await db.execute(stmt_source)
     source_breakdown = {str(ref_type): count for ref_type, count in res_source.all() if ref_type}
@@ -1456,27 +1384,16 @@ async def get_enquiry_reports(
     from datetime import datetime
     
     # Build query for AdmissionStudents
-    query_students = select(AdmissionStudent)
-    
-    if start_date:
-        try:
-            start = datetime.fromisoformat(start_date)
-            query_students = query_students.where(AdmissionStudent.created_at >= start)
-        except ValueError:
-            pass
-    
-    if end_date:
-        try:
-            end = datetime.fromisoformat(end_date)
-            query_students = query_students.where(AdmissionStudent.created_at <= end)
-        except ValueError:
-            pass
-    
-    if status:
-        query_students = query_students.where(AdmissionStudent.status == status)
-    
+    from common.models.admission.admission_entry import AdmissionGateEntry, AdmissionStudentPersonalDetails
+    query_students = select(AdmissionStudent).outerjoin(AdmissionGateEntry).outerjoin(AdmissionStudentPersonalDetails).options(
+        selectinload(AdmissionStudent.personal_details),
+        selectinload(AdmissionStudent.gate_entry)
+    )
+    if source:
+        # source doesn't exist, ignore or filter on reference_type
+        pass
     if reference_type:
-        query_students = query_students.where(AdmissionStudent.reference_type == reference_type)
+        query_students = query_students.where(AdmissionGateEntry.reference_type == reference_type)
     
     res_students = await db.execute(query_students)
     students = res_students.scalars().all()
@@ -1485,11 +1402,11 @@ async def get_enquiry_reports(
     all_enquiries = [{
         "id": str(s.id),
         "enquiry_number": s.enquiry_number,
-        "name": s.name,
-        "mobile": s.student_mobile,
+        "name": s.personal_details.name if getattr(s, "personal_details", None) else None,
+        "mobile": s.personal_details.student_mobile if getattr(s, "personal_details", None) else None,
         "status": s.status,
-        "source": s.source.value if s.source else None,
-        "reference_type": s.reference_type,
+        "source": getattr(s, "source", None).value if getattr(s, "source", None) else None,
+        "reference_type": getattr(s.gate_entry, "reference_type", None) if getattr(s, "gate_entry", None) else None,
         "created_at": s.created_at.isoformat() if s.created_at else None,
     } for s in students]
     
@@ -1514,6 +1431,7 @@ async def get_reference_summary(
     from common.models.gate.visitor_model import ConsultancyReference, StaffReference
     from common.models.admission.consultancy import Consultancy
     from common.models.master.institution import Staff, Department
+    from common.models.admission.admission_entry import AdmissionStudentProgramDetails
 
     base_filters = [AdmissionStudent.deleted_at.is_(None)]
 
@@ -1528,7 +1446,7 @@ async def get_reference_summary(
         except ValueError:
             pass
     if institution_id:
-        base_filters.append(AdmissionStudent.institution_id == institution_id)
+        base_filters.append(AdmissionStudentProgramDetails.institution_id == institution_id)
 
     # Consultancy summary
     consultancy_stmt = (
@@ -1539,6 +1457,7 @@ async def get_reference_summary(
         )
         .join(ConsultancyReference, ConsultancyReference.consultancy_id == Consultancy.id)
         .join(AdmissionStudent, AdmissionStudent.id == ConsultancyReference.student_id)
+        .outerjoin(AdmissionStudentProgramDetails, AdmissionStudentProgramDetails.admission_student_id == AdmissionStudent.id)
         .where(*base_filters)
         .group_by(Consultancy.id, Consultancy.name)
         .order_by(func.count(AdmissionStudent.id).desc())
@@ -1560,6 +1479,7 @@ async def get_reference_summary(
         )
         .join(StaffReference, StaffReference.staff_id == Staff.id)
         .join(AdmissionStudent, AdmissionStudent.id == StaffReference.student_id)
+        .outerjoin(AdmissionStudentProgramDetails, AdmissionStudentProgramDetails.admission_student_id == AdmissionStudent.id)
         .outerjoin(Department, Department.id == Staff.department_id)
         .where(*base_filters)
         .group_by(Staff.id, Staff.name, Staff.designation, Department.name)
@@ -1612,8 +1532,6 @@ async def get_reference_details(
     """
     from datetime import datetime as dt
     from common.models.gate.visitor_model import ConsultancyReference, StaffReference
-    from common.models.admission.consultancy import Consultancy
-    from common.models.master.institution import Staff
 
     filters = [AdmissionStudent.deleted_at.is_(None)]
 
@@ -1660,7 +1578,7 @@ async def get_reference_details(
 
     # Paginated data
     offset = (page - 1) * size
-    stmt = stmt.order_by(desc(AdmissionStudent.created_at)).offset(offset).limit(size)
+    stmt = stmt.options(selectinload(AdmissionStudent.personal_details), selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.department), selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.course), selectinload(AdmissionStudent.personal_details), selectinload(AdmissionStudent.gate_entry)).order_by(desc(AdmissionStudent.created_at)).offset(offset).limit(size)
     result = await db.execute(stmt)
     students = result.scalars().all()
 
@@ -1668,15 +1586,15 @@ async def get_reference_details(
         {
             "id": str(s.id),
             "enquiry_number": s.enquiry_number,
-            "name": s.name,
-            "mobile": s.student_mobile,
-            "parent_name": s.father_name,
-            "native_place": s.native_place,
+            "name": s.personal_details.name if s.personal_details else None,
+            "mobile": s.personal_details.student_mobile if s.personal_details else None,
+            "parent_name": s.personal_details.father_name if s.personal_details else None,
+            "native_place": getattr(s.gate_entry, "native_place", None) if s.gate_entry else None,
             "status": s.status.value if hasattr(s.status, "value") else s.status,
-            "reference_type": s.reference_type,
+            "reference_type": getattr(s.gate_entry, "reference_type", None) if s.gate_entry else None,
             "created_at": s.created_at.isoformat() if s.created_at else None,
-            "institution_id": str(s.institution_id) if s.institution_id else None,
-            "department_id": str(s.department_id) if s.department_id else None,
+            "institution_id": str(s.program_details.institution_id) if s.program_details and s.program_details.institution_id else None,
+            "department_id": str(s.program_details.department_id) if s.program_details and s.program_details.department_id else None,
         }
         for s in students
     ]
@@ -1798,21 +1716,21 @@ async def get_applied_admission_students(
     return [
         {
             "id": str(s.id),
-            "name": s.name,
+            "name": s.personal_details.name if s.personal_details else None,
             "enquiry_number": s.enquiry_number,
             "application_number": s.application_number,
             "status": s.status,
-            "student_mobile": s.student_mobile,
-            "department_id": str(s.department_id) if s.department_id else None,
-            "course_id": str(s.course_id) if s.course_id else None,
-            "institution_id": str(s.institution_id) if s.institution_id else None,
+            "student_mobile": s.personal_details.student_mobile if s.personal_details else None,
+            "department_id": str(s.program_details.department_id) if s.program_details and s.program_details.department_id else None,
+            "course_id": str(s.program_details.course_id) if s.program_details and s.program_details.course_id else None,
+            "institution_id": str(s.program_details.institution_id) if s.program_details and s.program_details.institution_id else None,
         }
         for s in students
     ]
 
 
 # Import schemas
-from common.schemas.admission.admission_entry import BookAdmissionRequest, BookAdmissionResponse, UpdateCourseRequest
+from common.schemas.admission.admission_entry import BookAdmissionResponse, UpdateCourseRequest
 from apps.billing.services import billing_service
 
 @admission_router.post(
@@ -1826,91 +1744,46 @@ async def book_admission(
     db: AsyncSession = Depends(get_db_session)
 ):
     # 1. Fetch Student
-    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+    stmt = select(AdmissionStudent).options(selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.department), selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.course), selectinload(AdmissionStudent.personal_details)).where(AdmissionStudent.id == student_id)
     res = await db.execute(stmt)
     student = res.scalar_one_or_none()
     
     if not student:
         raise HTTPException(status_code=404, detail="Student not found")
         
-    if student.application_number:
-        raise HTTPException(status_code=400, detail="Admission already booked (App Number exists)")
-        
+    def _build_response(s):
+        return {
+            "id": s.id,
+            "application_number": s.application_number,
+            "status": s.status,
+            "enquiry_number": s.enquiry_number,
+            "name": s.personal_details.name if s.personal_details else ""
+        }
+
+    if getattr(student, "application_number", None):
+        return _build_response(student)
+
     try:
-        # 2. Generate App Number
-        app_num = await billing_service.generate_application_number(db, student.institution_id)
-        student.application_number = app_num
-        student.status = AdmissionStatusEnum.BOOKED.value  # Changed to BOOKED status
-        db.add(student)  # Ensure student record is tracked
-        
-        # 3. Assign Fees (Auto-resolve if not provided) - Non-critical, log but don't fail
-        try:
-            await billing_service.assign_course_fees(db, student_id, fee_structure_id=None)
-        except Exception as fee_err:
-            logger.warning(f"Failed to assign course fees for student {student_id}: {str(fee_err)}")
-        
-        # 4. Assign Application Fee (if configured) - Non-critical
-        try:
-            demand = await billing_service.assign_application_fee(db, student_id)
-            if demand:
-                # Auto-Invoice the application fee for Cash Counter availability
-                await billing_service.create_invoice_from_demands(db, [demand])
-        except Exception as app_fee_err:
-            logger.warning(f"Failed to assign application fee for student {student_id}: {str(app_fee_err)}")
-        
-        await db.commit()
-        await db.refresh(student)
-        
-        # Return response with only essential data to avoid circular references
-        return BookAdmissionResponse(
-            id=student.id,
-            application_number=student.application_number,
-            status=student.status,
-            enquiry_number=student.enquiry_number,
-            name=student.name
-        )
-    except Exception as e:
-        await db.rollback()
-        logger.error(f"Book admission failed for student {student_id}: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=400, detail=f"Failed to book admission: {str(e)}")
+        if not student.program_details or not student.program_details.institution_id:
+            raise ValueError("Student missing program details or institution_id")
 
+        # 2. Generate Application Number
+        app_no = await billing_service.generate_application_number(db, student.program_details.institution_id)
+        student.application_number = app_no
 
-@admission_router.post(
-    "/admission-students/{student_id}/update-course",
-    tags=["Admission - Admission Students"],
-    summary="Update Course & Re-assign Fees"
-)
-async def update_course_and_fees(
-    student_id: UUID,
-    payload: UpdateCourseRequest,
-    db: AsyncSession = Depends(get_db_session)
-):
-    # 1. Fetch Student
-    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
-    res = await db.execute(stmt)
-    student = res.scalar_one_or_none()
-    
-    if not student:
-        raise HTTPException(status_code=404, detail="Student not found")
-
-    if getattr(student, "is_fee_structure_locked", False):
-        raise HTTPException(
-            status_code=400,
-            detail="Fee structure is locked for this student. Course/department change is not allowed.",
-        )
-        
-    try:
-        # 2. Update Student Course/Department
-        student.course_id = payload.course_id
-        if payload.department_id:
-            student.department_id = payload.department_id
+        # 3. Mark Status as BOOKED
+        if student.status in [AdmissionStatusEnum.ENQUIRY.value, AdmissionStatusEnum.ENQUIRED.value]:
+            student.status = AdmissionStatusEnum.BOOKED.value
             
-        # 3. Handle Fee Logic
-        await billing_service.handle_course_change(db, student_id, payload.fee_structure_id)
+        # 4. Handle Fee Logic
+        demand_item = await billing_service.assign_application_fee(db, student.id)
+        if demand_item:
+            await db.flush()
+            await billing_service.create_invoice_from_demands(db, [demand_item])
         
         await db.commit()
         await db.refresh(student)
-        return _serialize_admission_student(student)
+        return _build_response(student)
     except Exception as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
@@ -1998,7 +1871,7 @@ async def assign_roll_number(
     payload: AssignRollNumberRequest,
     db: AsyncSession = Depends(get_db_session)
 ):
-    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+    stmt = select(AdmissionStudent).options(selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.department), selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.course), selectinload(AdmissionStudent.personal_details)).where(AdmissionStudent.id == student_id)
     res = await db.execute(stmt)
     student = res.scalar_one_or_none()
 
@@ -2009,10 +1882,16 @@ async def assign_roll_number(
     if not roll_number:
         raise HTTPException(status_code=400, detail="roll_number cannot be empty")
 
-    duplicate_stmt = select(AdmissionStudent.id).where(
-        AdmissionStudent.id != student_id,
-        AdmissionStudent.institution_id == student.institution_id,
-        AdmissionStudent.roll_number == roll_number,
+    inst_id = student.program_details.institution_id if student.program_details else None
+
+    duplicate_stmt = (
+        select(AdmissionStudent.id)
+        .join(AdmissionStudentProgramDetails, AdmissionStudentProgramDetails.admission_student_id == AdmissionStudent.id)
+        .where(
+            AdmissionStudent.id != student_id,
+            AdmissionStudentProgramDetails.institution_id == inst_id,
+            AdmissionStudent.roll_number == roll_number,
+        )
     )
     duplicate_res = await db.execute(duplicate_stmt)
     if duplicate_res.scalar_one_or_none():
@@ -2066,7 +1945,7 @@ async def activate_sem1(
     payload: ActivateSem1Request,
     db: AsyncSession = Depends(get_db_session)
 ):
-    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+    stmt = select(AdmissionStudent).options(selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.department), selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.course), selectinload(AdmissionStudent.personal_details)).where(AdmissionStudent.id == student_id)
     res = await db.execute(stmt)
     student = res.scalar_one_or_none()
 
@@ -2088,10 +1967,16 @@ async def activate_sem1(
             detail="roll_number and section are required to activate Sem1",
         )
 
-    duplicate_stmt = select(AdmissionStudent.id).where(
-        AdmissionStudent.id != student_id,
-        AdmissionStudent.institution_id == student.institution_id,
-        AdmissionStudent.roll_number == roll_number,
+    inst_id = student.program_details.institution_id if student.program_details else None
+
+    duplicate_stmt = (
+        select(AdmissionStudent.id)
+        .join(AdmissionStudentProgramDetails, AdmissionStudentProgramDetails.admission_student_id == AdmissionStudent.id)
+        .where(
+            AdmissionStudent.id != student_id,
+            AdmissionStudentProgramDetails.institution_id == inst_id,
+            AdmissionStudent.roll_number == roll_number,
+        )
     )
     duplicate_res = await db.execute(duplicate_stmt)
     if duplicate_res.scalar_one_or_none():

@@ -1,7 +1,7 @@
 from uuid import UUID
 from datetime import datetime
 from components.db.base_model import Base
-from sqlalchemy import ForeignKey, String, DateTime, Boolean
+from sqlalchemy import ForeignKey, String, DateTime
 from sqlalchemy import JSON, Numeric, Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

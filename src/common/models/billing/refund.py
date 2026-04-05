@@ -13,7 +13,6 @@ from sqlalchemy import (
     Text,
     Enum as SAEnum,
     JSON,
-    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 

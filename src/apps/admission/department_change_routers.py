@@ -2,7 +2,7 @@
 API Routers for Department Change Requests
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Request
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import select, and_, or_
 from sqlalchemy.orm import selectinload
 from datetime import datetime
 from uuid import UUID
@@ -16,9 +16,7 @@ from common.models.admission.admission_entry import AdmissionStudent, AdmissionS
 from common.models.master.institution import Department
 from common.schemas.admission.department_change import (
     DepartmentChangeRequestCreate,
-    DepartmentChangeRequestUpdate,
     DepartmentChangeRequestResponse,
-    DepartmentChangeRequestListResponse,
     ApproveRejectRequest,
 )
 from components.db.db import get_db_session
@@ -321,7 +319,7 @@ async def approve_department_change_request(
         )
 
     # Update student's department
-    student_query = select(AdmissionStudent).where(
+    student_query = select(AdmissionStudent).options(selectinload(AdmissionStudent.program_details)).where(
         AdmissionStudent.id == change_request.student_id
     )
     result = await db.execute(student_query)
@@ -339,7 +337,8 @@ async def approve_department_change_request(
             detail="Department change cannot be approved because the student's fee structure is locked.",
         )
 
-    student.department_id = change_request.requested_department_id
+    if getattr(student, "program_details", None):
+        student.program_details.department_id = change_request.requested_department_id
     student.updated_at = datetime.utcnow()
 
     # Handle fee/demand changes for the student after department change

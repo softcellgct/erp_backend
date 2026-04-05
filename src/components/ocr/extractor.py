@@ -4,7 +4,7 @@ Handles extraction of structured data from document images using Tesseract and P
 """
 import re
 import logging
-from typing import Dict, Optional, List, Tuple
+from typing import Dict, Optional, List
 from PIL import Image
 import io
 

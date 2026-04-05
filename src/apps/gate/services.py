@@ -5,19 +5,14 @@ from datetime import date, datetime, time, timezone
 from io import StringIO
 from uuid import UUID
 
+from fastapi import HTTPException
 from fastapi_pagination import Params
 from fastapi_pagination.ext.sqlalchemy import paginate
 from sqlalchemy import and_, asc, desc, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
-from common.models.admission.admission_entry import (
-    AdmissionStudent,
-    AdmissionStatusEnum,
-    SourceEnum,
-    VisitStatusEnum,
-)
-from fastapi import HTTPException
+from common.models.admission.admission_entry import AdmissionGateEntry, AdmissionStatusEnum, VisitStatusEnum
 from common.models.gate.visitor_model import (
     ConsultancyReference,
     OtherReference,
@@ -33,13 +28,8 @@ from common.schemas.gate.admission_visitor import (
     AdmissionVisitorUpdate,
 )
 
-# Maps incoming payload field names to AdmissionStudent column names
+# Maps incoming payload field names to AdmissionGateEntry column names
 _FIELD_MAP = {
-    "student_name": "name",
-    "mobile_number": "student_mobile",
-    "parent_or_guardian_name": "father_name",
-    "aadhar_number": "aadhaar_number",
-    "vehicle": "has_vehicle",
     "gate_pass_no": "gate_pass_number",
 }
 
@@ -47,15 +37,7 @@ _FIELD_MAP = {
 class AdmissionVisitorCRUD:
     @staticmethod
     def _to_model_field(field_name: str) -> str:
-        field_map = {
-            "gate_pass_no": "gate_pass_number",
-            "student_name": "name",
-            "mobile_number": "student_mobile",
-            "parent_or_guardian_name": "father_name",
-            "aadhar_number": "aadhaar_number",
-            "vehicle": "has_vehicle",
-        }
-        return field_map.get(field_name, field_name)
+        return _FIELD_MAP.get(field_name, field_name)
 
     @staticmethod
     def _normalize_bool(value):
@@ -71,7 +53,7 @@ class AdmissionVisitorCRUD:
 
     def _build_filter_expression(self, field_name: str, operator: str, value):
         model_field_name = self._to_model_field(field_name)
-        column = getattr(AdmissionStudent, model_field_name, None)
+        column = getattr(AdmissionGateEntry, model_field_name, None)
         if column is None:
             return None
 
@@ -105,7 +87,6 @@ class AdmissionVisitorCRUD:
 
         expressions = []
 
-        # Supports querybuilder shape: {"operator":"and","conditions":[...]}
         if isinstance(parsed, dict) and isinstance(parsed.get("conditions"), list):
             for condition in parsed["conditions"]:
                 if not isinstance(condition, dict):
@@ -118,7 +99,6 @@ class AdmissionVisitorCRUD:
                 if expr is not None:
                     expressions.append(expr)
 
-        # Supports simple shape: {"field": value}
         elif isinstance(parsed, dict):
             for field, value in parsed.items():
                 if isinstance(value, dict):
@@ -146,33 +126,28 @@ class AdmissionVisitorCRUD:
         filters: str | None = None,
     ):
         stmt = (
-            select(AdmissionStudent)
+            select(AdmissionGateEntry)
             .options(
-                selectinload(AdmissionStudent.consultancy_reference),
-                selectinload(AdmissionStudent.staff_reference),
-                selectinload(AdmissionStudent.student_reference),
-                selectinload(AdmissionStudent.other_reference),
+                selectinload(AdmissionGateEntry.consultancy_reference),
+                selectinload(AdmissionGateEntry.staff_reference),
+                selectinload(AdmissionGateEntry.student_reference),
+                selectinload(AdmissionGateEntry.other_reference),
             )
-            .where(
-                AdmissionStudent.deleted_at.is_(None),
-                AdmissionStudent.source == SourceEnum.GATE_ENQUIRY,
-            )
+            .where(AdmissionGateEntry.deleted_at.is_(None))
         )
 
         if search and search.strip():
             pattern = f"%{search.strip()}%"
             stmt = stmt.where(
                 or_(
-                    AdmissionStudent.gate_pass_number.ilike(pattern),
-                    AdmissionStudent.enquiry_number.ilike(pattern),
-                    AdmissionStudent.application_number.ilike(pattern),
-                    AdmissionStudent.name.ilike(pattern),
-                    AdmissionStudent.father_name.ilike(pattern),
-                    AdmissionStudent.student_mobile.ilike(pattern),
-                    AdmissionStudent.parent_mobile.ilike(pattern),
-                    AdmissionStudent.aadhaar_number.ilike(pattern),
-                    AdmissionStudent.reference_type.ilike(pattern),
-                    AdmissionStudent.vehicle_number.ilike(pattern),
+                    AdmissionGateEntry.gate_pass_number.ilike(pattern),
+                    AdmissionGateEntry.enquiry_number.ilike(pattern),
+                    AdmissionGateEntry.student_name.ilike(pattern),
+                    AdmissionGateEntry.parent_or_guardian_name.ilike(pattern),
+                    AdmissionGateEntry.mobile_number.ilike(pattern),
+                    AdmissionGateEntry.aadhar_number.ilike(pattern),
+                    AdmissionGateEntry.reference_type.ilike(pattern),
+                    AdmissionGateEntry.vehicle_number.ilike(pattern),
                 )
             )
 
@@ -185,13 +160,13 @@ class AdmissionVisitorCRUD:
             sort_field = (raw_field or "created_at").strip()
             sort_dir = (raw_dir or "desc").strip().lower()
 
-        sort_column = getattr(AdmissionStudent, sort_field, None)
+        sort_column = getattr(AdmissionGateEntry, sort_field, None)
         if sort_column is None:
-            sort_column = AdmissionStudent.created_at
+            sort_column = AdmissionGateEntry.created_at
 
         stmt = stmt.order_by(
             asc(sort_column) if sort_dir == "asc" else desc(sort_column),
-            desc(AdmissionStudent.id),
+            desc(AdmissionGateEntry.id),
         )
 
         return await paginate(db, stmt, Params(page=page, size=size))
@@ -199,7 +174,7 @@ class AdmissionVisitorCRUD:
     async def create(self, db: AsyncSession, payload: AdmissionVisitorCreate):
         try:
             data = payload.dict(exclude_unset=True)
-            ref_type_raw = data.pop("reference_type")
+            ref_type_raw = data.pop("reference_type", None)
 
             if isinstance(ref_type_raw, str):
                 try:
@@ -212,73 +187,66 @@ class AdmissionVisitorCRUD:
             else:
                 ref_type = ref_type_raw
 
-            # Remap field names from visitor schema to student model
             for old_key, new_key in _FIELD_MAP.items():
                 if old_key in data:
                     data[new_key] = data.pop(old_key)
 
-            # check for duplicate Aadhaar sent from gate interface
-            aadhar_val = data.get("aadhaar_number")
+            aadhar_val = data.get("aadhar_number")
             if aadhar_val:
-                dup_stmt = select(AdmissionStudent.id).where(
-                    AdmissionStudent.aadhaar_number == aadhar_val,
-                    AdmissionStudent.deleted_at.is_(None),
+                dup_stmt = select(AdmissionGateEntry.id).where(
+                    AdmissionGateEntry.aadhar_number == aadhar_val,
+                    AdmissionGateEntry.deleted_at.is_(None),
                 )
                 dup_res = await db.execute(dup_stmt)
                 if dup_res.scalar_one_or_none():
-                    # mirror HTTP 409 used elsewhere for uniqueness conflicts
                     raise HTTPException(
                         status_code=409,
                         detail=f"Aadhar number {aadhar_val} already exists",
                     )
 
-            # Generate gate pass number if not provided
             if not data.get("gate_pass_number"):
                 data["gate_pass_number"] = await self._generate_unique_gate_pass_no(db)
 
-            # Generate enquiry number
             from apps.admission.services import generate_enquiry_number
+
             data["enquiry_number"] = await generate_enquiry_number(db, data.get("institution_id"))
 
-            # Pop reference sub-payloads
             consultancy = data.pop("consultancy_reference", None)
             staff = data.pop("staff_reference", None)
             student_ref = data.pop("student_reference", None)
             other = data.pop("other_reference", None)
 
-            # Set gate-enquiry-specific defaults
-            data["source"] = SourceEnum.GATE_ENQUIRY
             data["status"] = AdmissionStatusEnum.ENQUIRY
             data["visit_status"] = VisitStatusEnum.CHECKED_IN
-            data["reference_type"] = ref_type.value
+            data["reference_type"] = ref_type.value if ref_type else None
 
-            student = AdmissionStudent(**data)
-            student.check_in_time = func.now()
-            db.add(student)
+            gate_entry = AdmissionGateEntry(**data)
+            gate_entry.check_in_time = func.now()
+            db.add(gate_entry)
             await db.flush()
 
             match ref_type:
                 case ReferenceType.CONSULTANCY if consultancy:
                     db.add(
-                        ConsultancyReference(student_id=student.id, **consultancy)
+                        ConsultancyReference(gate_entry_id=gate_entry.id, **consultancy)
                     )
                 case ReferenceType.STAFF if staff:
-                    db.add(StaffReference(student_id=student.id, **staff))
+                    db.add(StaffReference(gate_entry_id=gate_entry.id, **staff))
                 case ReferenceType.STUDENT if student_ref:
-                    db.add(StudentReference(student_id=student.id, **student_ref))
+                    db.add(StudentReference(gate_entry_id=gate_entry.id, **student_ref))
                 case ReferenceType.OTHER if other:
-                    db.add(OtherReference(student_id=student.id, **other))
+                    db.add(OtherReference(gate_entry_id=gate_entry.id, **other))
 
             await db.commit()
 
             stmt = (
-                select(AdmissionStudent)
-                .where(AdmissionStudent.id == student.id)
+                select(AdmissionGateEntry)
+                .where(AdmissionGateEntry.id == gate_entry.id)
                 .options(
-                    selectinload(AdmissionStudent.consultancy_reference),
-                    selectinload(AdmissionStudent.staff_reference),
-                    selectinload(AdmissionStudent.student_reference),
-                    selectinload(AdmissionStudent.other_reference),
+                    selectinload(AdmissionGateEntry.consultancy_reference),
+                    selectinload(AdmissionGateEntry.staff_reference),
+                    selectinload(AdmissionGateEntry.student_reference),
+                    selectinload(AdmissionGateEntry.other_reference),
                 )
             )
             result = await db.execute(stmt)
@@ -294,7 +262,7 @@ class AdmissionVisitorCRUD:
 
         result = await db.execute(
             text(
-                "SELECT gate_pass_number FROM admission_students "
+                "SELECT gate_pass_number FROM admission_gate_entries "
                 "WHERE gate_pass_number LIKE :prefix "
                 "ORDER BY CAST(SUBSTRING(gate_pass_number FROM 10) AS INTEGER) DESC LIMIT 1"
             ),
@@ -312,19 +280,18 @@ class AdmissionVisitorCRUD:
 
         return f"{prefix}{next_num:03d}"
 
-    async def get_one(self, db: AsyncSession, student_id: UUID):
+    async def get_one(self, db: AsyncSession, visitor_id: UUID):
         stmt = (
-            select(AdmissionStudent)
+            select(AdmissionGateEntry)
             .where(
-                AdmissionStudent.id == student_id,
-                AdmissionStudent.deleted_at.is_(None),
-                AdmissionStudent.source == SourceEnum.GATE_ENQUIRY,
+                AdmissionGateEntry.id == visitor_id,
+                AdmissionGateEntry.deleted_at.is_(None),
             )
             .options(
-                joinedload(AdmissionStudent.consultancy_reference),
-                joinedload(AdmissionStudent.staff_reference),
-                joinedload(AdmissionStudent.student_reference),
-                joinedload(AdmissionStudent.other_reference),
+                joinedload(AdmissionGateEntry.consultancy_reference),
+                joinedload(AdmissionGateEntry.staff_reference),
+                joinedload(AdmissionGateEntry.student_reference),
+                joinedload(AdmissionGateEntry.other_reference),
             )
         )
         result = await db.execute(stmt)
@@ -333,33 +300,26 @@ class AdmissionVisitorCRUD:
     async def get_by_gate_pass_no(self, db: AsyncSession, gate_pass_no: str):
         normalized = gate_pass_no.strip()
         stmt = (
-            select(AdmissionStudent)
+            select(AdmissionGateEntry)
             .where(
-                AdmissionStudent.gate_pass_number == normalized,
-                AdmissionStudent.deleted_at.is_(None),
+                AdmissionGateEntry.gate_pass_number == normalized,
+                AdmissionGateEntry.deleted_at.is_(None),
             )
             .options(
-                joinedload(AdmissionStudent.consultancy_reference),
-                joinedload(AdmissionStudent.staff_reference),
-                joinedload(AdmissionStudent.student_reference),
-                joinedload(AdmissionStudent.other_reference),
+                joinedload(AdmissionGateEntry.consultancy_reference),
+                joinedload(AdmissionGateEntry.staff_reference),
+                joinedload(AdmissionGateEntry.student_reference),
+                joinedload(AdmissionGateEntry.other_reference),
             )
         )
         result = await db.execute(stmt)
         return result.scalars().first()
 
     async def get_all(self, db: AsyncSession, query):
-        # Ensure only gate enquiries are returned
-        query = query.where(AdmissionStudent.source == SourceEnum.GATE_ENQUIRY)
-        # Apply DISTINCT ON only when joins are present; otherwise preserve
-        # caller-provided sorting (e.g. created_at:desc) without reordering.
         has_joins = bool(getattr(query, "_setup_joins", None))
-        pk = getattr(AdmissionStudent, "id", None)
+        pk = getattr(AdmissionGateEntry, "id", None)
         if has_joins and pk is not None:
             query = query.distinct(pk)
-
-            # PostgreSQL requires DISTINCT ON expressions to match the initial
-            # ORDER BY expressions; ensure primary key is ordered first.
             try:
                 existing_order_by = getattr(query, "_order_by_clause", None)
                 if existing_order_by is not None and len(existing_order_by) > 0:
@@ -368,7 +328,6 @@ class AdmissionVisitorCRUD:
                 else:
                     query = query.order_by(pk)
             except Exception:
-                # Fall back to DISTINCT ON without modifying order if inspection fails.
                 pass
         elif has_joins:
             query = query.distinct()
@@ -376,10 +335,10 @@ class AdmissionVisitorCRUD:
         return await paginate(db, query)
 
     async def update(
-        self, db: AsyncSession, student_id: UUID, payload: AdmissionVisitorUpdate
+        self, db: AsyncSession, visitor_id: UUID, payload: AdmissionVisitorUpdate
     ):
-        student = await db.get(AdmissionStudent, student_id)
-        if not student or student.source != SourceEnum.GATE_ENQUIRY:
+        gate_entry = await db.get(AdmissionGateEntry, visitor_id)
+        if not gate_entry:
             return None
 
         update_data = payload.dict(exclude_unset=True)
@@ -387,12 +346,11 @@ class AdmissionVisitorCRUD:
             if old_key in update_data:
                 update_data[new_key] = update_data.pop(old_key)
 
-        # if the client is updating Aadhaar, ensure it doesn't collide with another record
-        if update_data.get("aadhaar_number"):
-            aadhar_val = update_data["aadhaar_number"]
-            dup_stmt = select(AdmissionStudent.id).where(
-                AdmissionStudent.aadhaar_number == aadhar_val,
-                AdmissionStudent.id != student_id,
+        if update_data.get("aadhar_number"):
+            aadhar_val = update_data["aadhar_number"]
+            dup_stmt = select(AdmissionGateEntry.id).where(
+                AdmissionGateEntry.aadhar_number == aadhar_val,
+                AdmissionGateEntry.id != visitor_id,
             )
             dup_res = await db.execute(dup_stmt)
             if dup_res.scalar_one_or_none():
@@ -402,56 +360,56 @@ class AdmissionVisitorCRUD:
                 )
 
         for field, value in update_data.items():
-            if hasattr(student, field):
-                setattr(student, field, value)
+            if hasattr(gate_entry, field):
+                setattr(gate_entry, field, value)
 
         try:
             await db.commit()
-            await db.refresh(student)
+            await db.refresh(gate_entry)
         except Exception as exc:
             await db.rollback()
-            # Catch DB-level unique constraint violations (e.g. soft-deleted records)
             exc_str = str(exc).lower()
-            if "unique" in exc_str or "duplicate" in exc_str or "aadhaar" in exc_str:
+            if "unique" in exc_str or "duplicate" in exc_str or "aadhar" in exc_str:
                 raise HTTPException(
                     status_code=409,
-                    detail=f"Aadhar number {update_data.get('aadhaar_number', '')} already exists",
+                    detail=f"Aadhar number {update_data.get('aadhar_number', '')} already exists",
                 )
             raise
-        return student
 
-    async def delete(self, db: AsyncSession, student_id: UUID):
-        student = await db.get(AdmissionStudent, student_id)
-        if not student or student.source != SourceEnum.GATE_ENQUIRY:
+        return gate_entry
+
+    async def delete(self, db: AsyncSession, visitor_id: UUID):
+        gate_entry = await db.get(AdmissionGateEntry, visitor_id)
+        if not gate_entry:
             return 0
-        await db.delete(student)
+        await db.delete(gate_entry)
         await db.commit()
         return 1
 
     async def pass_out(
         self,
         db: AsyncSession,
-        student_id: UUID,
+        visitor_id: UUID,
         payload: AdmissionVisitorPassOutRequest,
     ):
-        student = await self.get_one(db, student_id)
-        if not student:
+        gate_entry = await self.get_one(db, visitor_id)
+        if not gate_entry:
             return None, False
 
-        if student.visit_status == VisitStatusEnum.CHECKED_OUT:
-            return student, True
+        if gate_entry.visit_status == VisitStatusEnum.CHECKED_OUT:
+            return gate_entry, True
 
         check_out_time = payload.check_out_time or datetime.now(timezone.utc)
-        if student.check_in_time and self._to_naive_utc(check_out_time) < self._to_naive_utc(student.check_in_time):
+        if gate_entry.check_in_time and self._to_naive_utc(check_out_time) < self._to_naive_utc(gate_entry.check_in_time):
             raise ValueError("check_out_time cannot be earlier than check_in_time")
 
-        student.visit_status = VisitStatusEnum.CHECKED_OUT
-        student.check_out_time = check_out_time
-        student.check_out_remarks = (payload.remarks or "").strip() or None
-        db.add(student)
+        gate_entry.visit_status = VisitStatusEnum.CHECKED_OUT
+        gate_entry.check_out_time = check_out_time
+        gate_entry.check_out_remarks = (payload.remarks or "").strip() or None
+        db.add(gate_entry)
         await db.commit()
-        await db.refresh(student)
-        return student, False
+        await db.refresh(gate_entry)
+        return gate_entry, False
 
     async def get_report(
         self,
@@ -479,15 +437,15 @@ class AdmissionVisitorCRUD:
 
         stmt = (
             select(
-                AdmissionStudent,
+                AdmissionGateEntry,
                 Institution.name.label("institution_name"),
             )
-            .select_from(AdmissionStudent)
-            .join(Institution, Institution.id == AdmissionStudent.institution_id, isouter=True)
+            .select_from(AdmissionGateEntry)
+            .join(Institution, Institution.id == AdmissionGateEntry.institution_id, isouter=True)
             .where(*filters)
             .order_by(
-                AdmissionStudent.check_in_time.desc(),
-                AdmissionStudent.created_at.desc(),
+                AdmissionGateEntry.check_in_time.desc(),
+                AdmissionGateEntry.created_at.desc(),
             )
             .offset((page - 1) * size)
             .limit(size)
@@ -540,15 +498,15 @@ class AdmissionVisitorCRUD:
 
         stmt = (
             select(
-                AdmissionStudent,
+                AdmissionGateEntry,
                 Institution.name.label("institution_name"),
             )
-            .select_from(AdmissionStudent)
-            .join(Institution, Institution.id == AdmissionStudent.institution_id, isouter=True)
+            .select_from(AdmissionGateEntry)
+            .join(Institution, Institution.id == AdmissionGateEntry.institution_id, isouter=True)
             .where(*filters)
             .order_by(
-                AdmissionStudent.check_in_time.desc(),
-                AdmissionStudent.created_at.desc(),
+                AdmissionGateEntry.check_in_time.desc(),
+                AdmissionGateEntry.created_at.desc(),
             )
         )
         rows = (await db.execute(stmt)).all()
@@ -614,16 +572,16 @@ class AdmissionVisitorCRUD:
         )
 
         entries_filters = list(common_filters)
-        entries_filters.extend(self._time_range_filters(AdmissionStudent.check_in_time, date_from, date_to))
+        entries_filters.extend(self._time_range_filters(AdmissionGateEntry.check_in_time, date_from, date_to))
         total_entries = await self._get_count(db, entries_filters)
 
         exits_filters = list(common_filters)
-        exits_filters.append(AdmissionStudent.check_out_time.is_not(None))
-        exits_filters.extend(self._time_range_filters(AdmissionStudent.check_out_time, date_from, date_to))
+        exits_filters.append(AdmissionGateEntry.check_out_time.is_not(None))
+        exits_filters.extend(self._time_range_filters(AdmissionGateEntry.check_out_time, date_from, date_to))
         total_exits = await self._get_count(db, exits_filters)
 
         inside_filters = list(common_filters)
-        inside_filters.append(AdmissionStudent.visit_status == VisitStatusEnum.CHECKED_IN)
+        inside_filters.append(AdmissionGateEntry.visit_status == VisitStatusEnum.CHECKED_IN)
         inside_campus = await self._get_count(db, inside_filters)
 
         return AdmissionVisitorReportSummary(
@@ -644,37 +602,36 @@ class AdmissionVisitorCRUD:
         for_items: bool,
     ):
         filters = [
-            AdmissionStudent.deleted_at.is_(None),
-            AdmissionStudent.source == SourceEnum.GATE_ENQUIRY,
+            AdmissionGateEntry.deleted_at.is_(None),
         ]
 
         if visit_status:
-            filters.append(AdmissionStudent.visit_status == visit_status)
+            filters.append(AdmissionGateEntry.visit_status == visit_status)
 
         if institution_id:
-            filters.append(AdmissionStudent.institution_id == institution_id)
+            filters.append(AdmissionGateEntry.institution_id == institution_id)
 
         if reference_type:
-            filters.append(AdmissionStudent.reference_type == reference_type)
+            filters.append(AdmissionGateEntry.reference_type == reference_type)
 
         if search:
             like = f"%{search.strip()}%"
             filters.append(
                 or_(
-                    AdmissionStudent.gate_pass_number.ilike(like),
-                    AdmissionStudent.name.ilike(like),
-                    AdmissionStudent.student_mobile.ilike(like),
-                    AdmissionStudent.father_name.ilike(like),
-                    AdmissionStudent.native_place.ilike(like),
+                    AdmissionGateEntry.gate_pass_number.ilike(like),
+                    AdmissionGateEntry.student_name.ilike(like),
+                    AdmissionGateEntry.mobile_number.ilike(like),
+                    AdmissionGateEntry.parent_or_guardian_name.ilike(like),
+                    AdmissionGateEntry.native_place.ilike(like),
                 )
             )
 
         if for_items and (date_from or date_to):
             in_range_in = and_(
-                *self._time_range_filters(AdmissionStudent.check_in_time, date_from, date_to)
+                *self._time_range_filters(AdmissionGateEntry.check_in_time, date_from, date_to)
             )
             in_range_out = and_(
-                *self._time_range_filters(AdmissionStudent.check_out_time, date_from, date_to)
+                *self._time_range_filters(AdmissionGateEntry.check_out_time, date_from, date_to)
             )
             filters.append(or_(in_range_in, in_range_out))
 
@@ -689,32 +646,33 @@ class AdmissionVisitorCRUD:
         return filters
 
     async def _get_count(self, db: AsyncSession, filters):
-        stmt = select(func.count()).select_from(AdmissionStudent).where(*filters)
+        stmt = select(func.count()).select_from(AdmissionGateEntry).where(*filters)
         result = await db.execute(stmt)
         return result.scalar_one() or 0
 
     def _row_to_report_item(self, row):
-        """Maps AdmissionStudent columns back to old API response field names for backward compatibility."""
-        student = row[0]
+        gate_entry = row[0]
         institution_name = row[1]
         return {
-            "id": student.id,
-            "gate_pass_no": student.gate_pass_number,
-            "student_name": student.name,
-            "mobile_number": student.student_mobile,
-            "parent_or_guardian_name": student.father_name,
-            "native_place": student.native_place,
-            "institution_id": student.institution_id,
+            "id": gate_entry.id,
+            "gate_pass_no": gate_entry.gate_pass_number,
+            "student_name": gate_entry.student_name,
+            "mobile_number": gate_entry.mobile_number,
+            "parent_or_guardian_name": gate_entry.parent_or_guardian_name,
+            "native_place": gate_entry.native_place,
+            "institution_id": gate_entry.institution_id,
             "institution_name": institution_name,
-            "reference_type": str(student.reference_type) if student.reference_type else None,
-            "visit_status": student.visit_status.value
-            if hasattr(student.visit_status, "value")
-            else str(student.visit_status),
-            "check_in_time": student.check_in_time.isoformat() if student.check_in_time else None,
-            "check_out_time": student.check_out_time.isoformat() if student.check_out_time else None,
-            "check_out_remarks": student.check_out_remarks,
-            "created_at": student.created_at.isoformat() if student.created_at else None,
-            "updated_at": student.updated_at.isoformat() if student.updated_at else None,
+            "reference_type": str(gate_entry.reference_type) if gate_entry.reference_type else None,
+            "visit_status": gate_entry.visit_status.value
+            if hasattr(gate_entry.visit_status, "value")
+            else str(gate_entry.visit_status),
+            "check_in_time": gate_entry.check_in_time.isoformat() if gate_entry.check_in_time else None,
+            "check_out_time": gate_entry.check_out_time.isoformat() if gate_entry.check_out_time else None,
+            "check_out_remarks": gate_entry.check_out_remarks,
+            "created_at": gate_entry.created_at.isoformat() if gate_entry.created_at else None,
+            "updated_at": gate_entry.updated_at.isoformat() if gate_entry.updated_at else None,
+            "vehicle": gate_entry.vehicle,
+            "vehicle_number": gate_entry.vehicle_number,
         }
 
     def _to_naive_utc(self, value: datetime | None):

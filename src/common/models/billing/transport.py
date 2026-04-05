@@ -2,7 +2,7 @@ from uuid import UUID
 from decimal import Decimal
 from components.db.base_model import Base
 from sqlalchemy import ForeignKey, String, Boolean, Numeric, Integer
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import JSON
 
 

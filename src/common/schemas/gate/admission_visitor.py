@@ -1,26 +1,7 @@
-"""
-Pydantic schemas for the Gate – Admission Visitor endpoints.
+"""Pydantic schemas for Gate -> Admission Visitor APIs.
 
-The underlying ORM model is now ``AdmissionStudent`` (after the table
-consolidation migration). Column names changed, but the *external* API
-contract is preserved through Pydantic v2 ``validation_alias``.
-
-  ┌─────── JSON field name ──────┐  ┌─── ORM attribute (validation_alias) ───┐
-  │ student_name                 │→ │ name                                    │
-  │ mobile_number                │→ │ student_mobile                          │
-  │ parent_or_guardian_name      │→ │ father_name                             │
-  │ aadhar_number                │→ │ aadhaar_number                          │
-  │ gate_pass_no                 │→ │ gate_pass_number                        │
-  │ vehicle                      │→ │ has_vehicle                             │
-  └──────────────────────────────┘  └─────────────────────────────────────────┘
-
-``AdmissionVisitorBase`` keeps the *old* JSON names and is used for
-Create / Update payloads.  ``gate/services.py._FIELD_MAP`` remaps them
-before writing to the DB.
-
-``AdmissionVisitorRead`` is used as the *response* model.  It also
-keeps the old JSON names but uses ``validation_alias`` so Pydantic can
-read the correct ORM attribute when ``from_attributes = True``.
+These schemas now map to the dedicated `admission_gate_entries` table.
+The external JSON contract remains backward-compatible with existing frontend keys.
 """
 
 from datetime import datetime
@@ -31,7 +12,6 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 
-# ── value enums ──────────────────────────────────────────────────────
 class VisitStatus(str, Enum):
     PENDING = "PENDING"
     CHECKED_IN = "CHECKED_IN"
@@ -47,12 +27,12 @@ class ReferenceType(str, Enum):
     DIRECT_ADMISSION = "direct_admission"
 
 
-# ── reference sub-schemas ────────────────────────────────────────────
 class ConsultancyReferenceCreate(BaseModel):
     consultancy_id: UUID
     reference_staff_1: Optional[str] = None
     reference_staff_2: Optional[str] = None
     reference_staff_3: Optional[str] = None
+
 
 class ConsultancyReferenceRead(BaseModel):
     id: UUID
@@ -60,6 +40,7 @@ class ConsultancyReferenceRead(BaseModel):
     reference_staff_1: Optional[str] = None
     reference_staff_2: Optional[str] = None
     reference_staff_3: Optional[str] = None
+
     class Config:
         from_attributes = True
 
@@ -67,9 +48,11 @@ class ConsultancyReferenceRead(BaseModel):
 class StaffReferenceCreate(BaseModel):
     staff_id: UUID
 
+
 class StaffReferenceRead(BaseModel):
     id: UUID
     staff_id: UUID
+
     class Config:
         from_attributes = True
 
@@ -79,11 +62,13 @@ class StudentReferenceCreate(BaseModel):
     roll_number: str
     contact_number: str
 
+
 class StudentReferenceRead(BaseModel):
     id: UUID
     student_name: str
     roll_number: str
     contact_number: str
+
     class Config:
         from_attributes = True
 
@@ -91,18 +76,16 @@ class StudentReferenceRead(BaseModel):
 class OtherReferenceCreate(BaseModel):
     description: Optional[str] = None
 
+
 class OtherReferenceRead(BaseModel):
     id: UUID
     description: Optional[str] = None
+
     class Config:
         from_attributes = True
 
 
-# ── base schema (Create / Update payloads) ───────────────────────────
 class AdmissionVisitorBase(BaseModel):
-    """JSON field names match the *old* visitor model.
-    services.py ``_FIELD_MAP`` translates them before DB write."""
-
     student_name: str
     mobile_number: Optional[str] = None
     parent_or_guardian_name: Optional[str] = None
@@ -138,29 +121,20 @@ class AdmissionVisitorUpdate(BaseModel):
     check_out_remarks: Optional[str] = None
 
 
-# ── read / response schema ───────────────────────────────────────────
 class AdmissionVisitorRead(BaseModel):
-    """Serialises an ``AdmissionStudent`` ORM row back into the legacy
-    JSON shape expected by the frontend.
-
-    ``validation_alias`` tells Pydantic which ORM attribute to read;
-    the *field name* is what appears in the JSON output."""
-
     id: Optional[UUID] = None
     institution_id: Optional[UUID] = None
 
-    # ↓↓ mapped fields ↓↓
-    student_name: str = Field(validation_alias="name")
-    mobile_number: Optional[str] = Field(None, validation_alias="student_mobile")
-    parent_or_guardian_name: Optional[str] = Field(None, validation_alias="father_name")
-    aadhar_number: Optional[str] = Field(None, validation_alias="aadhaar_number")
+    student_name: str
+    mobile_number: Optional[str] = None
+    parent_or_guardian_name: Optional[str] = None
+    aadhar_number: Optional[str] = None
     gate_pass_no: Optional[str] = Field(None, validation_alias="gate_pass_number")
-    vehicle: Optional[bool] = Field(False, validation_alias="has_vehicle")
 
-    # ↓↓ unchanged fields ↓↓
     native_place: Optional[str] = None
     image_url: Optional[str] = None
     reference_type: Optional[str] = None
+    vehicle: Optional[bool] = False
     vehicle_number: Optional[str] = None
     visit_status: Optional[VisitStatus] = None
     check_in_time: Optional[datetime] = None
@@ -170,7 +144,6 @@ class AdmissionVisitorRead(BaseModel):
     updated_at: Optional[datetime] = None
     status: Optional[str] = None
 
-    # ↓↓ nested references ↓↓
     consultancy_reference: Optional[ConsultancyReferenceRead] = None
     staff_reference: Optional[StaffReferenceRead] = None
     student_reference: Optional[StudentReferenceRead] = None
@@ -187,20 +160,17 @@ class AdmissionVisitorPassOutRequest(BaseModel):
 
 
 class AdmissionVisitorPassOutResponse(BaseModel):
-    message: str
     visitor: AdmissionVisitorRead
+    already_checked_out: bool = False
 
 
-# ── report schemas ───────────────────────────────────────────────────
 class AdmissionVisitorReportItem(BaseModel):
-    """Comes from ``_row_to_report_item`` which builds plain dicts
-    with the *old* field names – no alias needed here."""
-
     gate_pass_no: Optional[str] = None
     student_name: Optional[str] = None
     mobile_number: Optional[str] = None
     parent_or_guardian_name: Optional[str] = None
     native_place: Optional[str] = None
+    institution_name: Optional[str] = None
     reference_type: Optional[str] = None
     reference_detail: Optional[str] = None
     vehicle: Optional[bool] = False
@@ -212,9 +182,9 @@ class AdmissionVisitorReportItem(BaseModel):
 
 
 class AdmissionVisitorReportSummary(BaseModel):
-    total_visitors: int = 0
-    checked_in: int = 0
-    checked_out: int = 0
+    total_entries: int = 0
+    total_exits: int = 0
+    inside_campus: int = 0
 
 
 class AdmissionVisitorReportResponse(BaseModel):

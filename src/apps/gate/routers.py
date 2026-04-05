@@ -2,7 +2,7 @@ from datetime import date
 from urllib.parse import unquote
 from uuid import UUID
 
-from common.models.admission.admission_entry import AdmissionStudent, SourceEnum, VisitStatusEnum
+from common.models.admission.admission_entry import VisitStatusEnum
 from components.db.db import get_db_session
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
@@ -22,7 +22,6 @@ from common.schemas.gate.admission_visitor import (
     AdmissionVisitorPassOutRequest,
     AdmissionVisitorPassOutResponse,
     AdmissionVisitorReportResponse,
-    AdmissionVisitorUpdate,
     AdmissionVisitorRead,
 )
 from fastapi_pagination import Page, add_pagination

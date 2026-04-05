@@ -5,7 +5,6 @@ Revises: 20260222_fee_lock_fields, 20260222_vs_case_fix
 Create Date: 2026-02-22 12:40:00.000000
 
 """
-from alembic import op
 
 
 # revision identifiers, used by Alembic.

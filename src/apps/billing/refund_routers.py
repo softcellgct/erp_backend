@@ -7,11 +7,12 @@ Refund management routes:
 """
 from datetime import datetime, date
 from decimal import Decimal
-from uuid import UUID
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from common.s3.services import UploadService
 from sqlalchemy import select, func, text
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from components.db.db import get_db_session
@@ -28,7 +29,6 @@ from common.schemas.billing.refund_schemas import (
     RefundInitiateRequest,
     RefundApproveRequest,
     RefundProcessRequest,
-    RefundResponse,
 )
 from apps.billing.services import billing_service
 from logs.logging import logger
@@ -60,9 +60,76 @@ def _enrich_refund(r: Refund) -> dict:
         "updated_at": r.updated_at,
     }
     if r.student:
-        data["student_name"] = r.student.name
+        data["student_name"] = getattr(r.student.personal_details, "name", None) if getattr(r.student, "personal_details", None) else getattr(r.student, "name", None)
         data["application_number"] = r.student.application_number
     return data
+
+
+# ── Eligible Payments ─────────────────────────────────
+@router.get("/eligible-payments/{student_id}", tags=["Billing - Refunds"])
+async def list_eligible_payments(
+    student_id: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    from uuid import UUID
+    try:
+        student_uuid = UUID(student_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid student UUID")
+
+    # Ensure student exists
+    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_uuid)
+    res = await db.execute(stmt)
+    student = res.scalar_one_or_none()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    # Find paid payments that haven't been refunded yet
+    payment_stmt = (
+        select(Payment)
+        .join(Invoice, Payment.invoice_id == Invoice.id)
+        .where(
+            Invoice.student_id == student_uuid
+        )
+    )
+    
+    payments_res = await db.execute(payment_stmt)
+    payments = payments_res.scalars().all()
+    
+    eligible = []
+    
+    for payment in payments:
+        # Check if refund already exists
+        refund_stmt = select(Refund).where(
+            Refund.original_payment_id == payment.id,
+            Refund.status != RefundStatusEnum.REJECTED
+        )
+        refund_res = await db.execute(refund_stmt)
+        existing_refund = refund_res.scalar_one_or_none()
+        
+        if not existing_refund:
+            # Also get invoice details for context
+            invoice_stmt = select(Invoice).options(selectinload(Invoice.line_items)).where(Invoice.id == payment.invoice_id)
+            inv_res = await db.execute(invoice_stmt)
+            invoice = inv_res.scalar_one_or_none()
+            
+            desc = "Payment"
+            if invoice and invoice.line_items:
+                desc = invoice.line_items[0].description or desc
+
+            eligible.append({
+                "id": str(payment.id),
+                "invoice_id": str(payment.invoice_id),
+                "receipt_number": payment.receipt_number,
+                "amount": float(payment.amount),
+                "payment_method": payment.payment_method.value if hasattr(payment.payment_method, "value") else payment.payment_method,
+                "payment_date": payment.payment_date.isoformat() if payment.payment_date else None,
+                "invoice_number": invoice.invoice_number if invoice else None,
+                "invoice_total": float(invoice.amount) if invoice else None,
+                "description": desc,
+            })
+
+    return {"items": eligible, "total": len(eligible)}
 
 
 # ── Initiate Refund ───────────────────────────────────
@@ -112,7 +179,7 @@ async def initiate_refund(
 
     refund = Refund(
         student_id=payload.student_id,
-        institution_id=student.institution_id,
+        institution_id=student.program_details.institution_id if student.program_details else None,
         original_payment_id=payload.payment_id,
         original_invoice_id=payment.invoice_id,
         original_amount=original_amount,
@@ -281,7 +348,8 @@ async def process_refund(
 @router.post("/{refund_id}/complete", tags=["Billing - Refunds"])
 async def complete_refund(
     refund_id: str,
-    refund_reference: Optional[str] = None,
+    refund_reference: Optional[str] = Form(None),
+    file: Optional[UploadFile] = File(None),
     db: AsyncSession = Depends(get_db_session),
 ):
     """Mark a processed refund as completed (money handed over to student)."""
@@ -292,11 +360,24 @@ async def complete_refund(
         raise HTTPException(status_code=404, detail="Refund not found")
 
     if refund.status != RefundStatusEnum.PROCESSED:
-        raise HTTPException(status_code=400, detail=f"Refund must be PROCESSED to complete")
+        raise HTTPException(status_code=400, detail="Refund must be PROCESSED to complete")
 
     refund.status = RefundStatusEnum.COMPLETED
     if refund_reference:
         refund.refund_reference = refund_reference
+        
+    if not file:
+        raise HTTPException(status_code=400, detail="Signed refund document must be uploaded to complete the refund.")
+
+    upload_service = UploadService()
+    is_success, urls_or_error = await upload_service.save_files_to_minio([file], "refund_documents")
+    if not is_success:
+        raise HTTPException(status_code=400, detail=urls_or_error)
+        
+    meta = refund.meta.copy() if refund.meta else {}
+    meta["refund_document_url"] = urls_or_error[0]
+    refund.meta = meta
+
     await db.commit()
     await db.refresh(refund)
     return _enrich_refund(refund)

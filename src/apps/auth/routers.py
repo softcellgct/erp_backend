@@ -1,10 +1,7 @@
-from typing import List
-from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from apps.auth.services import UserService
-from common.models.master.user import User
 from common.schemas.master.user import (
     LoginSchema,
     CashCounterLoginSchema,

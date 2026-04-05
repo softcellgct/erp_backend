@@ -2,8 +2,8 @@ from uuid import UUID
 from datetime import date
 from decimal import Decimal
 from components.db.base_model import Base
-from sqlalchemy import Date, ForeignKey, String, Boolean, Numeric
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Date, ForeignKey, String, Numeric
+from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy import JSON
 
 

@@ -1,8 +1,6 @@
 import enum
-from sqlalchemy import Column, String, ForeignKey, DateTime, Text, Enum
+from sqlalchemy import Column, DateTime, Text, Enum
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import relationship
-from datetime import datetime
 from components.db.base_model import Base
 
 class FollowUpStatusEnum(str, enum.Enum):

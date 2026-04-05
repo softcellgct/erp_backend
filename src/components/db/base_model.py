@@ -2,9 +2,9 @@ import uuid
 from typing import Any, List, Optional
 
 from fastapi import Request
-from sqlalchemy import UUID, DateTime, ForeignKey, Index, delete, func, select, update
-from sqlalchemy.ext.declarative import as_declarative, declared_attr
-from sqlalchemy.orm import Mapped, mapped_column, defer, selectinload,raiseload
+from sqlalchemy import UUID, DateTime, ForeignKey, delete, func, select, update
+from sqlalchemy.ext.declarative import as_declarative
+from sqlalchemy.orm import Mapped, mapped_column, raiseload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 

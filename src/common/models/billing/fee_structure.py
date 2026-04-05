@@ -9,10 +9,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy import JSON, Integer, Date, Enum as SAEnum
 import enum
 
-from common.models.master.admission_masters import AdmissionType, SeatQuota
-from common.models.master.annual_task import AcademicYear, SemesterPeriod
-from common.models.billing.financial_year import FinancialYear
-from common.models.master.institution import Course, Department
 
 class GenderEnum(str, enum.Enum):
     MALE = "Male"

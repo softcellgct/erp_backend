@@ -1,7 +1,7 @@
 
 from typing import List, Type, Optional
-from fastapi import Depends, Request, HTTPException
-from sqlalchemy import select, or_, asc, desc, cast, String, inspect
+from fastapi import Depends, Request
+from sqlalchemy import select, or_, asc, desc, cast, String
 from fastapi_querybuilder.params import QueryParams
 from fastapi_querybuilder.core import parse_filter_query, parse_filters, resolve_and_join_column
 

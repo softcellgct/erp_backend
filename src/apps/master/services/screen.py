@@ -1,6 +1,6 @@
 from uuid import UUID
 from fastapi import HTTPException
-from sqlalchemy import and_, delete, null, or_, select
+from sqlalchemy import and_, delete, null, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 

@@ -2,7 +2,7 @@ import enum
 from uuid import UUID
 from decimal import Decimal
 from datetime import datetime
-from typing import Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from common.models.admission.admission_entry import AdmissionStudent

@@ -1,6 +1,5 @@
 from components.db.base_model import Base
-from sqlalchemy import Column, String, Boolean, ForeignKey, UUID, Integer, Text
-from sqlalchemy.orm import relationship
+from sqlalchemy import Column, String, Boolean, Integer
 
 class AdmissionType(Base):
     """

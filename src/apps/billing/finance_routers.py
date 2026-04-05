@@ -12,9 +12,7 @@ from components.db.db import get_db_session
 from apps.billing.finance_service import finance_service
 from common.schemas.billing.bulk_receipt_schemas import (
     BulkReceiptCreate,
-    BulkReceiptResponse,
     GenerateBulkReceiptRequest,
-    GenerateBulkReceiptResponse,
 )
 from common.schemas.billing.multi_receipt_schemas import (
     EligibleMultiReceiptStudentResponse,

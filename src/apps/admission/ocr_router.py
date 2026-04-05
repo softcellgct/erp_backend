@@ -6,7 +6,6 @@ from fastapi import APIRouter, UploadFile, File, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
-import io
 
 from components.ocr.extractor import OCRExtractor, DocumentType
 from components.db.db import get_db_session

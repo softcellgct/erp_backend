@@ -1,7 +1,7 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from uuid import UUID
 from datetime import datetime
-from typing import Optional, List
+from typing import Optional
 from enum import Enum
 
 class FollowUpStatusEnum(str, Enum):

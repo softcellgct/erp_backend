@@ -1,8 +1,6 @@
 from datetime import timedelta
-from uuid import UUID
 from fastapi import HTTPException, Request
 from sqlalchemy import or_, select
-from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from common.models.master.user import User

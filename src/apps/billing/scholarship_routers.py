@@ -7,11 +7,10 @@ Scholarship management routes:
 """
 from datetime import datetime
 from decimal import Decimal
-from uuid import UUID
-from typing import List, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select, func, and_
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from components.db.db import get_db_session
@@ -21,17 +20,14 @@ from common.models.billing.scholarship import (
     CertificateStatusEnum,
 )
 from common.models.billing.fee_structure import FeeStructure
-from common.models.billing.application_fees import Invoice, InvoiceLineItem, Payment, PaymentStatusEnum, InvoiceStatusHistory
+from common.models.billing.application_fees import Invoice, Payment, PaymentStatusEnum, InvoiceStatusHistory
 from common.models.admission.admission_entry import AdmissionStudent
 from common.schemas.billing.scholarship_schemas import (
     StudentScholarshipCreate,
-    StudentScholarshipUpdate,
-    StudentScholarshipResponse,
     MultiReceiptRequest,
     MultiReceiptResponse,
     ScholarshipDashboardResponse,
 )
-from apps.billing.services import billing_service
 from logs.logging import logger
 
 router = APIRouter()
@@ -62,7 +58,7 @@ def _enrich_scholarship_response(sch: StudentScholarship) -> dict:
         "updated_at": sch.updated_at,
     }
     if sch.student:
-        data["student_name"] = sch.student.name
+        data["student_name"] = sch.getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None)
         data["application_number"] = sch.student.application_number
         data["department_name"] = getattr(sch.student, "department_name", None)
         data["course_title"] = getattr(sch.student, "course_title", None)

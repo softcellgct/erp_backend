@@ -3,8 +3,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from apps.master.services.user import MasterUserService, RoleService
-from common.models.master.user import User, Role
+from apps.master.services.user import MasterUserService
+from common.models.master.user import Role
 from common.schemas.master.user import (
     UserCreateSchema,
     UserResponseSchema,

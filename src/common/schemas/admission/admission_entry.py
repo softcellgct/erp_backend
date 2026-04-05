@@ -118,60 +118,63 @@ class PGDetailsBase(BaseModel):
     cgpa: Optional[float] = None
 
 
+class AdmissionPersonalDetailsSection(BaseModel):
+    name: Optional[str] = None
+    father_name: Optional[str] = None
+    gender: Optional[GenderEnum] = None
+    date_of_birth: Optional[date] = None
+    student_mobile: Optional[str] = None
+    parent_mobile: Optional[str] = None
+    aadhaar_number: Optional[str] = None
+    religion: Optional[str] = None
+    community: Optional[str] = None
+    caste: Optional[str] = None
+    parent_income: Optional[float] = None
+    door_no: Optional[str] = None
+    street_name: Optional[str] = None
+    village_name: Optional[str] = None
+    taluk: Optional[str] = None
+    district: Optional[str] = None
+    state: Optional[str] = None
+    pincode: Optional[str] = None
+    parent_address: Optional[str] = None
+    permanent_address: Optional[str] = None
+
+
+class AdmissionProgramDetailsSection(BaseModel):
+    campus: Optional[str] = None
+    institution_id: Optional[UUID] = None
+    department_id: Optional[UUID] = None
+    course_id: Optional[UUID] = None
+    academic_year_id: Optional[UUID] = None
+    year: Optional[str] = None
+    branch: Optional[str] = None
+    previous_academic_level: Optional[PreviousAcademicLevelEnum] = None
+    is_lateral_entry: Optional[bool] = None
+    admission_quota_id: Optional[Union[UUID, str]] = None
+    category: Optional[CategoryEnum] = None
+    quota_type: Optional[str] = None
+    special_quota: Optional[str] = None
+    scholarships: Optional[str] = None
+    boarding_place: Optional[str] = None
+    admission_type_id: Optional[Union[UUID, str]] = None
+
+
+class AdmissionPreviousAcademicDetailsSection(BaseModel):
+    sslc: Optional[dict] = None
+    hsc: Optional[dict] = None
+    diploma: Optional[dict] = None
+    degree: Optional[dict] = None
+
+
 class AdmissionStudentBase(BaseModel):
     """Base schema for admission student"""
     # Enquiry Number
     enquiry_number: Optional[str] = None
     
     # Gate Pass and Reference
-    gate_pass_number: Optional[str] = None
-    reference_type: Optional[str] = None
+    gate_entry_id: Optional[UUID] = None
     
-    # Personal Details
-    name: str = Field(..., min_length=1, max_length=200)
-    father_name: Optional[str] = Field(None, max_length=200)
-    gender: Optional[GenderEnum] = None
-    date_of_birth: Optional[date] = None
-    student_mobile: Optional[str] = Field(None, max_length=15)
-    parent_mobile: Optional[str] = Field(None, max_length=15)
-    aadhaar_number: Optional[str] = Field(None, min_length=12, max_length=12)
-    
-    # Religious and Social Details
-    religion: Optional[str] = Field(None, max_length=50)
-    community: Optional[str] = Field(None, max_length=50)
-    caste: Optional[str] = Field(None, max_length=50)
-    parent_income: Optional[float] = None
-    
-    # Address Details
-    door_no: Optional[str] = Field(None, max_length=50)
-    street_name: Optional[str] = Field(None, max_length=200)
-    village_name: Optional[str] = Field(None, max_length=100)
-    taluk: Optional[str] = Field(None, max_length=100)
-    district: Optional[str] = Field(None, max_length=100)
-    state: Optional[str] = Field(None, max_length=100)
-    pincode: Optional[str] = Field(None, max_length=10)
-    parent_address: Optional[str] = None
-    permanent_address: Optional[str] = None
-    
-    # Degree & Branch Details
-    campus: Optional[str] = Field(None, max_length=200)  # Institution name
-    institution_id: Optional[UUID] = None
-    department_id: Optional[UUID] = None
-    course_id: Optional[UUID] = None
-    year: Optional[str] = Field(None, max_length=20)  # Year of study
-    branch: Optional[str] = Field(None, max_length=200)
-    
-    # Previous Academic Level
-    previous_academic_level: Optional[PreviousAcademicLevelEnum] = None
-    
-    # Lateral Entry
-    is_lateral_entry: Optional[bool] = False
-    
-    # Vehicle Details
-    has_vehicle: Optional[bool] = False
-    vehicle_number: Optional[str] = Field(None, max_length=20)
-    
-    # Category and Quota
     # Category and Quota
     admission_quota_id: Optional[Union[UUID, str]] = None
     category: Optional[CategoryEnum] = None
@@ -189,26 +192,6 @@ class AdmissionStudentBase(BaseModel):
     enrolled_at: Optional[datetime] = None
 
     status: Optional[AdmissionStatusEnum] = Field(default=AdmissionStatusEnum.ENQUIRED)
-
-    @validator('aadhaar_number')
-    def validate_aadhaar(cls, v):
-        if v and not v.isdigit():
-            raise ValueError('Aadhaar number must contain only digits')
-        return v
-
-    @validator('student_mobile', 'parent_mobile')
-    def validate_mobile(cls, v):
-        if v and not v.isdigit():
-            raise ValueError('Mobile number must contain only digits')
-        if v and len(v) < 10:
-            raise ValueError('Mobile number must be at least 10 digits')
-        return v
-
-    @validator('pincode')
-    def validate_pincode(cls, v):
-        if v and not v.isdigit():
-            raise ValueError('Pincode must contain only digits')
-        return v
 
 
 # ========================
@@ -237,20 +220,19 @@ class PGDetailsCreate(PGDetailsBase):
 
 class AdmissionStudentCreate(AdmissionStudentBase):
     """Schema for creating admission student with nested academic details"""
-    sslc_details: Optional[SSLCDetailsCreate] = None
-    hsc_details: Optional[HSCDetailsCreate] = None
-    diploma_details: Optional[DiplomaDetailsCreate] = None
-    pg_details: Optional[PGDetailsCreate] = None
+    visitor_id: Optional[UUID] = None
+    personal_details: Optional[AdmissionPersonalDetailsSection] = None
+    program_details: Optional[AdmissionProgramDetailsSection] = None
+    previous_academic_details: Optional[AdmissionPreviousAcademicDetailsSection] = None
     documents_submitted: Optional[List[str]] = None
 
 
 class AdmissionStudentGrantAdmission(AdmissionStudentBase):
     """Schema for granting admission with visitor_id"""
     visitor_id: Optional[UUID] = None  # Admission visitor ID for granting admission
-    sslc_details: Optional[SSLCDetailsCreate] = None
-    hsc_details: Optional[HSCDetailsCreate] = None
-    diploma_details: Optional[DiplomaDetailsCreate] = None
-    pg_details: Optional[PGDetailsCreate] = None
+    personal_details: Optional[AdmissionPersonalDetailsSection] = None
+    program_details: Optional[AdmissionProgramDetailsSection] = None
+    previous_academic_details: Optional[AdmissionPreviousAcademicDetailsSection] = None
 
 
 # ========================
@@ -317,6 +299,8 @@ class AdmissionStudentUpdate(BaseModel):
     id: UUID
     gate_pass_number: Optional[str] = None
     reference_type: Optional[str] = None
+    gate_entry_id: Optional[UUID] = None
+    visitor_id: Optional[UUID] = None
     name: Optional[str] = Field(None, min_length=1, max_length=200)
     father_name: Optional[str] = Field(None, max_length=200)
     gender: Optional[GenderEnum] = None
@@ -357,6 +341,10 @@ class AdmissionStudentUpdate(BaseModel):
     academic_year_id: Optional[UUID] = None
 
     status: Optional[AdmissionStatusEnum] = Field(default=AdmissionStatusEnum.ENQUIRED)
+
+    personal_details: Optional[AdmissionPersonalDetailsSection] = None
+    program_details: Optional[AdmissionProgramDetailsSection] = None
+    previous_academic_details: Optional[AdmissionPreviousAcademicDetailsSection] = None
 
     sslc_details: Optional[SSLCDetailsUpdate] = None
     hsc_details: Optional[HSCDetailsUpdate] = None
@@ -460,8 +448,12 @@ class AdmissionStudentResponse(AdmissionStudentBase):
     is_fee_structure_locked: Optional[bool] = False
     fee_structure_locked_at: Optional[datetime] = None
     fee_structure_locked_by: Optional[UUID] = None
-    
-    
+    gate_entry_id: Optional[UUID] = None
+
+    personal_details: Optional[AdmissionPersonalDetailsSection] = None
+    program_details: Optional[AdmissionProgramDetailsSection] = None
+    previous_academic_details: Optional[AdmissionPreviousAcademicDetailsSection] = None
+
     # Nested relationships
     sslc_details: Optional[SSLCDetailsResponse] = None
     hsc_details: Optional[HSCDetailsResponse] = None

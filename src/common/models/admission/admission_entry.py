@@ -1,23 +1,26 @@
 import enum
+from typing import Any
+
 from components.db.base_model import Base
-from common.models.master.admission_masters import AdmissionType, SeatQuota
 from sqlalchemy import (
+    Boolean,
     Column,
-    String,
     Date,
+    DateTime,
     Enum,
     Float,
-    Boolean,
-    Integer,
-    Numeric,
-    Text,
     ForeignKey,
-    DateTime,
-    func,
-    UUID,
+    Integer,
     JSON,
-    select
+    Numeric,
+    String,
+    Text,
+    UUID,
+    func,
+    select,
+    update,
 )
+from sqlalchemy.inspection import inspect
 from sqlalchemy.orm import relationship
 
 
@@ -92,103 +95,102 @@ class VisitStatusEnum(str, enum.Enum):
     CANCELLED = "CANCELLED"
 
 
-class AdmissionStudent(Base):
-    __tablename__ = "admission_students"
+class AdmissionGateEntry(Base):
+    __tablename__ = "admission_gate_entries"
 
-    # Enquiry Number
-    enquiry_number = Column(String(50), unique=True, index=True, nullable=False)
-    application_number = Column(String(50), unique=True, index=True, nullable=True)
-
-    # Gate Pass and Reference
-    gate_pass_number = Column(String(50), unique=True, index=True, nullable=True)
+    gate_pass_number = Column(String(50), unique=True, index=True, nullable=False)
     reference_type = Column(String(100), nullable=True)
 
-    # Personal Details
-    name = Column(String(200), nullable=False, index=True)
-    father_name = Column(String(200), nullable=True)
-    gender = Column(Enum(GenderEnum), nullable=True)
-    date_of_birth = Column(Date, nullable=True)
-    student_mobile = Column(String(15), nullable=True)
-    parent_mobile = Column(String(15), nullable=True)
-    aadhaar_number = Column(String(12), nullable=True, unique=True)
+    student_name = Column(String(200), nullable=False, index=True)
+    parent_or_guardian_name = Column(String(200), nullable=True)
+    mobile_number = Column(String(15), nullable=True)
+    aadhar_number = Column(String(12), nullable=True, index=True)
 
-    # Religious and Social Details
-    religion = Column(String(50), nullable=True)
-    community = Column(String(50), nullable=True)
-    caste = Column(String(50), nullable=True)
-    parent_income = Column(Numeric(12, 2), nullable=True)
+    native_place = Column(String(255), nullable=True)
+    image_url = Column(String(500), nullable=True)
 
-    # Address Details
-    door_no = Column(String(50), nullable=True)
-    street_name = Column(String(200), nullable=True)
-    village_name = Column(String(100), nullable=True)
-    taluk = Column(String(100), nullable=True)
-    district = Column(String(100), nullable=True)
-    state = Column(String(100), nullable=True)
-    pincode = Column(String(10), nullable=True)
-    parent_address = Column(Text, nullable=True)
-    permanent_address = Column(Text, nullable=True)
-
-    # Degree & Branch Details
-    campus = Column(String(200), nullable=True)  # Institution name
-    institution_id = Column(UUID(as_uuid=True), ForeignKey("institutions.id"), nullable=True, index=True)
-    department_id = Column(UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True, index=True)
-    course_id = Column(UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True, index=True)
-    year = Column(String(20), nullable=True)  # Year of study
-    branch = Column(String(200), nullable=True)
-
-    # Relationships linked to Foreign Keys
-    institution = relationship("Institution", lazy="selectin")
-    department = relationship("Department", lazy="selectin")
-    course = relationship("Course", lazy="selectin")
-
-    # Previous Academic Level
-    previous_academic_level = Column(Enum(PreviousAcademicLevelEnum), nullable=True)
-
-    # Lateral Entry
-    is_lateral_entry = Column(Boolean, default=False, nullable=False)
-
-    # Vehicle Details
-    has_vehicle = Column(Boolean, default=False)
+    vehicle = Column(Boolean, default=False, nullable=False)
     vehicle_number = Column(String(20), nullable=True)
 
-    # Gate Visit Tracking (merged from admission_visitors)
-    source = Column(
-        Enum(SourceEnum), default=SourceEnum.DIRECT_ENTRY, nullable=False
-    )
-    image_url = Column(String(500), nullable=True)
-    native_place = Column(String(255), nullable=True)
-    visit_status = Column(
-        Enum(VisitStatusEnum), nullable=True
-    )
-    check_in_time = Column(DateTime(timezone=True), nullable=True)
+    institution_id = Column(UUID(as_uuid=True), ForeignKey("institutions.id"), nullable=True, index=True)
+
+    visit_status = Column(Enum(VisitStatusEnum), nullable=False, default=VisitStatusEnum.CHECKED_IN)
+    check_in_time = Column(DateTime(timezone=True), nullable=True, server_default=func.now())
     check_out_time = Column(DateTime(timezone=True), nullable=True)
     check_out_remarks = Column(String(255), nullable=True)
 
-    # Category and Quota
-    # Category and Quota
+    status = Column(Enum(AdmissionStatusEnum), default=AdmissionStatusEnum.ENQUIRY, nullable=False)
+    enquiry_number = Column(String(50), unique=True, index=True, nullable=True)
+
+    institution = relationship("Institution", lazy="selectin")
+
+    admission_student = relationship(
+        "AdmissionStudent",
+        back_populates="gate_entry",
+        uselist=False,
+        lazy="selectin",
+    )
+
+    consultancy_reference = relationship(
+        "ConsultancyReference",
+        back_populates="gate_entry",
+        uselist=False,
+        lazy="selectin",
+    )
+    staff_reference = relationship(
+        "StaffReference",
+        back_populates="gate_entry",
+        uselist=False,
+        lazy="selectin",
+    )
+    student_reference = relationship(
+        "StudentReference",
+        back_populates="gate_entry",
+        uselist=False,
+        lazy="selectin",
+    )
+    other_reference = relationship(
+        "OtherReference",
+        back_populates="gate_entry",
+        uselist=False,
+        lazy="selectin",
+    )
+
+    def __repr__(self):
+        return f"<AdmissionGateEntry(id={self.id}, pass='{self.gate_pass_number}', name='{self.student_name}')>"
+
+
+class AdmissionStudent(Base):
+    __tablename__ = "admission_students"
+
+    # Enquiry / application
+    enquiry_number = Column(String(50), unique=True, index=True, nullable=False)
+    application_number = Column(String(50), unique=True, index=True, nullable=True)
+
+    # Link to new gate table (primary source for gate entry data)
+    gate_entry_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("admission_gate_entries.id", ondelete="SET NULL"),
+        nullable=True,
+        unique=True,
+        index=True,
+    )
+
+    # Quota / category
     admission_quota_id = Column(UUID(as_uuid=True), ForeignKey("seat_quotas.id"), nullable=True, index=True)
     category = Column(Enum(CategoryEnum), nullable=True)
-    quota_type = Column(
-        String(50), nullable=True
-    )  # Sports, Cultural, NCC, Ex-Serviceman
-    special_quota = Column(String(100), nullable=True)  # 7.5%, First Graduate, etc.
+    quota_type = Column(String(50), nullable=True)
+    special_quota = Column(String(100), nullable=True)
     scholarships = Column(String(200), nullable=True)
     boarding_place = Column(String(200), nullable=True)
     admission_type_id = Column(UUID(as_uuid=True), ForeignKey("admission_types.id"), nullable=True, index=True)
-    
-    academic_year_id = Column(
-        UUID(as_uuid=True), ForeignKey("academic_years.id"), nullable=True, index=True
-    )
-    
-    # Documents Checklist
-    documents_submitted = Column(JSON, nullable=True)  # List of document IDs or names
+    academic_year_id = Column(UUID(as_uuid=True), ForeignKey("academic_years.id"), nullable=True, index=True)
 
-    status = Column(
-        Enum(AdmissionStatusEnum), default=AdmissionStatusEnum.ENQUIRED, nullable=False
-    )
+    documents_submitted = Column(JSON, nullable=True)
 
-    # Post-admission details
+    status = Column(Enum(AdmissionStatusEnum), default=AdmissionStatusEnum.ENQUIRED, nullable=False)
+
+    # Post-admission
     roll_number = Column(String(50), nullable=True, index=True)
     section = Column(String(20), nullable=True, index=True)
     current_semester = Column(Integer, nullable=True)
@@ -209,44 +211,39 @@ class AdmissionStudent(Base):
         index=True,
     )
 
-    # Relationships linked to Foreign Keys
+    # Foreign key relationships
     admission_quota = relationship("SeatQuota", lazy="selectin")
     admission_type = relationship("AdmissionType", lazy="selectin")
     fee_structure = relationship("FeeStructure", lazy="selectin")
 
-    # Relationships
-    sslc_details = relationship(
-        "SSLCDetails",
+    gate_entry = relationship("AdmissionGateEntry", back_populates="admission_student", lazy="selectin")
+
+    # New normalized detail tables
+    personal_details = relationship(
+        "AdmissionStudentPersonalDetails",
         back_populates="student",
         uselist=False,
         cascade="all, delete-orphan",
         passive_deletes=True,
         lazy="selectin",
     )
-    hsc_details = relationship(
-        "HSCDetails",
+    program_details = relationship(
+        "AdmissionStudentProgramDetails",
         back_populates="student",
         uselist=False,
         cascade="all, delete-orphan",
         passive_deletes=True,
         lazy="selectin",
     )
-    diploma_details = relationship(
-        "DiplomaDetails",
+    previous_academic_details = relationship(
+        "AdmissionStudentPreviousAcademicDetails",
         back_populates="student",
         uselist=False,
         cascade="all, delete-orphan",
         passive_deletes=True,
         lazy="selectin",
     )
-    pg_details = relationship(
-        "PGDetails",
-        back_populates="student",
-        uselist=False,
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-        lazy="selectin",
-    )
+
     form_verification = relationship(
         "AdmissionFormVerification",
         back_populates="student",
@@ -262,19 +259,37 @@ class AdmissionStudent(Base):
         passive_deletes=True,
         lazy="selectin",
     )
-    # Reference relationships (from gate enquiry)
+
+    # References retained for admission-level reporting
     consultancy_reference = relationship(
-        "ConsultancyReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
+        "ConsultancyReference",
+        back_populates="student",
+        foreign_keys="ConsultancyReference.student_id",
+        uselist=False,
+        lazy="selectin",
     )
     staff_reference = relationship(
-        "StaffReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
+        "StaffReference",
+        back_populates="student",
+        foreign_keys="StaffReference.student_id",
+        uselist=False,
+        lazy="selectin",
     )
     student_reference = relationship(
-        "StudentReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
+        "StudentReference",
+        back_populates="student",
+        foreign_keys="StudentReference.student_id",
+        uselist=False,
+        lazy="selectin",
     )
     other_reference = relationship(
-        "OtherReference", uselist=False, cascade="all, delete-orphan", passive_deletes=True, lazy="selectin"
+        "OtherReference",
+        back_populates="student",
+        foreign_keys="OtherReference.student_id",
+        uselist=False,
+        lazy="selectin",
     )
+
     deposits = relationship(
         "StudentDeposit",
         back_populates="student",
@@ -284,118 +299,213 @@ class AdmissionStudent(Base):
     )
 
     def __repr__(self):
-        return f"<AdmissionStudent(id={self.id}, name='{self.name}', gate_pass='{self.gate_pass_number}')>"
+        return f"<AdmissionStudent(id={self.id}, enquiry='{self.enquiry_number}')>"
+
+    @classmethod
+    async def _link_gate_references_to_student(
+        cls,
+        session,
+        gate_entry_id,
+        student_id,
+    ):
+        from common.models.gate.visitor_model import (
+            ConsultancyReference,
+            OtherReference,
+            StaffReference,
+            StudentReference,
+        )
+
+        reference_models = [
+            ConsultancyReference,
+            StaffReference,
+            StudentReference,
+            OtherReference,
+        ]
+
+        for model in reference_models:
+            await session.execute(
+                update(model)
+                .where(model.gate_entry_id == gate_entry_id, model.student_id.is_(None))
+                .values(student_id=student_id)
+            )
 
     @classmethod
     async def create(cls, request, session, data_list):
-        """Override create to automatically generate application numbers"""
+        """Create admission students and synchronize split-detail tables."""
         from components.generator.utils.get_user_from_request import get_user_id
-        from sqlalchemy.inspection import inspect
 
         if not data_list:
             raise ValueError("No data provided to create records.")
 
-        objects = []
+        objects: list[AdmissionStudent] = []
         errors = []
         skipped = 0
-        
+
+        mapper = inspect(cls)
+        relationship_map = mapper.relationships
+
         for idx, data in enumerate(data_list):
             user_id = await get_user_id(request)
-            obj_data = data.dict() if hasattr(data, "dict") else data
+            obj_data = data.dict() if hasattr(data, "dict") else dict(data)
             obj_data["created_by"] = user_id
-            
-            # Check for duplicate Aadhaar number
-            if obj_data.get("aadhaar_number"):
+
+            visitor_id = obj_data.pop("visitor_id", None)
+            gate_entry = None
+            gate_entry_id = obj_data.get("gate_entry_id") or visitor_id
+            if gate_entry_id:
+                gate_entry = await session.get(AdmissionGateEntry, gate_entry_id)
+                obj_data["gate_entry_id"] = gate_entry.id
+
+            personal_details = obj_data.get("personal_details")
+            name = None
+            if isinstance(personal_details, dict):
+                name = personal_details.get("name")
+            elif hasattr(personal_details, "name"):
+                name = personal_details.name
+
+            if not name:
+                errors.append({"row": idx + 1, "error": "Student name is required in personal details"})
+                skipped += 1
+                continue
+
+            aadhaar = None
+            if isinstance(personal_details, dict):
+                aadhaar = personal_details.get("aadhaar_number")
+            elif hasattr(personal_details, "aadhaar_number"):
+                aadhaar = personal_details.aadhaar_number
+
+            if aadhaar:
+                from sqlalchemy import join
                 existing = await session.execute(
-                    select(cls.id).where(cls.aadhaar_number == obj_data["aadhaar_number"])
+                    select(cls.id).join(AdmissionStudentPersonalDetails).where(
+                        AdmissionStudentPersonalDetails.aadhaar_number == aadhaar,
+                        cls.deleted_at.is_(None),
+                    )
                 )
                 if existing.scalar_one_or_none():
-                    errors.append({
-                        "row": idx + 1,
-                        "error": f"Duplicate Aadhaar number: {obj_data['aadhaar_number']} already exists"
-                    })
+                    errors.append(
+                        {
+                            "row": idx + 1,
+                            "error": f"Duplicate Aadhaar number: {aadhaar} already exists",
+                        }
+                    )
                     skipped += 1
                     continue
-            
-            # Generate enquiry number if not provided
+
             if not obj_data.get("enquiry_number"):
                 from apps.admission.services import generate_enquiry_number
-                obj_data["enquiry_number"] = await generate_enquiry_number(session, obj_data.get("institution_id"))
-            
-            # Resolve admission_quota_id if it's a string
+                
+                program_details = obj_data.get("program_details")
+                inst_id = None
+                if isinstance(program_details, dict):
+                    inst_id = program_details.get("institution_id")
+                elif hasattr(program_details, "institution_id"):
+                    inst_id = program_details.institution_id
+
+                obj_data["enquiry_number"] = await generate_enquiry_number(
+                    session,
+                    inst_id,
+                )
+
             if isinstance(obj_data.get("admission_quota_id"), str):
                 from common.models.master.admission_masters import SeatQuota
+
                 quota_result = await session.execute(
                     select(SeatQuota.id).where(SeatQuota.name == obj_data["admission_quota_id"])
                 )
                 obj_data["admission_quota_id"] = quota_result.scalar_one_or_none()
 
-            # Resolve admission_type_id if it's a string
             if isinstance(obj_data.get("admission_type_id"), str):
                 from common.models.master.admission_masters import AdmissionType
+
                 type_result = await session.execute(
                     select(AdmissionType.id).where(AdmissionType.name == obj_data["admission_type_id"])
                 )
                 obj_data["admission_type_id"] = type_result.scalar_one_or_none()
-            
-            # Handle nested relationships - convert dicts/lists to model instances
-            mapper = inspect(cls)
-            for rel_name, rel in mapper.relationships.items():
-                if rel_name in obj_data and obj_data[rel_name] is not None:
-                    rel_data = obj_data[rel_name]
-                    related_model = rel.mapper.class_
-                    # If a single related object is provided as a dict -> create instance
-                    if not rel.uselist and isinstance(rel_data, dict):
-                        # Extract only scalar fields, not relationships
-                        rel_mapper = inspect(related_model)
-                        scalar_data = {k: v for k, v in rel_data.items() if k not in rel_mapper.relationships}
-                        obj_data[rel_name] = related_model(**scalar_data)
-                    # If a list of related objects is provided -> convert each
-                    elif rel.uselist and isinstance(rel_data, list):
-                        new_list = []
-                        rel_mapper = inspect(related_model)
-                        for item in rel_data:
-                            if isinstance(item, dict):
-                                # Extract only scalar fields, not relationships
-                                scalar_data = {k: v for k, v in item.items() if k not in rel_mapper.relationships}
-                                new_list.append(related_model(**scalar_data))
-                            elif hasattr(item, '_sa_instance_state'):
-                                new_list.append(item)
-                            else:
-                                raise ValueError(f"Invalid related item for relationship '{rel_name}': {item}")
-                        obj_data[rel_name] = new_list
-            
-            objects.append(cls(**obj_data))
+
+            # Convert relationship dict/list payloads into model instances.
+            for rel_name, rel in relationship_map.items():
+                if rel_name not in obj_data or obj_data[rel_name] is None:
+                    continue
+
+                rel_data = obj_data[rel_name]
+                related_model = rel.mapper.class_
+
+                if not rel.uselist and isinstance(rel_data, dict):
+                    rel_mapper = inspect(related_model)
+                    scalar_data = {
+                        key: value
+                        for key, value in rel_data.items()
+                        if key in rel_mapper.columns
+                    }
+                    obj_data[rel_name] = related_model(**scalar_data)
+                elif rel.uselist and isinstance(rel_data, list):
+                    rel_mapper = inspect(related_model)
+                    new_list = []
+                    for item in rel_data:
+                        if isinstance(item, dict):
+                            scalar_data = {
+                                key: value
+                                for key, value in item.items()
+                                if key in rel_mapper.columns
+                            }
+                            new_list.append(related_model(**scalar_data))
+                        elif hasattr(item, "_sa_instance_state"):
+                            new_list.append(item)
+                        else:
+                            raise ValueError(
+                                f"Invalid related item for relationship '{rel_name}': {item}"
+                            )
+                    obj_data[rel_name] = new_list
+
+            valid_keys = set(mapper.columns.keys()) | set(mapper.relationships.keys())
+            filtered_data = {key: value for key, value in obj_data.items() if key in valid_keys}
+
+            objects.append(cls(**filtered_data))
 
         if objects:
             session.add_all(objects)
+            await session.flush()
+
+            for student in objects:
+                if student.gate_entry_id:
+                    await cls._link_gate_references_to_student(
+                        session,
+                        gate_entry_id=student.gate_entry_id,
+                        student_id=student.id,
+                    )
+
             await session.commit()
 
         return {
             "created": len(objects),
+            "ids": [str(obj.id) for obj in objects],
             "skipped": skipped,
-            "errors": errors
+            "errors": errors,
         }
 
     @classmethod
     async def update(cls, request, session, data_list):
-        """
-        Prevent department/course edits when the student's fee structure is locked.
-        """
+        """Update admission students and synchronize split-detail tables."""
         if not data_list:
             raise ValueError("No data provided for update.")
 
         normalized_items = []
         student_ids = []
+
         for data_obj in data_list:
-            data = (
-                data_obj.dict(exclude_unset=True)
-                if hasattr(data_obj, "dict")
-                else data_obj
-            )
+            data = data_obj.dict(exclude_unset=True) if hasattr(data_obj, "dict") else dict(data_obj)
             student_id = data.get("id")
             if not student_id:
                 raise ValueError("Each object must have an 'id' field.")
+
+            visitor_id = data.pop("visitor_id", None)
+            gate_entry = None
+            gate_entry_id = data.get("gate_entry_id") or visitor_id
+            if gate_entry_id:
+                gate_entry = await session.get(AdmissionGateEntry, gate_entry_id)
+                data["gate_entry_id"] = gate_entry.id
+
             normalized_items.append(data)
             student_ids.append(student_id)
 
@@ -412,13 +522,30 @@ class AdmissionStudent(Base):
             if not student or not getattr(student, "is_fee_structure_locked", False):
                 continue
 
+            program_details = data.get("program_details")
+            dept_id = None
+            course_id = None
+            if isinstance(program_details, dict):
+                dept_id = program_details.get("department_id")
+                course_id = program_details.get("course_id")
+            elif hasattr(program_details, "department_id"):
+                dept_id = program_details.department_id
+                course_id = program_details.course_id
+
+            # We need to find the student's existing program_details department
+            existing_dept_id = None
+            existing_course_id = None
+            if student.program_details:
+                existing_dept_id = student.program_details.department_id
+                existing_course_id = student.program_details.course_id
+
             has_dept_change = (
-                "department_id" in data
-                and as_str(data.get("department_id")) != as_str(student.department_id)
+                dept_id is not None
+                and as_str(dept_id) != as_str(existing_dept_id)
             )
             has_course_change = (
-                "course_id" in data
-                and as_str(data.get("course_id")) != as_str(student.course_id)
+                course_id is not None
+                and as_str(course_id) != as_str(existing_course_id)
             )
 
             if has_dept_change or has_course_change:
@@ -426,7 +553,113 @@ class AdmissionStudent(Base):
                     "Fee structure is locked for this student; department/course change is not allowed."
                 )
 
-        return await super().update(request, session, data_list)
+        updated_count = await super().update(request, session, normalized_items)
+
+        for data in normalized_items:
+            gate_entry_id = data.get("gate_entry_id")
+            if gate_entry_id:
+                await cls._link_gate_references_to_student(
+                    session,
+                    gate_entry_id=gate_entry_id,
+                    student_id=data["id"],
+                )
+
+        await session.commit()
+        return updated_count
+
+
+class AdmissionStudentPersonalDetails(Base):
+    __tablename__ = "admission_student_personal_details"
+
+    admission_student_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("admission_students.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    name = Column(String(200), nullable=False)
+    father_name = Column(String(200), nullable=True)
+    gender = Column(Enum(GenderEnum), nullable=True)
+    date_of_birth = Column(Date, nullable=True)
+    student_mobile = Column(String(15), nullable=True)
+    parent_mobile = Column(String(15), nullable=True)
+    aadhaar_number = Column(String(12), nullable=True, index=True)
+
+    religion = Column(String(50), nullable=True)
+    community = Column(String(50), nullable=True)
+    caste = Column(String(50), nullable=True)
+    parent_income = Column(Numeric(12, 2), nullable=True)
+
+    door_no = Column(String(50), nullable=True)
+    street_name = Column(String(200), nullable=True)
+    village_name = Column(String(100), nullable=True)
+    taluk = Column(String(100), nullable=True)
+    district = Column(String(100), nullable=True)
+    state = Column(String(100), nullable=True)
+    pincode = Column(String(10), nullable=True)
+    parent_address = Column(Text, nullable=True)
+    permanent_address = Column(Text, nullable=True)
+
+    student = relationship("AdmissionStudent", back_populates="personal_details", lazy="selectin")
+
+
+class AdmissionStudentProgramDetails(Base):
+    __tablename__ = "admission_student_program_details"
+
+    admission_student_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("admission_students.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    campus = Column(String(200), nullable=True)
+    institution_id = Column(UUID(as_uuid=True), ForeignKey("institutions.id"), nullable=True, index=True)
+    department_id = Column(UUID(as_uuid=True), ForeignKey("departments.id"), nullable=True, index=True)
+    course_id = Column(UUID(as_uuid=True), ForeignKey("courses.id"), nullable=True, index=True)
+    academic_year_id = Column(UUID(as_uuid=True), ForeignKey("academic_years.id"), nullable=True, index=True)
+
+    year = Column(String(20), nullable=True)
+    branch = Column(String(200), nullable=True)
+    previous_academic_level = Column(Enum(PreviousAcademicLevelEnum), nullable=True)
+    is_lateral_entry = Column(Boolean, default=False, nullable=False)
+
+    admission_quota_id = Column(UUID(as_uuid=True), ForeignKey("seat_quotas.id"), nullable=True, index=True)
+    category = Column(Enum(CategoryEnum), nullable=True)
+    quota_type = Column(String(50), nullable=True)
+    special_quota = Column(String(100), nullable=True)
+    scholarships = Column(String(200), nullable=True)
+    boarding_place = Column(String(200), nullable=True)
+    admission_type_id = Column(UUID(as_uuid=True), ForeignKey("admission_types.id"), nullable=True, index=True)
+
+    student = relationship("AdmissionStudent", back_populates="program_details", lazy="selectin")
+    institution = relationship("Institution", lazy="selectin")
+    department = relationship("Department", lazy="selectin")
+    course = relationship("Course", lazy="selectin")
+    admission_quota = relationship("SeatQuota", lazy="selectin")
+    admission_type = relationship("AdmissionType", lazy="selectin")
+
+
+class AdmissionStudentPreviousAcademicDetails(Base):
+    __tablename__ = "admission_student_previous_academic_details"
+
+    admission_student_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("admission_students.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    sslc = Column(JSON, nullable=True)
+    hsc = Column(JSON, nullable=True)
+    diploma = Column(JSON, nullable=True)
+    degree = Column(JSON, nullable=True)
+
+    student = relationship("AdmissionStudent", back_populates="previous_academic_details", lazy="selectin")
 
 
 class SSLCDetails(Base):
@@ -446,15 +679,13 @@ class SSLCDetails(Base):
     school_name = Column(String(200), nullable=True)
     school_block = Column(String(200), nullable=True)
     school_district = Column(String(200), nullable=True)
-    board = Column(String(100), nullable=True)  # State Board, CBSE, ICSE, etc.
+    board = Column(String(100), nullable=True)
     year_of_passing = Column(String(4), nullable=True)
     marks = Column(Float, nullable=True)
     total_marks = Column(Float, nullable=True)
     percentage = Column(Float, nullable=True)
-    # created_at / updated_at inherited from Base
 
-    # Relationship
-    student = relationship("AdmissionStudent", back_populates="sslc_details", lazy="selectin")
+    student = relationship("AdmissionStudent", lazy="selectin")
 
     def __repr__(self):
         return f"<SSLCDetails(student_id={self.student_id}, register_number='{self.register_number}')>"
@@ -477,25 +708,22 @@ class HSCDetails(Base):
     school_name = Column(String(200), nullable=True)
     school_block = Column(String(200), nullable=True)
     school_district = Column(String(200), nullable=True)
-    board = Column(String(100), nullable=True)  # State Board, CBSE, ICSE, etc.
+    board = Column(String(100), nullable=True)
     year_of_passing = Column(String(4), nullable=True)
     total_marks = Column(Float, nullable=True)
     obtained_marks = Column(Float, nullable=True)
     percentage = Column(Float, nullable=True)
 
-    # Subject-wise marks (legacy aggregate columns kept for backward compatibility)
     maths_mark = Column(Float, nullable=True)
     physics_mark = Column(Float, nullable=True)
     chemistry_mark = Column(Float, nullable=True)
     pcm_percentage = Column(Float, nullable=True)
     cutoff_mark = Column(Float, nullable=True)
 
-    # School details
     school_address = Column(Text, nullable=True)
     medium_of_study = Column(String(50), nullable=True)
 
-    # Relationship
-    student = relationship("AdmissionStudent", back_populates="hsc_details", lazy="selectin")
+    student = relationship("AdmissionStudent", lazy="selectin")
     subject_marks = relationship(
         "HSCSubjectMark",
         back_populates="hsc_details",
@@ -528,8 +756,7 @@ class DiplomaDetails(Base):
     percentage = Column(Float, nullable=True)
     cgpa = Column(Float, nullable=True)
 
-    # Relationship
-    student = relationship("AdmissionStudent", back_populates="diploma_details", lazy="selectin")
+    student = relationship("AdmissionStudent", lazy="selectin")
 
     def __repr__(self):
         return f"<DiplomaDetails(student_id={self.student_id}, college_name='{self.college_name}')>"
@@ -548,16 +775,18 @@ class HSCSubjectMark(Base):
         index=True,
     )
 
-    subject_name = Column(String(100), nullable=False)  # e.g., Physics, Chemistry, Maths
-    subject_variant = Column(String(100), nullable=True)  # e.g., Vocational, Practical
+    subject_name = Column(String(100), nullable=False)
+    subject_variant = Column(String(100), nullable=True)
     total_marks = Column(Float, nullable=False)
     obtained_marks = Column(Float, nullable=False)
 
-    # Relationship
     hsc_details = relationship("HSCDetails", back_populates="subject_marks", lazy="selectin")
 
     def __repr__(self):
-        return f"<HSCSubjectMark(subject='{self.subject_name}', obtained={self.obtained_marks}/{self.total_marks})>"
+        return (
+            f"<HSCSubjectMark(subject='{self.subject_name}', "
+            f"obtained={self.obtained_marks}/{self.total_marks})>"
+        )
 
 
 class PGDetails(Base):
@@ -581,8 +810,7 @@ class PGDetails(Base):
     percentage = Column(Float, nullable=True)
     cgpa = Column(Float, nullable=True)
 
-    # Relationship
-    student = relationship("AdmissionStudent", back_populates="pg_details", lazy="selectin")
+    student = relationship("AdmissionStudent", lazy="selectin")
 
     def __repr__(self):
         return f"<PGDetails(student_id={self.student_id}, degree_name='{self.degree_name}')>"

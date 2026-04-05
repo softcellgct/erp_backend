@@ -12,7 +12,7 @@ from components.db.base_model import Base
 
 # Replace the direct import of models with a function-based import
 def import_models():
-    from common import models
+    import common.models
 
 
 # Call the function to import models

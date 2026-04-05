@@ -5,7 +5,6 @@ from common.models.master.screen import Screen, Module
 from common.models.master.admission_masters import AdmissionType, SeatQuota, DocumentType, SchoolMaster, SchoolListUpload
 from common.models.meta.models import Community, Caste, Religion
 
-
 from common.models.gate.visitor_model import (
     Visitor,
     PersonType,
@@ -18,7 +17,21 @@ from common.models.gate.visitor_model import (
     ConsultancyReference,
 )
 
-from common.models.admission.admission_entry import AdmissionStudent, SSLCDetails, HSCDetails, HSCSubjectMark, DiplomaDetails, PGDetails, SourceEnum, VisitStatusEnum, AdmissionStatusEnum
+from common.models.admission.admission_entry import (
+    AdmissionStudent,
+    AdmissionGateEntry,
+    AdmissionStudentPersonalDetails,
+    AdmissionStudentProgramDetails,
+    AdmissionStudentPreviousAcademicDetails,
+    SSLCDetails,
+    HSCDetails,
+    HSCSubjectMark,
+    DiplomaDetails,
+    PGDetails,
+    SourceEnum,
+    VisitStatusEnum,
+    AdmissionStatusEnum,
+)
 from common.models.admission.form_verification import AdmissionFormVerification, SubmittedCertificate
 from common.models.admission.department_change import DepartmentChangeRequest
 from common.models.admission.consultancy import Consultancy
@@ -37,6 +50,7 @@ from common.models.billing.fee_subhead import FeeSubHead
 from common.models.billing.transport import TransportRoute, TransportBus, TransportFeeStructure
 from common.models.billing.hostel import HostelRoom, HostelFeeStructure
 from common.models.billing.concession import Concession, ConcessionAudit
+from common.models.billing.concession_rule import ConcessionRule
 from common.models.billing.recall import PaymentRecallRequest
 from common.models.billing.financial_year import FinancialYear
 from common.models.billing.scholarship import StudentScholarship, ScholarshipTypeEnum, CertificateStatusEnum
@@ -78,6 +92,10 @@ __all__ = [
     "OtherReference",
     "ConsultancyReference",
     "AdmissionStudent",
+    "AdmissionGateEntry",
+    "AdmissionStudentPersonalDetails",
+    "AdmissionStudentProgramDetails",
+    "AdmissionStudentPreviousAcademicDetails",
     "SourceEnum",
     "VisitStatusEnum",
     "AdmissionStatusEnum",
@@ -109,6 +127,7 @@ __all__ = [
     "HostelFeeStructure",
     "Concession",
     "ConcessionAudit",
+    "ConcessionRule",
     "PaymentRecallRequest",
     "FinancialYear",
     "StudentScholarship",

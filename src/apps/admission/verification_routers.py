@@ -2,9 +2,8 @@
 API Routers for Admission Form Verification
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Request, File, UploadFile, Query
-from sqlalchemy import select, and_, insert
+from sqlalchemy import select, and_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.orm import selectinload
 from datetime import datetime
 from uuid import UUID
 from typing import List, Optional
@@ -19,10 +18,8 @@ from common.models.master.admission_masters import DocumentType
 from common.schemas.admission.form_verification import (
     AdmissionFormVerificationResponse,
     AdmissionFormVerificationUpdate,
-    PrintFormRequest,
     VerifyCertificateRequest,
     SubmittedCertificateResponse,
-    SubmittedCertificateCreate,
     SubmittedCertificateUpdate,
 )
 from components.db.db import get_db_session
@@ -747,22 +744,6 @@ async def mark_provisionally_allotted(
     # Update student status
     from common.models.admission.admission_entry import AdmissionStatusEnum
     student.status = AdmissionStatusEnum.PROVISIONALLY_ALLOTTED
-
-    # Lock student's final fee structure at provisional allotment stage.
-    try:
-        from apps.billing.services import billing_service
-
-        await billing_service.lock_student_fee_structure(
-            db,
-            student.id,
-            locked_by=user_id,
-        )
-    except Exception as exc:
-        await db.rollback()
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Fee structure lock failed: {exc}",
-        )
 
     await _safe_commit(db)
     await db.refresh(form_verification)

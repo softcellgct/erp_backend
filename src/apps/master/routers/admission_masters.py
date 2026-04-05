@@ -5,14 +5,12 @@ from uuid import UUID
 
 from components.db.db import get_db_session
 from apps.master.services.admission_master_services import (
-    create_admission_type, get_all_admission_types, get_admission_type_by_id, delete_admission_type,
-    create_seat_quota, get_all_seat_quotas, get_seat_quota_by_id, delete_seat_quota,
-    create_document_type, get_all_document_types, get_document_type_by_id, delete_document_type
+    create_admission_type, get_all_admission_types, delete_admission_type,
+    create_seat_quota, get_all_seat_quotas, delete_seat_quota,
+    create_document_type, get_all_document_types, delete_document_type
 )
 from common.schemas.master.admission_masters import (
-    AdmissionTypeCreate, AdmissionTypeResponse, AdmissionTypeUpdate,
-    SeatQuotaCreate, SeatQuotaResponse, SeatQuotaUpdate,
-    DocumentTypeCreate, DocumentTypeResponse, DocumentTypeUpdate
+    AdmissionTypeCreate, AdmissionTypeResponse, SeatQuotaCreate, SeatQuotaResponse, DocumentTypeCreate, DocumentTypeResponse
 )
 
 router = APIRouter(tags=["Admission Masters"])

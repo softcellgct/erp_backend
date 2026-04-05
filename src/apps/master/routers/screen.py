@@ -18,9 +18,10 @@ permissions_router = APIRouter()
 @permissions_router.get("/permissions", tags=["Permissions"])
 async def get_my_permissions(request: Request, db: AsyncSession = Depends(get_db_session)):
     current_user = request.state.user
-    if not current_user or not current_user.role_id:
+    role_id = getattr(current_user, 'role_id', None)
+    if not current_user or not role_id:
         return {}
-    return await ScreenService(db).get_permissions(current_user.role_id, str(current_user.id))
+    return await ScreenService(db).get_permissions(role_id, str(current_user.id))
 
 @permissions_router.get("/permissions/role/{role_id}", tags=["Permissions"])
 @is_superadmin

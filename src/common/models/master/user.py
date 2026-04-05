@@ -1,7 +1,7 @@
 from uuid import UUID
 from components.db.base_model import Base
 from sqlalchemy.orm import mapped_column, Mapped, relationship
-from sqlalchemy import Boolean, ForeignKey, Integer, String, event, insert, select
+from sqlalchemy import Boolean, ForeignKey, String, event, insert, select
 from logs.logging import logger
 from components.utils.password_utils import get_password_hash
 
