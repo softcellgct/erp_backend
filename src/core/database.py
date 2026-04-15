@@ -101,81 +101,141 @@ async def seed_initial_data() -> None:
 
     async with _async_session_factory() as session:
         # ── Roles ─────────────────────────────────────
-        existing_roles = (await session.execute(select(Role))).scalars().all()
-        admin_role = None
+        roles = (await session.execute(select(Role))).scalars().all()
+        admin_role = next((r for r in roles if r.name == "super_admin"), None)
+        if admin_role is None:
+            admin_role = next((r for r in roles if r.name == "Super Admin"), None)
 
-        if not existing_roles:
-            roles = [
-                Role(name="Super Admin", description="Full access"),
-                Role(name="Principal", description="Principal-level access"),
-                Role(name="HOD", description="Head of Department access"),
-                Role(name="Teacher", description="Teacher access"),
-                Role(name="Staff", description="Staff access"),
-                Role(name="Student", description="Student access"),
-            ]
-            session.add_all(roles)
-            await session.commit()
-            admin_role = roles[0]
-            await session.refresh(admin_role)
-        else:
-            admin_role = next((r for r in existing_roles if r.name == "Super Admin"), None)
+        if admin_role is None:
+            admin_role = Role(name="super_admin", description="Super Administrator with full access")
+            session.add(admin_role)
+            await session.flush()
 
         # ── Users ─────────────────────────────────────
         existing_users = (await session.execute(select(User))).scalars().all()
-        if not existing_users and admin_role:
-            superadmin = User(
-                username="superadmin",
-                user_code="GCT1",
-                email="superadmin@example.com",
-                full_name="Super Admin",
-                password=hash_password("superadmin@123"),
-                is_active=True,
-                is_superuser=True,
-                role_id=admin_role.id,
+        superadmin_user = next(
+            (u for u in existing_users if u.username in {"super_admin", "superadmin"}),
+            None,
+        )
+        if superadmin_user is None:
+            session.add(
+                User(
+                    username="super_admin",
+                    user_code="GCT001",
+                    email="superadmin@softcell.in",
+                    full_name="Super Administrator",
+                    password=hash_password("superadmin@123"),
+                    is_active=True,
+                    is_superuser=True,
+                    role_id=admin_role.id,
+                )
             )
-            session.add(superadmin)
-            await session.commit()
 
         # ── Modules ───────────────────────────────────
-        existing_modules = (await session.execute(select(Module))).scalars().all()
-        if not existing_modules:
-            modules = [
-                Module(name="Admission", description="Student admissions"),
-                Module(name="Master", description="System configuration"),
-                Module(name="Gate", description="Entry/exit management"),
-                Module(name="Billing", description="Fee & finance"),
-            ]
-            session.add_all(modules)
-            await session.commit()
-            existing_modules = modules
+        modules = (await session.execute(select(Module))).scalars().all()
+        module_by_name = {m.name.upper(): m for m in modules}
+        required_modules = {
+            "ADMISSION": "Admission Module",
+            "FINANCE": "Finance Module",
+            "GATE": "Gate Module",
+        }
+        for module_name, module_title in required_modules.items():
+            if module_name not in module_by_name:
+                module = Module(name=module_name, title=module_title)
+                session.add(module)
+                await session.flush()
+                module_by_name[module_name] = module
 
         # ── Screens ───────────────────────────────────
-        existing_screens = (await session.execute(select(Screen))).scalars().all()
-        if not existing_screens:
-            module_map = {m.name.lower(): m.id for m in existing_modules}
-            screens = [
-                Screen(name="Dashboard", module_id=module_map.get("admission"), description="Overview statistics"),
-                Screen(name="PRE_ADMISSION", title="Pre Admission", module_id=module_map.get("admission")),
-                Screen(name="ADMISSION_ENQUIRY", title="Admission Enquiry", module_id=module_map.get("admission")),
-                Screen(name="PAYMENT", title="Payment Screen", module_id=module_map.get("billing")),
-            ]
-            session.add_all(screens)
-            await session.commit()
-            existing_screens = screens
+        screens = (await session.execute(select(Screen))).scalars().all()
+        screen_by_name = {s.name.upper(): s for s in screens}
+
+        required_screens = [
+            ("PRE_ADMISSION", "Pre Admission", "ADMISSION"),
+            ("ADMISSION_ENQUIRY", "Admission Enquiry", "ADMISSION"),
+            ("PAYMENT", "Payment Screen", "FINANCE"),
+            ("GATE", "Gate", "GATE"),
+            ("VISITOR_PASS_IN", "Visitor Pass", "GATE"),
+            ("VISITOR_PASS_OUT", "Visitor Pass Out", "GATE"),
+            ("VISITOR_REPORTS", "Visitor Reports", "GATE"),
+            ("HOSTEL_STUDENT_OUT", "Hostel Student Pass", "GATE"),
+            ("HOSTEL_STUDENT_IN", "Hostel Student In", "GATE"),
+            ("HOSTEL_REPORTS", "Hostel Reports", "GATE"),
+            ("STAFF_OUT", "Staff Out/In", "GATE"),
+            ("STAFF_IN", "Staff In", "GATE"),
+            ("STAFF_REPORTS", "Staff Reports", "GATE"),
+            ("MATERIAL_OUT_IN", "Material In/Out", "GATE"),
+            ("NEW_MATERIAL", "New Material", "GATE"),
+            ("MATERIAL_SCRAP", "Scrap Material", "GATE"),
+            ("MATERIAL_REPORTS", "Material Reports", "GATE"),
+            ("VEHICLE_OUT", "Vehicle Out/In", "GATE"),
+            ("VEHICLE_IN", "Vehicle In", "GATE"),
+            ("VEHICLE_REPORTS", "Vehicle Reports", "GATE"),
+        ]
+
+        added_screen_ids = []
+        for screen_name, screen_title, module_name in required_screens:
+            if screen_name not in screen_by_name:
+                module = module_by_name.get(module_name)
+                if module is None:
+                    continue
+                screen = Screen(
+                    name=screen_name,
+                    title=screen_title,
+                    module_id=module.id,
+                    parent_id=None,
+                )
+                session.add(screen)
+                await session.flush()
+                screen_by_name[screen_name] = screen
+                added_screen_ids.append(screen.id)
 
         # ── Permissions for super-admin ───────────────
-        existing_perms = (await session.execute(select(RolePermission))).scalars().all()
-        if not existing_perms and admin_role:
-            perms = [
-                RolePermission(
-                    role_id=admin_role.id,
-                    screen_id=s.id,
-                    can_view=True,
-                    can_add=True,
-                    can_edit=True,
-                    can_delete=True,
+        if admin_role is not None:
+            existing_perms = (
+                await session.execute(
+                    select(RolePermission).where(RolePermission.role_id == admin_role.id)
                 )
-                for s in existing_screens
+            ).scalars().all()
+            existing_perm_screen_ids = {perm.screen_id for perm in existing_perms}
+
+            gate_screen_ids = [
+                screen.id
+                for name, screen in screen_by_name.items()
+                if name in {
+                    "GATE",
+                    "VISITOR_PASS_IN",
+                    "VISITOR_PASS_OUT",
+                    "VISITOR_REPORTS",
+                    "HOSTEL_STUDENT_OUT",
+                    "HOSTEL_STUDENT_IN",
+                    "HOSTEL_REPORTS",
+                    "STAFF_OUT",
+                    "STAFF_IN",
+                    "STAFF_REPORTS",
+                    "MATERIAL_OUT_IN",
+                    "NEW_MATERIAL",
+                    "MATERIAL_SCRAP",
+                    "MATERIAL_REPORTS",
+                    "VEHICLE_OUT",
+                    "VEHICLE_IN",
+                    "VEHICLE_REPORTS",
+                }
             ]
-            session.add_all(perms)
-            await session.commit()
+
+            target_screen_ids = set(gate_screen_ids) | set(added_screen_ids)
+            for screen_id in target_screen_ids:
+                if screen_id in existing_perm_screen_ids:
+                    continue
+                session.add(
+                    RolePermission(
+                        role_id=admin_role.id,
+                        screen_id=screen_id,
+                        can_view=True,
+                        can_create=True,
+                        can_edit=True,
+                        can_delete=True,
+                    )
+                )
+
+        await session.commit()

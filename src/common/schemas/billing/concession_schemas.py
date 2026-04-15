@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field
 from uuid import UUID
 from typing import Optional
 from datetime import datetime
@@ -7,7 +7,7 @@ from decimal import Decimal
 
 class ConcessionBase(BaseModel):
     student_id: UUID
-    college_id: UUID
+    institution_id: UUID = Field(alias="college_id")
     fee_head_id: Optional[UUID] = None
     fee_sub_head_id: Optional[UUID] = None
     amount: Optional[Decimal] = None
@@ -17,6 +17,8 @@ class ConcessionBase(BaseModel):
     proof_file: Optional[str] = None
     status: Optional[str] = "pending"
     meta: Optional[dict] = None
+
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class ConcessionCreate(ConcessionBase):

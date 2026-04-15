@@ -897,7 +897,11 @@ class FinanceService:
         gender: str | None = None,
         admission_quota_id: UUID | None = None,
     ) -> list[dict]:
-        from common.models.admission.admission_entry import AdmissionStudent, AdmissionStudentPersonalDetails
+        from common.models.admission.admission_entry import (
+            AdmissionStudent,
+            AdmissionStudentPersonalDetails,
+            AdmissionStudentProgramDetails,
+        )
 
         demand_stmt = (
             select(
@@ -928,37 +932,74 @@ class FinanceService:
         stmt = (
             select(AdmissionStudent)
             .options(
-                selectinload(AdmissionStudent.department),
-                selectinload(AdmissionStudent.course),
+                selectinload(AdmissionStudent.personal_details),
+                selectinload(AdmissionStudent.program_details).selectinload(
+                    AdmissionStudentProgramDetails.department
+                ),
+                selectinload(AdmissionStudent.program_details).selectinload(
+                    AdmissionStudentProgramDetails.course
+                ),
             )
             .where(
                 AdmissionStudent.deleted_at.is_(None),
-                AdmissionStudent.institution_id == institution_id,
                 AdmissionStudent.id.in_(list(by_student.keys())),
+                AdmissionStudent.program_details.has(
+                    AdmissionStudentProgramDetails.institution_id == institution_id
+                ),
             )
         )
 
         if academic_year_id:
-            stmt = stmt.where(AdmissionStudent.academic_year_id == academic_year_id)
+            stmt = stmt.where(
+                AdmissionStudent.program_details.has(
+                    AdmissionStudentProgramDetails.academic_year_id == academic_year_id
+                )
+            )
         if department_id:
-            stmt = stmt.where(AdmissionStudent.department_id == department_id)
+            stmt = stmt.where(
+                AdmissionStudent.program_details.has(
+                    AdmissionStudentProgramDetails.department_id == department_id
+                )
+            )
         if course_id:
-            stmt = stmt.where(AdmissionStudent.course_id == course_id)
+            stmt = stmt.where(
+                AdmissionStudent.program_details.has(
+                    AdmissionStudentProgramDetails.course_id == course_id
+                )
+            )
         if batch:
-            stmt = stmt.where(AdmissionStudent.year == batch)
+            stmt = stmt.where(
+                AdmissionStudent.program_details.has(
+                    AdmissionStudentProgramDetails.year == batch
+                )
+            )
         if gender:
-            stmt = stmt.where(AdmissionStudent.gender == gender)
+            stmt = stmt.where(
+                AdmissionStudent.personal_details.has(
+                    AdmissionStudentPersonalDetails.gender == gender
+                )
+            )
         if admission_quota_id:
-            stmt = stmt.where(AdmissionStudent.admission_quota_id == admission_quota_id)
+            stmt = stmt.where(
+                AdmissionStudent.program_details.has(
+                    AdmissionStudentProgramDetails.admission_quota_id
+                    == admission_quota_id
+                )
+            )
 
-        if scholarship_type:
+        if scholarship_type or scholarship_received_only:
             scholarship_stmt = select(StudentScholarship.student_id).where(
                 StudentScholarship.institution_id == institution_id,
-                StudentScholarship.scholarship_type == scholarship_type,
                 StudentScholarship.deleted_at.is_(None),
             )
+            if scholarship_type:
+                scholarship_stmt = scholarship_stmt.where(
+                    StudentScholarship.scholarship_type == scholarship_type
+                )
             if scholarship_received_only:
-                scholarship_stmt = scholarship_stmt.where(StudentScholarship.amount_received.is_(True))
+                scholarship_stmt = scholarship_stmt.where(
+                    StudentScholarship.amount_received.is_(True)
+                )
             scholarship_result = await db.execute(scholarship_stmt)
             scholarship_student_ids = list(set(scholarship_result.scalars().all()))
             if not scholarship_student_ids:
@@ -970,14 +1011,17 @@ class FinanceService:
 
         response: list[dict] = []
         for student in students:
+            program_details = getattr(student, "program_details", None)
+            department = getattr(program_details, "department", None)
+            course = getattr(program_details, "course", None)
             response.append(
                 {
                     "student_id": student.id,
                     "application_number": student.application_number,
                     "student_name": getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None),
-                    "department_name": student.department.name if student.department else None,
-                    "course_name": student.course.name if student.course else None,
-                    "academic_year_id": student.academic_year_id,
+                    "department_name": getattr(department, "name", None),
+                    "course_name": getattr(course, "title", None) or getattr(course, "name", None),
+                    "academic_year_id": getattr(program_details, "academic_year_id", None),
                     "scholarship_type": scholarship_type,
                     "outstanding_amount": by_student.get(student.id, Decimal("0")),
                 }
@@ -1237,11 +1281,13 @@ class FinanceService:
         self,
         db: AsyncSession,
         institution_id: UUID,
+        limit: int = 100,
     ) -> list[dict]:
         stmt = (
             select(MultiReceipt)
             .where(MultiReceipt.institution_id == institution_id)
             .order_by(MultiReceipt.created_at.desc())
+            .limit(limit)
         )
         result = await db.execute(stmt)
         receipts = result.scalars().all()

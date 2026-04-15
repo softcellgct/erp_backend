@@ -857,7 +857,10 @@ class BillingService:
         institution_id: UUID,
         identifiers: list[str] | None,
     ) -> dict:
-        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.admission.admission_entry import (
+            AdmissionStudent,
+            AdmissionStudentProgramDetails,
+        )
 
         normalized_to_display: dict[str, str] = {}
         ordered_identifiers: list[str] = []
@@ -879,9 +882,13 @@ class BillingService:
                 selectinload(AdmissionStudent.department),
                 selectinload(AdmissionStudent.course),
             )
+            .join(
+                AdmissionStudentProgramDetails,
+                AdmissionStudentProgramDetails.student_id == AdmissionStudent.id,
+            )
             .where(
                 AdmissionStudent.deleted_at.is_(None),
-                AdmissionStudent.institution_id == institution_id,
+                AdmissionStudentProgramDetails.institution_id == institution_id,
                 or_(
                     func.lower(func.trim(AdmissionStudent.application_number)).in_(
                         ordered_identifiers
@@ -976,7 +983,10 @@ class BillingService:
         return float(derived_amount), matched_item.id, resolved_semester, resolved_year
 
     async def create_general_demand(self, db: AsyncSession, payload) -> dict:
-        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.admission.admission_entry import (
+            AdmissionStudent,
+            AdmissionStudentProgramDetails,
+        )
         from common.models.billing.application_fees import FeeHead
         from common.models.billing.demand import DemandBatch, DemandItem
         from common.models.billing.fee_subhead import FeeSubHead
@@ -1061,10 +1071,17 @@ class BillingService:
         if not target_student_ids:
             raise ValueError("No target students found for general demand")
 
-        students_stmt = select(AdmissionStudent.id).where(
-            AdmissionStudent.deleted_at.is_(None),
-            AdmissionStudent.institution_id == institution_id,
-            AdmissionStudent.id.in_(target_student_ids),
+        students_stmt = (
+            select(AdmissionStudent.id)
+            .join(
+                AdmissionStudentProgramDetails,
+                AdmissionStudentProgramDetails.student_id == AdmissionStudent.id,
+            )
+            .where(
+                AdmissionStudent.deleted_at.is_(None),
+                AdmissionStudentProgramDetails.institution_id == institution_id,
+                AdmissionStudent.id.in_(target_student_ids),
+            )
         )
         students_res = await db.execute(students_stmt)
         valid_student_ids = set(students_res.scalars().all())
@@ -1081,8 +1098,13 @@ class BillingService:
             fee_sub_head_id=fee_sub_head_id,
         )
 
+        if not matched_item:
+            raise ValueError(
+                "Selected fee head/subhead is not configured in the chosen fee structure"
+            )
+
         amount_value = data.get("amount")
-        fee_structure_item_id = matched_item.id if matched_item else None
+        fee_structure_item_id = matched_item.id
         resolved_semester = semester
         resolved_year = int(year) if year is not None else None
         if amount_value is None:
@@ -1240,7 +1262,10 @@ class BillingService:
         apply_to_students: list[UUID] | list[str] | None = None,
     ):
         """Return AdmissionStudent IDs matching filters."""
-        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.admission.admission_entry import (
+            AdmissionStudent,
+            AdmissionStudentProgramDetails,
+        )
         from common.models.master.admission_masters import SeatQuota
         from common.models.master.institution import Course, Department
 
@@ -1257,7 +1282,10 @@ class BillingService:
 
         institution_uuid = self._parse_uuid(institution_id)
         if institution_uuid:
-            stmt = stmt.where(AdmissionStudent.institution_id == institution_uuid)
+            stmt = stmt.join(
+                AdmissionStudentProgramDetails,
+                AdmissionStudentProgramDetails.student_id == AdmissionStudent.id,
+            ).where(AdmissionStudentProgramDetails.institution_id == institution_uuid)
 
         explicit_student_ids = [
             parsed

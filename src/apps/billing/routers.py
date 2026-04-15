@@ -1136,6 +1136,8 @@ cash_counter_crud = create_crud_routes(
 router.include_router(cash_counter_crud, prefix="/cash-counters", tags=["Billing - Cash Counters"])
 
 from common.models.billing.concession import ConcessionAudit
+from common.models.billing.demand import DemandItem
+from common.models.billing.application_fees import Invoice, PaymentStatusEnum
 from pydantic import BaseModel
 
 class ConcessionReviewRequest(BaseModel):
@@ -1159,6 +1161,68 @@ async def review_concession(
         raise HTTPException(400, "Concession is not in pending state")
         
     concession.status = req.status
+
+    # Apply approved concession to outstanding student demands immediately.
+    if req.status == "approved":
+        demand_stmt = (
+            select(DemandItem)
+            .where(
+                DemandItem.student_id == concession.student_id,
+                DemandItem.deleted_at.is_(None),
+                DemandItem.amount > 0,
+                DemandItem.status.in_(["pending", "invoiced", "partial"]),
+            )
+            .order_by(DemandItem.year.asc().nullsfirst(), DemandItem.semester.asc().nullsfirst(), DemandItem.created_at.asc())
+        )
+
+        if concession.fee_head_id:
+            demand_stmt = demand_stmt.where(DemandItem.fee_head_id == concession.fee_head_id)
+        if concession.fee_sub_head_id:
+            demand_stmt = demand_stmt.where(DemandItem.fee_sub_head_id == concession.fee_sub_head_id)
+
+        demand_rows = await db.execute(demand_stmt)
+        demands = demand_rows.scalars().all()
+
+        remaining_amount = Decimal(str(concession.amount or 0))
+        concession_percent = Decimal(str(concession.percent or 0))
+
+        for demand in demands:
+            original_amount = Decimal(str(demand.amount or 0))
+            if original_amount <= 0:
+                continue
+
+            reduction = Decimal("0")
+            if concession_percent > 0:
+                reduction = (original_amount * concession_percent / Decimal("100")).quantize(Decimal("0.01"))
+            elif remaining_amount > 0:
+                reduction = min(remaining_amount, original_amount)
+
+            if reduction <= 0:
+                continue
+
+            updated_amount = max(Decimal("0"), original_amount - reduction)
+            demand.amount = updated_amount
+            if updated_amount == 0:
+                demand.status = "cancelled"
+
+            if demand.invoice_id:
+                inv_stmt = select(Invoice).where(Invoice.id == demand.invoice_id)
+                inv_res = await db.execute(inv_stmt)
+                invoice = inv_res.scalars().first()
+                if invoice:
+                    invoice.amount = max(Decimal("0"), Decimal(str(invoice.amount or 0)) - reduction)
+                    paid_amount = Decimal(str(invoice.paid_amount or 0))
+                    if paid_amount >= invoice.amount:
+                        invoice.balance_due = Decimal("0")
+                        invoice.status = PaymentStatusEnum.PAID
+                    else:
+                        invoice.balance_due = max(Decimal("0"), invoice.amount - paid_amount)
+                        invoice.status = PaymentStatusEnum.PARTIAL if paid_amount > 0 else PaymentStatusEnum.PENDING
+
+            if concession_percent <= 0:
+                remaining_amount = max(Decimal("0"), remaining_amount - reduction)
+                if remaining_amount <= 0:
+                    break
     
     audit = ConcessionAudit(
         concession_id=concession.id,

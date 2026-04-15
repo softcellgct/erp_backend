@@ -5,7 +5,7 @@ bulk receipt processing, and student fee visibility.
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from components.db.db import get_db_session
@@ -310,10 +310,15 @@ async def generate_multi_receipt(
 )
 async def list_multi_receipts(
     institution_id: UUID,
+    limit: int = Query(100, ge=1, le=500),
     db: AsyncSession = Depends(get_db_session),
 ):
     try:
-        return await finance_service.list_multi_receipts(db=db, institution_id=institution_id)
+        return await finance_service.list_multi_receipts(
+            db=db,
+            institution_id=institution_id,
+            limit=limit,
+        )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
