@@ -51,6 +51,7 @@ person_type_crud = create_crud_routes(
     AllResponseSchema=PersonTypeResponse,
     IdResponseSchema=PersonTypeResponse,
     decorators=[is_superadmin],
+    apply_decorators_on_read=False,
 )
 person_type_router.include_router(
     person_type_crud, prefix="/person-types", tags=["Gate - Person Types"]

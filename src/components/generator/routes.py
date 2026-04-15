@@ -18,6 +18,7 @@ def create_crud_routes(
     AllResponseSchema=None,
     IdResponseSchema=None,
     decorators=None,
+    apply_decorators_on_read: bool = True,
 ) -> APIRouter:
     SchemaCreate = CreateSchema or get_schemas(model)[0]
     SchemaUpdate = UpdateSchema or get_schemas(model)[1]
@@ -240,6 +241,11 @@ def create_crud_routes(
     if decorators:
         for route in router.routes:
             if hasattr(route, 'endpoint') and callable(route.endpoint):
+                methods = getattr(route, "methods", set()) or set()
+                is_read_route = "GET" in methods
+                if is_read_route and not apply_decorators_on_read:
+                    continue
+
                 # Apply each decorator in the order provided
                 decorated_endpoint = route.endpoint
                 for decorator in decorators:

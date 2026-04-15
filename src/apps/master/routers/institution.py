@@ -25,6 +25,7 @@ institution_crud = create_crud_routes(
     InstitutionResponse,
     InstitutionResponse,
     decorators=[is_superadmin],
+    apply_decorators_on_read=False,
 )
 institution_router.include_router(
     institution_crud, prefix="/institutions", tags=["Institution"]
@@ -33,7 +34,6 @@ institution_router.include_router(
 @institution_router.get(
     "/list", response_model=List[InstitutionResponse], tags=["Institution"]
 )
-@is_superadmin
 async def get_institutions_list(
     request: Request, db: AsyncSession = Depends(get_db_session)
 ):
@@ -47,7 +47,6 @@ department_router = APIRouter()
 # ========== Specific routes (registered BEFORE CRUD) ==========
 
 @department_router.get("/departments/by-institution", response_model=List[DepartmentResponse], tags=["Department"])
-@is_superadmin
 async def list_departments_by_institution(
     request: Request,
     institution_id: str,
@@ -58,7 +57,6 @@ async def list_departments_by_institution(
     return await InstitutionService(db).list_departments_by_institution(PyUUID(institution_id))
 
 @department_router.get("/departments/list", response_model=List[DepartmentResponse], tags=["Department"])
-@is_superadmin
 async def list_departments_legacy(
     request: Request,
     academic_year_id: str | None = None,
@@ -68,7 +66,6 @@ async def list_departments_legacy(
     return await InstitutionService(db).list_departments(academic_year_id)
 
 @department_router.get("/departments/academic-year", response_model=List[DepartmentResponse], tags=["Department"])
-@is_superadmin
 async def list_departments_by_academic_year(
     request: Request,
     academic_year_id: str | None = None,
@@ -84,6 +81,7 @@ department_crud = create_crud_routes(
     DepartmentResponse,
     DepartmentResponse,
     decorators=[is_superadmin],
+    apply_decorators_on_read=False,
 )
 department_router.include_router(
     department_crud, prefix="/departments", tags=["Department"]
@@ -94,7 +92,6 @@ department_router.include_router(
 course_router = APIRouter()
 
 @course_router.get("/courses/by-department", response_model=List[CourseResponse], tags=["Course"])
-@is_superadmin
 async def list_courses_by_department(
     request: Request,
     department_id: str,
@@ -111,6 +108,7 @@ course_crud = create_crud_routes(
     CourseResponse,
     CourseResponse,
     decorators=[is_superadmin],
+    apply_decorators_on_read=False,
 )
 course_router.include_router(course_crud, prefix="/courses", tags=["Course"])
 
@@ -124,6 +122,7 @@ class_crud = create_crud_routes(
     ClassResponse,
     ClassResponse,
     decorators=[is_superadmin],
+    apply_decorators_on_read=False,
 )
 class_router.include_router(class_crud, prefix="/classes", tags=["Class"])
 
@@ -137,11 +136,11 @@ hostel_crud = create_crud_routes(
     HostelResponse,
     HostelResponse,
     decorators=[is_superadmin],
+    apply_decorators_on_read=False,
 )
 hostel_router.include_router(hostel_crud, prefix="/hostels", tags=["Hostels"])
 
 @hostel_router.get("/list", response_model=List[HostelResponse], tags=["Hostels"])
-@is_superadmin
 async def list_hostels(institution_id: str | None = None, db: AsyncSession = Depends(get_db_session)):
     return await InstitutionService(db).list_hostels(institution_id)
 
@@ -155,11 +154,11 @@ staff_crud = create_crud_routes(
     StaffResponse,
     StaffResponse,
     decorators=[is_superadmin],
+    apply_decorators_on_read=False,
 )
 staff_router.include_router(staff_crud, prefix="/staff", tags=["Staff"])
 
 @staff_router.get("/staff/by-department/{department_id}", response_model=List[StaffResponse], tags=["Staff"])
-@is_superadmin
 async def list_staff_by_department(
     request: Request,
     department_id: str,
