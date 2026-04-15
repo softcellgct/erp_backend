@@ -30,6 +30,8 @@ dependencies = [
     "pytesseract (>=0.3.10,<0.4.0)",
     "paddleocr (>=2.7.0,<3.0.0)",
     "pillow (>=10.1.0,<11.0.0)",
+    "psycopg2-binary (>=2.9.11,<3.0.0)",
+    "pycryptodome (>=3.23.0,<4.0.0)",
 ]
 
 [tool.poetry]

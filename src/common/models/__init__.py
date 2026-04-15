@@ -58,6 +58,11 @@ from common.models.billing.refund import Refund, RefundStatusEnum, RefundMethodE
 from common.models.billing.bulk_receipt import BulkReceipt, BulkReceiptItem
 from common.models.billing.multi_receipt import MultiReceipt, MultiReceiptItem
 from common.models.billing.student_deposit import StudentDeposit, DepositStatusEnum
+from common.models.billing.scholarship_config import (
+    ScholarshipConfiguration,
+    StaffReferralConcession,
+    ScholarshipTypeConfigEnum,
+)
 
 
 __all__ = [
@@ -143,4 +148,7 @@ __all__ = [
     "MultiReceiptItem",
     "StudentDeposit",
     "DepositStatusEnum",
+    "ScholarshipConfiguration",
+    "StaffReferralConcession",
+    "ScholarshipTypeConfigEnum",
 ]

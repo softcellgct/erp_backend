@@ -1199,3 +1199,7 @@ async def bulk_scholarship_receipt(
             
     await db.commit()
     return {"message": f"Successfully processed {processed} scholarships"}
+
+# Scholarship Configuration & Staff Referral Routes
+from apps.billing.scholarship_config_routers import router as scholarship_config_router
+router.include_router(scholarship_config_router, tags=["Billing - Scholarship Configuration"])
