@@ -133,12 +133,35 @@ async def seed_initial_data() -> None:
 
         # ── Modules ───────────────────────────────────
         modules = (await session.execute(select(Module))).scalars().all()
-        module_by_name = {m.name.upper(): m for m in modules}
         required_modules = {
-            "ADMISSION": "Admission Module",
-            "FINANCE": "Finance Module",
-            "GATE": "Gate Module",
+            "MASTER": "Master",
+            "ADMISSION": "Admission",
+            "BILLING": "Billing",
+            "GATE": "Gate",
         }
+        module_aliases = {
+            "ADMIN": "MASTER",
+            "MASTER": "MASTER",
+            "ADMISSION": "ADMISSION",
+            "BILLING": "BILLING",
+            "FINANCE": "BILLING",
+            "GATE": "GATE",
+        }
+
+        module_by_name = {}
+        for module in modules:
+            current_name = (module.name or "").upper()
+            canonical_name = module_aliases.get(current_name, current_name)
+
+            if canonical_name in required_modules:
+                if canonical_name not in module_by_name:
+                    module.name = canonical_name
+                    module.title = required_modules[canonical_name]
+                    module_by_name[canonical_name] = module
+                else:
+                    # Keep a single active canonical module to avoid duplicate cards/routes.
+                    module.is_active = False
+
         for module_name, module_title in required_modules.items():
             if module_name not in module_by_name:
                 module = Module(name=module_name, title=module_title)
@@ -150,28 +173,112 @@ async def seed_initial_data() -> None:
         screens = (await session.execute(select(Screen))).scalars().all()
         screen_by_name = {s.name.upper(): s for s in screens}
 
-        required_screens = [
-            ("PRE_ADMISSION", "Pre Admission", "ADMISSION"),
-            ("ADMISSION_ENQUIRY", "Admission Enquiry", "ADMISSION"),
-            ("PAYMENT", "Payment Screen", "FINANCE"),
-            ("GATE", "Gate", "GATE"),
-            ("VISITOR_PASS_IN", "Visitor Pass", "GATE"),
-            ("VISITOR_PASS_OUT", "Visitor Pass Out", "GATE"),
-            ("VISITOR_REPORTS", "Visitor Reports", "GATE"),
-            ("HOSTEL_STUDENT_OUT", "Hostel Student Pass", "GATE"),
-            ("HOSTEL_STUDENT_IN", "Hostel Student In", "GATE"),
-            ("HOSTEL_REPORTS", "Hostel Reports", "GATE"),
-            ("STAFF_OUT", "Staff Out/In", "GATE"),
-            ("STAFF_IN", "Staff In", "GATE"),
-            ("STAFF_REPORTS", "Staff Reports", "GATE"),
-            ("MATERIAL_OUT_IN", "Material In/Out", "GATE"),
-            ("NEW_MATERIAL", "New Material", "GATE"),
-            ("MATERIAL_SCRAP", "Scrap Material", "GATE"),
-            ("MATERIAL_REPORTS", "Material Reports", "GATE"),
-            ("VEHICLE_OUT", "Vehicle Out/In", "GATE"),
-            ("VEHICLE_IN", "Vehicle In", "GATE"),
-            ("VEHICLE_REPORTS", "Vehicle Reports", "GATE"),
-        ]
+        screens_by_module = {
+            "MASTER": [
+                "INSTITUTIONS",
+                "DEPARTMENTS",
+                "ADMISSION_TYPE",
+                "SEAT_QUOTA",
+                "DOCUMENT_TYPE",
+                "REQUIRED_CERTIFICATES",
+                "HOSTEL_MANAGEMENT",
+                "STAFF_MANAGEMENT",
+                "COURSES",
+                "CLASSES",
+                "ACADEMIC_YEARS",
+                "SEMESTER_PERIODS",
+                "ROLE_MANAGEMENT",
+                "USERS_MANAGEMENT",
+                "USER_PERMISSIONS",
+                "MODULES",
+                "SCREENS",
+                "SCHOOL_LIST",
+                "RELIGION",
+                "COMMUNITY",
+                "CASTE",
+            ],
+            "ADMISSION": [
+                "PRE_ADMISSION",
+                "ADMISSION_ENQUIRY",
+                "ADMISSION_BOOKING",
+                "ADMISSION_BOOKED_PAID",
+                "APPLIED_STUDENTS_DOCS",
+                "LEAD_FOLLOW_UP",
+                "PRE_ADMISSION_DASHBOARD",
+                "PRE_ADMISSION_REPORTS",
+                "ADMISSION_ENTRY",
+                "STUDENT_PROFILE",
+                "STUDENT_PROFILE_EDIT",
+                "ADMISSION_REPORTS",
+                "REFERENCE_REPORTS",
+                "PERFECT_ENTRY",
+                "ROLL_NUMBER_GENERATION",
+                "SECTION_ALLOCATION",
+                "PROVISIONALLY_ALLOTTED_LIST",
+                "LOCK_FEE_STRUCTURE",
+                "DEPARTMENT_CHANGE",
+                "DEPARTMENT_CHANGE_APPROVAL",
+                "FEES_STRUCTURE",
+                "CONSULTANCY_MANAGEMENT",
+            ],
+            "BILLING": [
+                "PAYMENT",
+                "FEES_COLLECTION",
+                "EDIT_FEES",
+                "FINANCIAL_YEARS",
+                "FEE_HEADS_SUBHEADS",
+                "CASH_COUNTERS",
+                "FEE_STRUCTURES",
+                "DEMAND_CREATION",
+                "FEES_RECEIPTS",
+                "CONSULTANT_MANAGEMENT",
+                "REFERRAL_REPORT",
+                "COLLECTION_REPORT",
+                "STUDENT_REPORT",
+                "BILLING_REPORTS",
+                "CONCESSION_FEES",
+                "FEES_HEAD_CREATION",
+                "FINANCIAL_YEAR",
+                "TRANSPORT_FEES_STRUCTURE",
+                "HOSTEL_FEES_STRUCTURE",
+                "CREATE_PAYMENT_GATEWAY",
+                "ONLINE_PAYMENTS",
+                "SCREEN_APPROVAL",
+                "SCHOLARSHIPS",
+                "REFUNDS",
+                "BULK_RECEIPTS",
+            ],
+            "GATE": [
+                "GATE",
+                "VISITOR_PASS_IN",
+                "VISITOR_PASS_OUT",
+                "VISITOR_REPORTS",
+                "HOSTEL_STUDENT_OUT",
+                "HOSTEL_STUDENT_IN",
+                "HOSTEL_REPORTS",
+                "STAFF_OUT",
+                "STAFF_IN",
+                "STAFF_REPORTS",
+                "MATERIAL_OUT_IN",
+                "NEW_MATERIAL",
+                "MATERIAL_SCRAP",
+                "MATERIAL_REPORTS",
+                "VEHICLE_OUT",
+                "VEHICLE_IN",
+                "VEHICLE_REPORTS",
+            ],
+        }
+
+        required_screens = []
+        for module_name, screen_names in screens_by_module.items():
+            for screen_name in screen_names:
+                required_screens.append(
+                    (
+                        screen_name,
+                        screen_name.replace("_", " ").title(),
+                        module_name,
+                    )
+                )
 
         added_screen_ids = []
         for screen_name, screen_title, module_name in required_screens:
@@ -199,31 +306,19 @@ async def seed_initial_data() -> None:
             ).scalars().all()
             existing_perm_screen_ids = {perm.screen_id for perm in existing_perms}
 
-            gate_screen_ids = [
+            seeded_screen_names = {
+                screen_name
+                for module_screens in screens_by_module.values()
+                for screen_name in module_screens
+            }
+
+            seeded_screen_ids = [
                 screen.id
                 for name, screen in screen_by_name.items()
-                if name in {
-                    "GATE",
-                    "VISITOR_PASS_IN",
-                    "VISITOR_PASS_OUT",
-                    "VISITOR_REPORTS",
-                    "HOSTEL_STUDENT_OUT",
-                    "HOSTEL_STUDENT_IN",
-                    "HOSTEL_REPORTS",
-                    "STAFF_OUT",
-                    "STAFF_IN",
-                    "STAFF_REPORTS",
-                    "MATERIAL_OUT_IN",
-                    "NEW_MATERIAL",
-                    "MATERIAL_SCRAP",
-                    "MATERIAL_REPORTS",
-                    "VEHICLE_OUT",
-                    "VEHICLE_IN",
-                    "VEHICLE_REPORTS",
-                }
+                if name in seeded_screen_names
             ]
 
-            target_screen_ids = set(gate_screen_ids) | set(added_screen_ids)
+            target_screen_ids = set(seeded_screen_ids) | set(added_screen_ids)
             for screen_id in target_screen_ids:
                 if screen_id in existing_perm_screen_ids:
                     continue
