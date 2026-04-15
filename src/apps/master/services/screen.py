@@ -353,8 +353,19 @@ class ScreenService:
                 await self.db.commit()
                 return {"detail": "All permissions removed for user"}
 
-            # Convert user_id to UUID
-            user_uuid = UUID(permissions_data[0].user_id)
+            # Payload user_id is already parsed by Pydantic as UUID.
+            # Keep explicit conversion fallback for safety if a string slips through.
+            payload_user_id = permissions_data[0].user_id
+            user_uuid = payload_user_id if isinstance(payload_user_id, UUID) else UUID(str(payload_user_id))
+
+            # If user_id comes from route path, ensure it matches payload user_id.
+            if user_id is not None:
+                path_user_uuid = user_id if isinstance(user_id, UUID) else UUID(str(user_id))
+                if path_user_uuid != user_uuid:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Path user_id does not match payload user_id",
+                    )
 
             # Validate all permissions have the same user_id
             for perm in permissions_data:
