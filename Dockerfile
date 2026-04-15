@@ -4,8 +4,7 @@ RUN apk add --no-cache \
     build-base \
     postgresql-dev \
     patch \
-    tesseract-ocr \
-    tesseract-ocr-data
+    tesseract-ocr
 
 WORKDIR /app
 
