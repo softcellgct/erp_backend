@@ -101,12 +101,20 @@ class OCRExtractor:
     def _extract_with_tesseract(image: Image.Image) -> str:
         """Extract text using Tesseract"""
         try:
-            text = pytesseract.image_to_string(
-                image,
-                lang='eng+hin',  # English and Hindi
-                config='--psm 3'  # Auto-detect page orientation
-            )
-            return text
+            try:
+                return pytesseract.image_to_string(
+                    image,
+                    lang='eng+hin',  # Prefer English + Hindi when available
+                    config='--psm 3',
+                )
+            except Exception as lang_err:
+                # Alpine images may not always include Hindi language data.
+                logger.warning(f"Tesseract eng+hin failed, retrying with eng only: {str(lang_err)}")
+                return pytesseract.image_to_string(
+                    image,
+                    lang='eng',
+                    config='--psm 3',
+                )
         except Exception as e:
             logger.error(f"Tesseract extraction failed: {str(e)}")
             return ""
