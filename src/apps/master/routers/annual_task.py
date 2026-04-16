@@ -28,7 +28,6 @@ academic_year_router = APIRouter()
     response_model=List[AcademicYearResponse],
     tags=["Academic Years"],
 )
-@is_superadmin
 async def get_admission_active_years(
     request: Request,
     institution_id: str | None = None,

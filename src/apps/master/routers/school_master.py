@@ -22,7 +22,6 @@ school_router = APIRouter(tags=["School Master"])
 
 
 @school_router.get("/schools", response_model=SchoolMasterPaginatedResponse)
-@is_superadmin
 async def list_schools(
     request: Request,
     search: Optional[str] = None,
@@ -54,7 +53,6 @@ async def list_schools(
 
 
 @school_router.get("/schools/list", response_model=List[SchoolMasterListResponse])
-@is_superadmin
 async def list_schools_dropdown(
     request: Request,
     block: Optional[str] = None,
@@ -65,7 +63,6 @@ async def list_schools_dropdown(
 
 
 @school_router.get("/schools/blocks", response_model=List[str])
-@is_superadmin
 async def list_school_blocks(
     request: Request,
     db: AsyncSession = Depends(get_db_session),
@@ -79,7 +76,6 @@ async def list_school_blocks(
     response_model=SchoolMasterResponse,
     status_code=status.HTTP_201_CREATED,
 )
-@is_superadmin
 async def create_school(
     request: Request,
     data: SchoolMasterCreate,
@@ -90,7 +86,6 @@ async def create_school(
 
 
 @school_router.put("/schools/{school_id}", response_model=SchoolMasterResponse)
-@is_superadmin
 async def update_school(
     request: Request,
     school_id: UUID,
@@ -102,7 +97,6 @@ async def update_school(
 
 
 @school_router.delete("/schools/{school_id}", status_code=status.HTTP_204_NO_CONTENT)
-@is_superadmin
 async def delete_school(
     request: Request,
     school_id: UUID,
@@ -113,7 +107,6 @@ async def delete_school(
 
 
 @school_router.post("/schools/upload", response_model=SchoolBulkUploadResponse)
-@is_superadmin
 async def upload_school_list(
     request: Request,
     file: UploadFile = File(...),
