@@ -166,6 +166,9 @@ class AdmissionStudent(Base):
     # Enquiry / application
     enquiry_number = Column(String(50), unique=True, index=True, nullable=False)
     application_number = Column(String(50), unique=True, index=True, nullable=True)
+    
+    # Student name (denormalized from personal_details for direct access)
+    name = Column(String(200), nullable=False, index=True)
 
     # Link to new gate table (primary source for gate entry data)
     gate_entry_id = Column(
@@ -368,6 +371,9 @@ class AdmissionStudent(Base):
                 skipped += 1
                 continue
 
+            # Populate name on main student object (denormalized)
+            obj_data["name"] = name
+
             aadhaar = None
             if isinstance(personal_details, dict):
                 aadhaar = personal_details.get("aadhaar_number")
@@ -519,6 +525,18 @@ class AdmissionStudent(Base):
 
         for data in normalized_items:
             student = existing_students.get(data["id"])
+            
+            # Sync name from personal_details if provided
+            personal_details = data.get("personal_details")
+            if personal_details:
+                name = None
+                if isinstance(personal_details, dict):
+                    name = personal_details.get("name")
+                elif hasattr(personal_details, "name"):
+                    name = personal_details.name
+                if name:
+                    data["name"] = name
+            
             if not student or not getattr(student, "is_fee_structure_locked", False):
                 continue
 
