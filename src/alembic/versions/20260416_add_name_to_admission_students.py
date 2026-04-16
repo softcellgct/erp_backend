@@ -20,16 +20,9 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema - add name column to admission_students."""
-    # Check if column already exists
-    from sqlalchemy import inspect
-    from alembic import context
-    
-    # Add the name column if it doesn't exist
+    # Add the name column with a default value
     op.add_column('admission_students', sa.Column('name', sa.String(length=200), nullable=False, server_default='Unknown'))
     op.create_index(op.f('ix_admission_students_name'), 'admission_students', ['name'], unique=False)
-    
-    # Remove the server default after the column is created
-    op.alter_column('admission_students', 'name', server_default=None)
 
 
 def downgrade() -> None:
