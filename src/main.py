@@ -16,6 +16,7 @@ from core.config import settings
 from core.database import (
     async_engine,
     create_schemas,
+    ensure_admission_gate_entry_link,
     ensure_database_exists,
     seed_initial_data,
     sync_engine,
@@ -92,6 +93,9 @@ async def lifespan(app: FastAPI):
     async with async_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         logger.info("Tables synced ✅")
+
+    await ensure_admission_gate_entry_link()
+    logger.info("Admission schema compatibility ready ✅")
 
     await seed_initial_data()
     logger.info("Seed data ready ✅")

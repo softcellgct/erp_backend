@@ -19,6 +19,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy_utils import create_database, database_exists
 
 from core.config import settings
+from core.logging import logger
 
 # ── URL variants ──────────────────────────────────────
 _sync_url = settings.database_url.replace("+asyncpg", "")
@@ -90,6 +91,97 @@ def create_schemas(conn, metadata) -> None:
     for schema in metadata._schemas:
         if schema not in existing:
             conn.execute(text(f"CREATE SCHEMA {schema}"))
+
+
+async def ensure_admission_gate_entry_link() -> None:
+    """Ensure admission_students.gate_entry_id exists and is linked to admission_gate_entries."""
+    try:
+        async with async_engine.begin() as conn:
+            table_exists = await conn.execute(
+                text(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = 'admission_students'
+                    )
+                    """
+                )
+            )
+            if not table_exists.scalar():
+                return
+
+            gate_table_exists = await conn.execute(
+                text(
+                    """
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM information_schema.tables
+                        WHERE table_schema = 'public' AND table_name = 'admission_gate_entries'
+                    )
+                    """
+                )
+            )
+            if not gate_table_exists.scalar():
+                return
+
+            await conn.execute(
+                text(
+                    """
+                    ALTER TABLE admission_students
+                    ADD COLUMN IF NOT EXISTS gate_entry_id UUID
+                    """
+                )
+            )
+
+            await conn.execute(
+                text(
+                    """
+                    CREATE INDEX IF NOT EXISTS ix_admission_students_gate_entry_id
+                    ON admission_students (gate_entry_id)
+                    """
+                )
+            )
+
+            await conn.execute(
+                text(
+                    """
+                    DO $$
+                    BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1
+                            FROM pg_constraint
+                            WHERE conname = 'admission_students_gate_entry_id_fkey'
+                        ) THEN
+                            ALTER TABLE admission_students
+                            ADD CONSTRAINT admission_students_gate_entry_id_fkey
+                            FOREIGN KEY (gate_entry_id)
+                            REFERENCES admission_gate_entries(id)
+                            ON DELETE SET NULL;
+                        END IF;
+                    END
+                    $$;
+                    """
+                )
+            )
+
+            # Best-effort backfill for older rows where enquiry_number matches.
+            await conn.execute(
+                text(
+                    """
+                    UPDATE admission_students s
+                    SET gate_entry_id = g.id
+                    FROM admission_gate_entries g
+                    WHERE s.gate_entry_id IS NULL
+                      AND s.enquiry_number IS NOT NULL
+                      AND g.enquiry_number = s.enquiry_number
+                    """
+                )
+            )
+
+        logger.info("Admission gate-entry link schema check complete ✅")
+    except Exception as e:
+        logger.warning(f"Admission gate-entry link schema check skipped: {e}")
 
 
 async def seed_initial_data() -> None:
