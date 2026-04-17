@@ -192,11 +192,13 @@ class AdmissionStudent(Base):
     documents_submitted = Column(JSON, nullable=True)
 
     status = Column(Enum(AdmissionStatusEnum), default=AdmissionStatusEnum.ENQUIRED, nullable=False)
+    source = Column(Enum(SourceEnum), default=SourceEnum.GATE_ENQUIRY, nullable=False)
 
     # Post-admission
     roll_number = Column(String(50), nullable=True, index=True)
     section = Column(String(20), nullable=True, index=True)
     current_semester = Column(Integer, nullable=True)
+    is_lateral_entry = Column(Boolean, default=False, nullable=False)
     is_sem1_active = Column(Boolean, default=False, nullable=False)
     enrolled_at = Column(DateTime, nullable=True)
     fee_structure_id = Column(

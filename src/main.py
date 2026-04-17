@@ -55,22 +55,67 @@ async def health_check():
 
 @app.exception_handler(IntegrityError)
 async def handle_integrity_error(_: Request, exc: IntegrityError):
-    error_message = str(getattr(exc, "orig", exc)).lower()
-
+    """
+    Handle database integrity constraint violations with detailed error messages.
+    
+    Extracts constraint names and field information from SQLAlchemy IntegrityError
+    to provide meaningful feedback to clients.
+    """
+    # Extract the original database error and statement
+    original_error = getattr(exc, "orig", exc)
+    error_message = str(original_error).lower()
+    statement = getattr(exc, "statement", "")
+    
+    # Log full error details for debugging
+    logger.error(
+        f"IntegrityError occurred.\nOriginal Error: {original_error}\n"
+        f"Statement: {statement}\nMessage: {error_message}"
+    )
+    
+    # Extract constraint name from error message (PostgreSQL format)
+    constraint_name = None
+    if "constraint \"" in error_message:
+        parts = error_message.split("constraint \"")
+        if len(parts) > 1:
+            constraint_name = parts[1].split("\"")[0]
+    
+    # Handle specific known constraints
     if (
         "admission_students_aadhaar_number_key" in error_message
+        or constraint_name == "admission_students_aadhaar_number_key"
         or ("duplicate key" in error_message and "aadhaar" in error_message)
     ):
         return JSONResponse(
             status_code=409,
             content={
-                "detail": "Aadhaar number already exists. Please use the existing gate pass/admission record for this Aadhaar."
+                "detail": "Aadhaar number already exists. Please use the existing gate pass/admission record for this Aadhaar.",
+                "constraint": "admission_students_aadhaar_number_key"
             },
         )
-
+    
+    # Build generic error response with constraint details if available
+    detail = "Database integrity constraint violation"
+    response_data = {"detail": detail}
+    
+    if constraint_name:
+        logger.warning(f"Constraint violation: {constraint_name}")
+        response_data["constraint"] = constraint_name
+        # Try to extract field name from constraint name (e.g., "table_field_key" -> "field")
+        if "_key" in constraint_name or "_unique" in constraint_name:
+            field = constraint_name.replace("_key", "").replace("_unique", "").split("_")[-1]
+            response_data["field"] = field
+    else:
+        # Fallback: try to extract field info from the error message
+        if "duplicate key" in error_message:
+            response_data["detail"] = "Duplicate value for a unique field"
+        elif "foreign key" in error_message:
+            response_data["detail"] = "Invalid reference to related record"
+        elif "not null" in error_message:
+            response_data["detail"] = "Required field is missing"
+    
     return JSONResponse(
-        status_code=400,
-        content={"detail": "Database integrity error"},
+        status_code=409,
+        content=response_data,
     )
 
 

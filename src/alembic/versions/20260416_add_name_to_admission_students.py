@@ -1,7 +1,7 @@
 """Add name column back to admission_students
 
 Revision ID: 20260416_add_name
-Revises: a46bfa0772e8
+Revises: scholarship_config_001
 Create Date: 2026-04-16 10:00:00.000000
 
 """
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '20260416_add_name'
-down_revision: Union[str, Sequence[str], None] = 'a46bfa0772e8'
+down_revision: Union[str, Sequence[str], None] = 'scholarship_config_001'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
