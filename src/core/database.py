@@ -231,33 +231,18 @@ async def seed_initial_data() -> None:
             "BILLING": "Billing",
             "GATE": "Gate",
         }
-        module_aliases = {
-            "ADMIN": "MASTER",
-            "MASTER": "MASTER",
-            "ADMISSION": "ADMISSION",
-            "BILLING": "BILLING",
-            "FINANCE": "BILLING",
-            "GATE": "GATE",
-        }
 
-        module_by_name = {}
-        for module in modules:
-            current_name = (module.name or "").upper()
-            canonical_name = module_aliases.get(current_name, current_name)
+        # Build map of existing modules by name (only those we need)
+        module_by_name = {m.name.upper(): m for m in modules if m.name and m.name.upper() in required_modules}
+        existing_names = set(module_by_name.keys())
 
-            if canonical_name in required_modules:
-                if canonical_name not in module_by_name:
-                    module.name = canonical_name
-                    module.title = required_modules[canonical_name]
-                    module_by_name[canonical_name] = module
-                else:
-                    # Keep a single active canonical module to avoid duplicate cards/routes.
-                    module.is_active = False
-
+        # Only create missing modules, don't modify existing ones (idempotent)
         for module_name, module_title in required_modules.items():
-            if module_name not in module_by_name:
-                module = Module(name=module_name, title=module_title)
+            if module_name not in existing_names:
+                module = Module(name=module_name, title=module_title, is_active=True)
                 session.add(module)
+                await session.flush()
+                module_by_name[module_name] = module
                 await session.flush()
                 module_by_name[module_name] = module
 
