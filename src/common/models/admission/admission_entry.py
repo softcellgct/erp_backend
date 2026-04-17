@@ -359,7 +359,10 @@ class AdmissionStudent(Base):
             gate_entry_id = obj_data.get("gate_entry_id") or visitor_id
             if gate_entry_id:
                 gate_entry = await session.get(AdmissionGateEntry, gate_entry_id)
-                obj_data["gate_entry_id"] = gate_entry.id
+                if gate_entry:
+                    obj_data["gate_entry_id"] = gate_entry.id
+                    if gate_entry.status == AdmissionStatusEnum.ENQUIRY:
+                        gate_entry.status = AdmissionStatusEnum.ENQUIRED
 
             personal_details = obj_data.get("personal_details")
             name = None
@@ -512,7 +515,10 @@ class AdmissionStudent(Base):
             gate_entry_id = data.get("gate_entry_id") or visitor_id
             if gate_entry_id:
                 gate_entry = await session.get(AdmissionGateEntry, gate_entry_id)
-                data["gate_entry_id"] = gate_entry.id
+                if gate_entry:
+                    data["gate_entry_id"] = gate_entry.id
+                    if gate_entry.status == AdmissionStatusEnum.ENQUIRY:
+                        gate_entry.status = AdmissionStatusEnum.ENQUIRED
 
             normalized_items.append(data)
             student_ids.append(student_id)
