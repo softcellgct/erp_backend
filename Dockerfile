@@ -8,20 +8,21 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-COPY . .
-
 RUN addgroup -g 1000 gnyanamani && \
-    adduser -D -u 1000 -G gnyanamani gnyanamani && \
-    chown -R gnyanamani:gnyanamani /app
-    
+    adduser -D -u 1000 -G gnyanamani gnyanamani
+
 USER gnyanamani
 
-ENV PATH="/home/gnyanamani/.local/bin:${PATH}"
-ENV PYTHONPATH="/app/src"
+ENV PATH="/home/gnyanamani/.local/bin:${PATH}" \
+    PYTHONPATH="/app/src" \
+    POETRY_NO_INTERACTION=1 \
+    POETRY_VIRTUALENVS_IN_PROJECT=true
 
 RUN pip install --no-cache-dir --user poetry
 
-RUN poetry lock --no-cache --regenerate && \
-    poetry install --no-interaction --no-ansi --without ocr
+COPY --chown=gnyanamani:gnyanamani pyproject.toml poetry.lock ./
+RUN poetry install --no-ansi --without ocr --no-root
 
-CMD ["sh","-c","cd /app/src && poetry run alembic -c alembic.ini upgrade heads && exec poetry run python main.py"]
+COPY --chown=gnyanamani:gnyanamani . .
+
+CMD ["sh","-c","poetry run python main.py"]

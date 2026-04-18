@@ -1,0 +1,15 @@
+.git
+.gitignore
+.venv
+.pytest_cache
+.ruff_cache
+.mypy_cache
+.vscode
+__pycache__/
+*.py[cod]
+*.so
+*.log
+logs/
+docs/
+tests/
+test_*.py
