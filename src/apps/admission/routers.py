@@ -97,8 +97,6 @@ async def get_admission_student(
     db: AsyncSession = Depends(get_db_session)
 ):
     query = select(AdmissionStudent).options(
-        selectinload(AdmissionStudent.admission_quota),
-        selectinload(AdmissionStudent.admission_type),
         selectinload(AdmissionStudent.fee_structure),
         selectinload(AdmissionStudent.consultancy_reference),
         selectinload(AdmissionStudent.staff_reference),
@@ -135,19 +133,19 @@ async def get_admission_student(
         if student.program_details.institution_id:
             inst = await db.scalar(select(Institution.name).where(Institution.id == student.program_details.institution_id))
             institution_name = inst
-            
-    admission_quota_name = getattr(student.admission_quota, "name", None) if getattr(student, "admission_quota", None) else None
-    if not admission_quota_name and student.program_details and getattr(student.program_details, 'admission_quota_id', None):
+
+    admission_quota_name = None
+    if student.program_details and getattr(student.program_details, 'admission_quota_id', None):
         from common.models.master.admission_masters import SeatQuota
         admission_quota_name = await db.scalar(select(SeatQuota.name).where(SeatQuota.id == student.program_details.admission_quota_id))
 
-    admission_type_name = getattr(student.admission_type, "name", None) if getattr(student, "admission_type", None) else None
-    if not admission_type_name and student.program_details and getattr(student.program_details, 'admission_type_id', None):
+    admission_type_name = None
+    if student.program_details and getattr(student.program_details, 'admission_type_id', None):
         from common.models.master.admission_masters import AdmissionType
         admission_type_name = await db.scalar(select(AdmissionType.name).where(AdmissionType.id == student.program_details.admission_type_id))
 
     academic_year_name = None
-    ay_id_to_check = getattr(student, "academic_year_id", None) or (student.program_details.academic_year_id if student.program_details else None)
+    ay_id_to_check = student.program_details.academic_year_id if student.program_details else None
     if ay_id_to_check:
         from common.models.master.annual_task import AcademicYear
         academic_year_name = await db.scalar(select(AcademicYear.year_name).where(AcademicYear.id == ay_id_to_check))
@@ -236,11 +234,11 @@ async def get_admission_student(
         "vehicle_number": get_nested(gate, "vehicle_number"),
         "status": student.status,
         "source": getattr(student, "source", None),
-        "category": student.category,
-        "quota_type": student.quota_type,
-        "special_quota": student.special_quota,
-        "scholarships": student.scholarships,
-        "boarding_place": student.boarding_place,
+        "category": get_nested(prog, "category"),
+        "quota_type": get_nested(prog, "quota_type"),
+        "special_quota": get_nested(prog, "special_quota"),
+        "scholarships": get_nested(prog, "scholarships"),
+        "boarding_place": get_nested(prog, "boarding_place"),
         "previous_academic_level": get_nested(prog, "previous_academic_level"),
         "is_lateral_entry": get_nested(prog, "is_lateral_entry", default=False),
         "roll_number": student.roll_number,
@@ -253,9 +251,9 @@ async def get_admission_student(
         "course": course_title,
         "institution_id": str(get_nested(prog, "institution_id")) if get_nested(prog, "institution_id") else None,
         "institution": institution_name,
-        "admission_quota_id": str(student.admission_quota_id) if student.admission_quota_id else None,
+        "admission_quota_id": str(get_nested(prog, "admission_quota_id")) if get_nested(prog, "admission_quota_id") else None,
         "admission_quota": admission_quota_name,
-        "admission_type_id": str(student.admission_type_id) if student.admission_type_id else None,
+        "admission_type_id": str(get_nested(prog, "admission_type_id")) if get_nested(prog, "admission_type_id") else None,
         "admission_type": admission_type_name,
         "academic_year_id": str(ay_id_to_check) if ay_id_to_check else None,
         "academic_year": academic_year_name,
@@ -738,7 +736,7 @@ async def list_admission_students(
                         "institution_id": AdmissionStudentProgramDetails.institution_id,
                         "department_id": AdmissionStudentProgramDetails.department_id,
                         "course_id": AdmissionStudentProgramDetails.course_id,
-                        "academic_year_id": AdmissionStudent.academic_year_id,
+                        "academic_year_id": AdmissionStudentProgramDetails.academic_year_id,
                     }
 
                     date_columns = {
@@ -910,7 +908,11 @@ async def list_admission_students(
         
         department_ids = {student.program_details.department_id for student in students if student.program_details and student.program_details.department_id}
         course_ids = {student.program_details.course_id for student in students if student.program_details and student.program_details.course_id}
-        academic_year_ids = {student.academic_year_id for student in students if student.academic_year_id}
+        academic_year_ids = {
+            student.program_details.academic_year_id
+            for student in students
+            if student.program_details and student.program_details.academic_year_id
+        }
 
         department_name_map = {}
         course_title_map = {}
@@ -980,7 +982,9 @@ async def list_admission_students(
 
             student_dict["department_name"] = department_name_map.get(str(student.program_details.department_id)) if student.program_details and getattr(student.program_details, 'department_id', None) else None
             student_dict["course_title"] = course_title_map.get(str(student.program_details.course_id)) if student.program_details and getattr(student.program_details, 'course_id', None) else None
-            student_dict["academic_year_name"] = academic_year_name_map.get(str(student.academic_year_id))
+            student_dict["academic_year_name"] = academic_year_name_map.get(
+                str(student.program_details.academic_year_id)
+            ) if student.program_details and getattr(student.program_details, "academic_year_id", None) else None
 
             student_dicts.append(student_dict)
         

@@ -609,11 +609,15 @@ async def bulk_miscellaneous_fees(
         )
         
         # We need institution_id. Let's fetch first student.
-        from common.models.admission.admission_entry import AdmissionStudent
+        from common.models.admission.admission_entry import AdmissionStudent, AdmissionStudentProgramDetails
         if not payload.student_ids:
             return {"message": "No students provided"}
             
-        stmt = select(AdmissionStudent.institution_id).where(AdmissionStudent.id == payload.student_ids[0])
+        stmt = (
+            select(AdmissionStudentProgramDetails.institution_id)
+            .join(AdmissionStudent, AdmissionStudentProgramDetails.admission_student_id == AdmissionStudent.id)
+            .where(AdmissionStudent.id == payload.student_ids[0])
+        )
         res = await db.execute(stmt)
         inst_id = res.scalar_one_or_none()
         

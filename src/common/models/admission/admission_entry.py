@@ -179,16 +179,6 @@ class AdmissionStudent(Base):
         index=True,
     )
 
-    # Quota / category
-    admission_quota_id = Column(UUID(as_uuid=True), ForeignKey("seat_quotas.id"), nullable=True, index=True)
-    category = Column(Enum(CategoryEnum), nullable=True)
-    quota_type = Column(String(50), nullable=True)
-    special_quota = Column(String(100), nullable=True)
-    scholarships = Column(String(200), nullable=True)
-    boarding_place = Column(String(200), nullable=True)
-    admission_type_id = Column(UUID(as_uuid=True), ForeignKey("admission_types.id"), nullable=True, index=True)
-    academic_year_id = Column(UUID(as_uuid=True), ForeignKey("academic_years.id"), nullable=True, index=True)
-
     documents_submitted = Column(JSON, nullable=True)
 
     status = Column(Enum(AdmissionStatusEnum), default=AdmissionStatusEnum.ENQUIRED, nullable=False)
@@ -217,8 +207,6 @@ class AdmissionStudent(Base):
     )
 
     # Foreign key relationships
-    admission_quota = relationship("SeatQuota", lazy="selectin")
-    admission_type = relationship("AdmissionType", lazy="selectin")
     fee_structure = relationship("FeeStructure", lazy="selectin")
 
     gate_entry = relationship("AdmissionGateEntry", back_populates="admission_student", lazy="selectin")
@@ -334,6 +322,46 @@ class AdmissionStudent(Base):
                 .values(student_id=student_id)
             )
 
+    @staticmethod
+    def _sync_program_fields(payload: dict[str, Any]) -> dict[str, Any]:
+        """
+        Keep legacy top-level fields and normalized program_details fields in sync.
+
+        This avoids sparse/null drift when clients send either shape.
+        """
+        program_keys = [
+            "academic_year_id",
+            "admission_quota_id",
+            "category",
+            "quota_type",
+            "special_quota",
+            "scholarships",
+            "boarding_place",
+            "admission_type_id",
+        ]
+
+        raw_program = payload.get("program_details")
+        if isinstance(raw_program, dict):
+            program_details = dict(raw_program)
+        elif hasattr(raw_program, "dict"):
+            program_details = raw_program.dict(exclude_unset=True)
+        else:
+            program_details = {}
+
+        for key in program_keys:
+            top_val = payload.get(key)
+            nested_val = program_details.get(key)
+
+            if top_val is not None and nested_val is None:
+                program_details[key] = top_val
+            elif top_val is None and nested_val is not None:
+                payload[key] = nested_val
+
+        if program_details:
+            payload["program_details"] = program_details
+
+        return payload
+
     @classmethod
     async def create(cls, request, session, data_list):
         """Create admission students and synchronize split-detail tables."""
@@ -353,6 +381,7 @@ class AdmissionStudent(Base):
             user_id = await get_user_id(request)
             obj_data = data.dict() if hasattr(data, "dict") else dict(data)
             obj_data["created_by"] = user_id
+            obj_data = cls._sync_program_fields(obj_data)
 
             visitor_id = obj_data.pop("visitor_id", None)
             gate_entry = None
@@ -506,6 +535,7 @@ class AdmissionStudent(Base):
 
         for data_obj in data_list:
             data = data_obj.dict(exclude_unset=True) if hasattr(data_obj, "dict") else dict(data_obj)
+            data = cls._sync_program_fields(data)
             student_id = data.get("id")
             if not student_id:
                 raise ValueError("Each object must have an 'id' field.")

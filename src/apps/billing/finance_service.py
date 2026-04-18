@@ -354,38 +354,52 @@ class FinanceService:
         institution_id: UUID | None = None,
     ) -> list[UUID]:
         """Resolve student IDs matching the given filters."""
-        from common.models.admission.admission_entry import AdmissionStudent, AdmissionStudentPersonalDetails
+        from common.models.admission.admission_entry import (
+            AdmissionStudent,
+            AdmissionStudentPersonalDetails,
+            AdmissionStudentProgramDetails,
+        )
 
         filters = filters or {}
         stmt = select(AdmissionStudent.id).where(
             AdmissionStudent.deleted_at.is_(None)
         )
 
+        stmt = stmt.join(
+            AdmissionStudentProgramDetails,
+            AdmissionStudentProgramDetails.admission_student_id == AdmissionStudent.id,
+            isouter=True,
+        ).join(
+            AdmissionStudentPersonalDetails,
+            AdmissionStudentPersonalDetails.admission_student_id == AdmissionStudent.id,
+            isouter=True,
+        )
+
         if institution_id:
-            stmt = stmt.where(AdmissionStudent.institution_id == institution_id)
+            stmt = stmt.where(AdmissionStudentProgramDetails.institution_id == institution_id)
 
         if filters.get("department_id"):
             stmt = stmt.where(
-                AdmissionStudent.department_id == filters["department_id"]
+                AdmissionStudentProgramDetails.department_id == filters["department_id"]
             )
         if filters.get("degree_id") or filters.get("course_id"):
             course_id = filters.get("degree_id") or filters.get("course_id")
-            stmt = stmt.where(AdmissionStudent.course_id == course_id)
+            stmt = stmt.where(AdmissionStudentProgramDetails.course_id == course_id)
         if filters.get("admission_type_id"):
             stmt = stmt.where(
-                AdmissionStudent.admission_type_id == filters["admission_type_id"]
+                AdmissionStudentProgramDetails.admission_type_id == filters["admission_type_id"]
             )
         if filters.get("batch"):
-            stmt = stmt.where(AdmissionStudent.year == filters["batch"])
+            stmt = stmt.where(AdmissionStudentProgramDetails.year == filters["batch"])
         if filters.get("admission_year_id") or filters.get("academic_year_id"):
             ay_id = filters.get("admission_year_id") or filters.get("academic_year_id")
-            stmt = stmt.where(AdmissionStudent.academic_year_id == ay_id)
+            stmt = stmt.where(AdmissionStudentProgramDetails.academic_year_id == ay_id)
         if filters.get("admission_quota_id"):
             stmt = stmt.where(
-                AdmissionStudent.admission_quota_id == filters["admission_quota_id"]
+                AdmissionStudentProgramDetails.admission_quota_id == filters["admission_quota_id"]
             )
         if filters.get("gender"):
-            stmt = stmt.where(AdmissionStudent.gender == filters["gender"])
+            stmt = stmt.where(AdmissionStudentPersonalDetails.gender == filters["gender"])
 
         stmt = stmt.distinct()
         result = await db.execute(stmt)
@@ -1376,17 +1390,22 @@ class FinanceService:
         status: str | None = None,
     ) -> list[dict]:
         """List demand items with optional filters."""
-        from common.models.admission.admission_entry import AdmissionStudent, AdmissionStudentPersonalDetails
+        from common.models.admission.admission_entry import (
+            AdmissionStudent,
+            AdmissionStudentPersonalDetails,
+            AdmissionStudentProgramDetails,
+        )
 
         stmt = (
             select(DemandItem, AdmissionStudentPersonalDetails.name)
             .join(AdmissionStudent, DemandItem.student_id == AdmissionStudent.id) \
             .outerjoin(AdmissionStudentPersonalDetails, AdmissionStudent.id == AdmissionStudentPersonalDetails.admission_student_id)
+            .outerjoin(AdmissionStudentProgramDetails, AdmissionStudent.id == AdmissionStudentProgramDetails.admission_student_id)
             .where(DemandItem.deleted_at.is_(None))
         )
 
         # Filter by institution via student
-        stmt = stmt.where(AdmissionStudent.institution_id == institution_id)
+        stmt = stmt.where(AdmissionStudentProgramDetails.institution_id == institution_id)
 
         if student_id:
             stmt = stmt.where(DemandItem.student_id == student_id)

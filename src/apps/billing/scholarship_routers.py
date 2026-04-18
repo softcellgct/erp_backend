@@ -169,7 +169,7 @@ async def _resolve_student_fee_structure(
         return None
 
     institution_id = getattr(program, "institution_id", None)
-    admission_year_id = getattr(program, "academic_year_id", None) or student.academic_year_id
+    admission_year_id = getattr(program, "academic_year_id", None)
     degree_id = getattr(program, "course_id", None)
     department_id = getattr(program, "department_id", None)
 
@@ -300,7 +300,7 @@ async def create_scholarship(
         student_id=payload.student_id,
         institution_id=payload.institution_id,
         fee_structure_id=fs_id,
-        academic_year_id=payload.academic_year_id or student.academic_year_id,
+        academic_year_id=payload.academic_year_id or getattr(student.program_details, "academic_year_id", None),
         scholarship_type=ScholarshipTypeEnum(payload.scholarship_type),
         certificate_status=CertificateStatusEnum.NOT_SUBMITTED,
         amount=amount,
@@ -459,7 +459,7 @@ async def apply_scholarships(
             student_id=payload.student_id,
             institution_id=payload.institution_id,
             fee_structure_id=fs_id,
-            academic_year_id=payload.academic_year_id or student.academic_year_id,
+            academic_year_id=payload.academic_year_id or getattr(student.program_details, "academic_year_id", None),
             scholarship_type=scholarship_enum,
             certificate_status=CertificateStatusEnum.NOT_SUBMITTED,
             amount=amount,

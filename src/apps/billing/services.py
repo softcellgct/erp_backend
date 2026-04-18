@@ -130,13 +130,14 @@ class BillingService:
                 raise ValueError("Fee Structure not found")
             return fee_structure
 
-        if not student.academic_year_id or not student.course_id:
+        prog = getattr(student, "program_details", None)
+        if not prog or not prog.academic_year_id or not prog.course_id:
             return None
 
         query = query.where(
-            FeeStructure.institution_id == student.institution_id,
-            FeeStructure.admission_year_id == student.academic_year_id,
-            FeeStructure.degree_id == student.course_id,
+            FeeStructure.institution_id == prog.institution_id,
+            FeeStructure.admission_year_id == prog.academic_year_id,
+            FeeStructure.degree_id == prog.course_id,
         )
         result = await db.execute(query)
         fee_structures = result.scalars().all()
@@ -146,8 +147,8 @@ class BillingService:
         def score(fs: FeeStructure) -> int:
             total = 0
 
-            if student.admission_quota_id:
-                if fs.quota_id == student.admission_quota_id:
+            if prog.admission_quota_id:
+                if fs.quota_id == prog.admission_quota_id:
                     total += 4
                 elif fs.quota_id is None:
                     total += 2
@@ -156,8 +157,8 @@ class BillingService:
             else:
                 total += 2 if fs.quota_id is None else 1
 
-            if student.admission_type_id:
-                if fs.admission_type_id == student.admission_type_id:
+            if prog.admission_type_id:
+                if fs.admission_type_id == prog.admission_type_id:
                     total += 4
                 elif fs.admission_type_id is None:
                     total += 2
@@ -326,11 +327,11 @@ class BillingService:
             logger.warning(
                 "No fee structure found for student %s (institution=%s, year=%s, course=%s, type=%s, quota=%s)",
                 getattr(student.personal_details, "name", None) if getattr(student, "personal_details", None) else getattr(student, "name", None),
-                student.institution_id,
-                student.academic_year_id,
-                student.course_id,
-                student.admission_type_id,
-                student.admission_quota_id,
+                getattr(student.program_details, "institution_id", None),
+                getattr(student.program_details, "academic_year_id", None),
+                getattr(student.program_details, "course_id", None),
+                getattr(student.program_details, "admission_type_id", None),
+                getattr(student.program_details, "admission_quota_id", None),
             )
             return []
 
@@ -425,9 +426,9 @@ class BillingService:
         if not student:
             raise ValueError("Student not found")
             
-        course_id = student.program_details.course_id if student.program_details else getattr(student, "course_id", None)
-        academic_year_id = student.academic_year_id or (student.program_details.academic_year_id if student.program_details else None)
-        institution_id = student.program_details.institution_id if student.program_details else getattr(student, "institution_id", None)
+        course_id = student.program_details.course_id if student.program_details else None
+        academic_year_id = student.program_details.academic_year_id if student.program_details else None
+        institution_id = student.program_details.institution_id if student.program_details else None
 
         if not course_id or not academic_year_id:
             return None # No course/year assigned
@@ -1264,6 +1265,7 @@ class BillingService:
         """Return AdmissionStudent IDs matching filters."""
         from common.models.admission.admission_entry import (
             AdmissionStudent,
+            AdmissionStudentPersonalDetails,
             AdmissionStudentProgramDetails,
         )
         from common.models.master.admission_masters import SeatQuota
@@ -1280,12 +1282,19 @@ class BillingService:
             AdmissionStudent.is_fee_structure_locked == True
         )
 
+        stmt = stmt.join(
+            AdmissionStudentProgramDetails,
+            AdmissionStudentProgramDetails.admission_student_id == AdmissionStudent.id,
+            isouter=True,
+        ).join(
+            AdmissionStudentPersonalDetails,
+            AdmissionStudentPersonalDetails.admission_student_id == AdmissionStudent.id,
+            isouter=True,
+        )
+
         institution_uuid = self._parse_uuid(institution_id)
         if institution_uuid:
-            stmt = stmt.join(
-                AdmissionStudentProgramDetails,
-                AdmissionStudentProgramDetails.student_id == AdmissionStudent.id,
-            ).where(AdmissionStudentProgramDetails.institution_id == institution_uuid)
+            stmt = stmt.where(AdmissionStudentProgramDetails.institution_id == institution_uuid)
 
         explicit_student_ids = [
             parsed
@@ -1303,7 +1312,7 @@ class BillingService:
         )
         admission_year_uuid = self._parse_uuid(admission_year)
         if admission_year_uuid:
-            stmt = stmt.where(AdmissionStudent.academic_year_id == admission_year_uuid)
+            stmt = stmt.where(AdmissionStudentProgramDetails.academic_year_id == admission_year_uuid)
 
         # Department filters (ID / name)
         department_ids = []
@@ -1324,9 +1333,9 @@ class BillingService:
                 department_text = str(normalized.get("department")).strip()
 
         if department_ids:
-            stmt = stmt.where(AdmissionStudent.department_id.in_(department_ids))
+            stmt = stmt.where(AdmissionStudentProgramDetails.department_id.in_(department_ids))
         elif department_text:
-            stmt = stmt.join(Department, AdmissionStudent.department_id == Department.id)
+            stmt = stmt.join(Department, AdmissionStudentProgramDetails.department_id == Department.id)
             stmt = stmt.where(Department.name.ilike(f"%{department_text}%"))
 
         # Degree/Course filters (ID / name)
@@ -1349,9 +1358,9 @@ class BillingService:
                 degree_text = str(normalized.get("course")).strip()
 
         if degree_ids:
-            stmt = stmt.where(AdmissionStudent.course_id.in_(degree_ids))
+            stmt = stmt.where(AdmissionStudentProgramDetails.course_id.in_(degree_ids))
         elif degree_text:
-            stmt = stmt.join(Course, AdmissionStudent.course_id == Course.id)
+            stmt = stmt.join(Course, AdmissionStudentProgramDetails.course_id == Course.id)
             stmt = stmt.where(
                 or_(
                     Course.title.ilike(f"%{degree_text}%"),
@@ -1367,7 +1376,7 @@ class BillingService:
             if str(v).strip()
         ]
         if batch_values:
-            stmt = stmt.where(AdmissionStudent.year.in_(batch_values))
+            stmt = stmt.where(AdmissionStudentProgramDetails.year.in_(batch_values))
 
         # Gender
         gender_values = [
@@ -1376,7 +1385,7 @@ class BillingService:
             if str(v).strip()
         ]
         if gender_values:
-            stmt = stmt.where(AdmissionStudent.gender.in_(gender_values))
+            stmt = stmt.where(AdmissionStudentPersonalDetails.gender.in_(gender_values))
 
         # Admission quota by ID or by name
         quota_ids = []
@@ -1394,29 +1403,29 @@ class BillingService:
                 quota_text = str(normalized.get("admission_quota")).strip()
 
         if quota_ids:
-            stmt = stmt.where(AdmissionStudent.admission_quota_id.in_(quota_ids))
+            stmt = stmt.where(AdmissionStudentProgramDetails.admission_quota_id.in_(quota_ids))
         elif quota_text:
             stmt = stmt.join(
-                SeatQuota, AdmissionStudent.admission_quota_id == SeatQuota.id
+                SeatQuota, AdmissionStudentProgramDetails.admission_quota_id == SeatQuota.id
             ).where(SeatQuota.name.ilike(f"%{quota_text}%"))
 
         if normalized.get("category"):
-            stmt = stmt.where(AdmissionStudent.category == normalized.get("category"))
+            stmt = stmt.where(AdmissionStudentProgramDetails.category == normalized.get("category"))
         if normalized.get("quota_type"):
             stmt = stmt.where(
-                AdmissionStudent.quota_type.ilike(f"%{normalized.get('quota_type')}%")
+                AdmissionStudentProgramDetails.quota_type.ilike(f"%{normalized.get('quota_type')}%")
             )
         if normalized.get("special_quota"):
             stmt = stmt.where(
-                AdmissionStudent.special_quota.ilike(f"%{normalized.get('special_quota')}%")
+                AdmissionStudentProgramDetails.special_quota.ilike(f"%{normalized.get('special_quota')}%")
             )
         if normalized.get("scholarships"):
             stmt = stmt.where(
-                AdmissionStudent.scholarships.ilike(f"%{normalized.get('scholarships')}%")
+                AdmissionStudentProgramDetails.scholarships.ilike(f"%{normalized.get('scholarships')}%")
             )
         if normalized.get("boarding_place"):
             stmt = stmt.where(
-                AdmissionStudent.boarding_place.ilike(f"%{normalized.get('boarding_place')}%")
+                AdmissionStudentProgramDetails.boarding_place.ilike(f"%{normalized.get('boarding_place')}%")
             )
 
         # Only student IDs are selected here; ordering by non-selected columns breaks on Postgres with DISTINCT.
