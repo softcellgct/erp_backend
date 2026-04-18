@@ -9,7 +9,8 @@ RUN apk add --no-cache \
 WORKDIR /app
 
 RUN addgroup -g 1000 gnyanamani && \
-    adduser -D -u 1000 -G gnyanamani gnyanamani
+    adduser -D -u 1000 -G gnyanamani gnyanamani && \
+    chown -R gnyanamani:gnyanamani /app
 
 USER gnyanamani
 
