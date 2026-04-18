@@ -17,6 +17,7 @@ RUN addgroup -g 1000 gnyanamani && \
 USER gnyanamani
 
 ENV PATH="/home/gnyanamani/.local/bin:${PATH}"
+ENV PYTHONPATH="/app/src"
 
 RUN pip install --no-cache-dir --user poetry
 
