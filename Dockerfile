@@ -23,4 +23,4 @@ RUN pip install --no-cache-dir --user poetry
 RUN poetry lock --no-cache --regenerate && \
     poetry install --no-interaction --no-ansi --without ocr
 
-CMD ["poetry","run","python","src/main.py"]
+CMD ["sh","-c","poetry run alembic -c src/alembic.ini upgrade head && exec poetry run python src/main.py"]
