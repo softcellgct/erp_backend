@@ -124,6 +124,10 @@ class AdmissionGateEntry(Base):
 
     institution = relationship("Institution", lazy="selectin")
 
+    @property
+    def institution_name(self):
+        return getattr(self.institution, "name", None) if self.institution else None
+
     admission_student = relationship(
         "AdmissionStudent",
         back_populates="gate_entry",

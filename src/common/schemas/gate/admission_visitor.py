@@ -37,6 +37,7 @@ class ConsultancyReferenceCreate(BaseModel):
 class ConsultancyReferenceRead(BaseModel):
     id: UUID
     consultancy_id: UUID
+    consultancy_name: Optional[str] = None
     reference_staff_1: Optional[str] = None
     reference_staff_2: Optional[str] = None
     reference_staff_3: Optional[str] = None
@@ -52,6 +53,7 @@ class StaffReferenceCreate(BaseModel):
 class StaffReferenceRead(BaseModel):
     id: UUID
     staff_id: UUID
+    staff_name: Optional[str] = None
 
     class Config:
         from_attributes = True
@@ -124,6 +126,7 @@ class AdmissionVisitorUpdate(BaseModel):
 class AdmissionVisitorRead(BaseModel):
     id: Optional[UUID] = None
     institution_id: Optional[UUID] = None
+    institution_name: Optional[str] = None
 
     student_name: str
     mobile_number: Optional[str] = None
@@ -165,6 +168,9 @@ class AdmissionVisitorPassOutResponse(BaseModel):
 
 
 class AdmissionVisitorReportItem(BaseModel):
+    id: Optional[UUID] = None
+    institution_id: Optional[UUID] = None
+    image_url: Optional[str] = None
     gate_pass_no: Optional[str] = None
     student_name: Optional[str] = None
     mobile_number: Optional[str] = None

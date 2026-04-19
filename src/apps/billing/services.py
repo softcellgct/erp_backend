@@ -28,9 +28,12 @@ class BillingService:
         # Simple invoice scheme: INST-YYYYMMDD-<seq>
         from datetime import datetime
         from sqlalchemy import text
+        from common.models.master.institution import Institution
 
         today = datetime.utcnow().strftime("%Y%m%d")
-        prefix = f"{institution_id.hex[:6].upper()}-{today}-"
+        institution = await db.get(Institution, institution_id)
+        inst_code = (institution.code if institution and institution.code else str(institution_id)[:6]).upper()
+        prefix = f"{inst_code}-{today}-"
 
         # find last seq
         result = await db.execute(
@@ -55,9 +58,11 @@ class BillingService:
         """
         from datetime import datetime
         from sqlalchemy import text
-        
+        from common.models.master.institution import Institution
+
         year = datetime.utcnow().year
-        inst_code = institution_id.hex[:6].upper()
+        institution = await db.get(Institution, institution_id)
+        inst_code = (institution.code if institution and institution.code else str(institution_id)[:6]).upper()
         prefix = f"APP-{inst_code}-{year}-"
         
         # Find last sequence

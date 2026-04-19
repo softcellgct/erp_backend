@@ -280,6 +280,30 @@ class AdmissionVisitorCRUD:
 
         return f"{prefix}{next_num:03d}"
 
+    async def _enrich_reference_names(self, db: AsyncSession, gate_entry):
+        """Attach consultancy_name and staff_name onto the related reference rows
+        so Pydantic response models can surface them to the frontend."""
+        if not gate_entry:
+            return gate_entry
+
+        cref = getattr(gate_entry, "consultancy_reference", None)
+        if cref and getattr(cref, "consultancy_id", None):
+            from common.models.admission.consultancy import Consultancy
+            name = await db.scalar(
+                select(Consultancy.name).where(Consultancy.id == cref.consultancy_id)
+            )
+            setattr(cref, "consultancy_name", name)
+
+        sref = getattr(gate_entry, "staff_reference", None)
+        if sref and getattr(sref, "staff_id", None):
+            from common.models.master.institution import Staff
+            name = await db.scalar(
+                select(Staff.name).where(Staff.id == sref.staff_id)
+            )
+            setattr(sref, "staff_name", name)
+
+        return gate_entry
+
     async def get_one(self, db: AsyncSession, visitor_id: UUID):
         stmt = (
             select(AdmissionGateEntry)
@@ -288,6 +312,7 @@ class AdmissionVisitorCRUD:
                 AdmissionGateEntry.deleted_at.is_(None),
             )
             .options(
+                selectinload(AdmissionGateEntry.institution),
                 joinedload(AdmissionGateEntry.consultancy_reference),
                 joinedload(AdmissionGateEntry.staff_reference),
                 joinedload(AdmissionGateEntry.student_reference),
@@ -295,7 +320,8 @@ class AdmissionVisitorCRUD:
             )
         )
         result = await db.execute(stmt)
-        return result.scalars().first()
+        gate_entry = result.scalars().first()
+        return await self._enrich_reference_names(db, gate_entry)
 
     async def get_by_gate_pass_no(self, db: AsyncSession, gate_pass_no: str):
         normalized = gate_pass_no.strip()
@@ -306,6 +332,7 @@ class AdmissionVisitorCRUD:
                 AdmissionGateEntry.deleted_at.is_(None),
             )
             .options(
+                selectinload(AdmissionGateEntry.institution),
                 joinedload(AdmissionGateEntry.consultancy_reference),
                 joinedload(AdmissionGateEntry.staff_reference),
                 joinedload(AdmissionGateEntry.student_reference),
@@ -313,7 +340,8 @@ class AdmissionVisitorCRUD:
             )
         )
         result = await db.execute(stmt)
-        return result.scalars().first()
+        gate_entry = result.scalars().first()
+        return await self._enrich_reference_names(db, gate_entry)
 
     async def get_all(self, db: AsyncSession, query):
         has_joins = bool(getattr(query, "_setup_joins", None))
@@ -662,6 +690,7 @@ class AdmissionVisitorCRUD:
             "native_place": gate_entry.native_place,
             "institution_id": gate_entry.institution_id,
             "institution_name": institution_name,
+            "image_url": gate_entry.image_url,
             "reference_type": str(gate_entry.reference_type) if gate_entry.reference_type else None,
             "visit_status": gate_entry.visit_status.value
             if hasattr(gate_entry.visit_status, "value")

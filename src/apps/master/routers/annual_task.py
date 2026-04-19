@@ -111,7 +111,6 @@ async def assign_course_to_academic_year(
     response_model=List[AcademicYearCourseResponse],
     tags=["Academic Years"],
 )
-@is_superadmin
 async def get_courses_for_academic_year(
     request: Request,
     academic_year_id: str,

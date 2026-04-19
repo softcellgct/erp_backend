@@ -102,7 +102,10 @@ async def get_admission_student(
         selectinload(AdmissionStudent.staff_reference),
         selectinload(AdmissionStudent.student_reference),
         selectinload(AdmissionStudent.other_reference),
-        selectinload(AdmissionStudent.gate_entry),
+        selectinload(AdmissionStudent.gate_entry).selectinload(AdmissionGateEntry.consultancy_reference),
+        selectinload(AdmissionStudent.gate_entry).selectinload(AdmissionGateEntry.staff_reference),
+        selectinload(AdmissionStudent.gate_entry).selectinload(AdmissionGateEntry.student_reference),
+        selectinload(AdmissionStudent.gate_entry).selectinload(AdmissionGateEntry.other_reference),
         selectinload(AdmissionStudent.personal_details),
         selectinload(AdmissionStudent.program_details),
         selectinload(AdmissionStudent.previous_academic_details),
@@ -150,10 +153,25 @@ async def get_admission_student(
         from common.models.master.annual_task import AcademicYear
         academic_year_name = await db.scalar(select(AcademicYear.year_name).where(AcademicYear.id == ay_id_to_check))
 
+    # References may live on the admission student OR on the linked gate entry.
+    # Prefer student-level, fall back to gate-entry level.
+    gate = student.gate_entry
+    consultancy_ref = student.consultancy_reference or (gate.consultancy_reference if gate else None)
+    staff_ref = student.staff_reference or (gate.staff_reference if gate else None)
+    student_ref_obj = student.student_reference or (gate.student_reference if gate else None)
+    other_ref = student.other_reference or (gate.other_reference if gate else None)
+
     staff_name = None
-    if student.staff_reference and student.staff_reference.staff_id:
+    if staff_ref and staff_ref.staff_id:
         from common.models.master.institution import Staff
-        staff_name = await db.scalar(select(Staff.name).where(Staff.id == student.staff_reference.staff_id))
+        staff_name = await db.scalar(select(Staff.name).where(Staff.id == staff_ref.staff_id))
+
+    consultancy_name = None
+    if consultancy_ref and consultancy_ref.consultancy_id:
+        from common.models.admission.consultancy import Consultancy
+        consultancy_name = await db.scalar(
+            select(Consultancy.name).where(Consultancy.id == consultancy_ref.consultancy_id)
+        )
 
     # Helper function to convert nested objects to dict
     def obj_to_dict(obj):
@@ -172,7 +190,6 @@ async def get_admission_student(
     prog = student.program_details
     pers = student.personal_details
     prev = student.previous_academic_details
-    gate = student.gate_entry
 
     religion_val = get_nested(pers, "religion")
     community_val = get_nested(pers, "community")
@@ -261,10 +278,10 @@ async def get_admission_student(
         "hsc_details": get_nested(prev, "hsc"),
         "diploma_details": get_nested(prev, "diploma"),
         "pg_details": get_nested(prev, "degree"),
-        "consultancy_reference": obj_to_dict(student.consultancy_reference),
-        "staff_reference": {**obj_to_dict(student.staff_reference), "staff_name": staff_name} if student.staff_reference else None,
-        "student_reference": obj_to_dict(student.student_reference),
-        "other_reference": obj_to_dict(student.other_reference),
+        "consultancy_reference": {**obj_to_dict(consultancy_ref), "consultancy_name": consultancy_name} if consultancy_ref else None,
+        "staff_reference": {**obj_to_dict(staff_ref), "staff_name": staff_name} if staff_ref else None,
+        "student_reference": obj_to_dict(student_ref_obj),
+        "other_reference": obj_to_dict(other_ref),
         "gate_entry": obj_to_dict(student.gate_entry),
         "personal_details": obj_to_dict(student.personal_details),
         "program_details": obj_to_dict(student.program_details),

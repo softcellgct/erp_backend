@@ -4,6 +4,7 @@ API Routers for Admission Form Verification
 from fastapi import APIRouter, Depends, HTTPException, status, Request, File, UploadFile, Query
 from sqlalchemy import select, and_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.exc import IntegrityError
 from datetime import datetime
 from uuid import UUID
 from typing import List, Optional
@@ -41,6 +42,38 @@ async def _safe_commit(db: AsyncSession, msg: str | None = None):
         await db.rollback()
         logger.error(f"{msg or 'DB commit failed'}: {str(e)}", exc_info=True)
         raise HTTPException(status_code=400, detail=f"Database error: {str(e)}")
+
+
+async def _get_or_create_form_verification(
+    db: AsyncSession, student_id: UUID
+) -> AdmissionFormVerification:
+    """Race-safe get-or-create for the per-student form-verification row.
+
+    The unique index on ``student_id`` means concurrent inserts (common when the
+    frontend saves the checklist via Promise.all) will collide. We attempt the
+    insert inside a SAVEPOINT so a UniqueViolation can be recovered without
+    aborting the outer transaction.
+    """
+    existing = await db.scalar(
+        select(AdmissionFormVerification).where(
+            AdmissionFormVerification.student_id == student_id
+        )
+    )
+    if existing:
+        return existing
+
+    try:
+        async with db.begin_nested():
+            new_record = AdmissionFormVerification(student_id=student_id)
+            db.add(new_record)
+            await db.flush()
+        return new_record
+    except IntegrityError:
+        return await db.scalar(
+            select(AdmissionFormVerification).where(
+                AdmissionFormVerification.student_id == student_id
+            )
+        )
 
 
 verification_router = APIRouter(
@@ -534,19 +567,7 @@ async def submit_certificate(
     except Exception:
         user_id = None
 
-    # Get or create form verification record
-    fv_query = select(AdmissionFormVerification).where(
-        AdmissionFormVerification.student_id == student_id
-    )
-    result = await db.execute(fv_query)
-    form_verification = result.scalar_one_or_none()
-
-    if not form_verification:
-        # Auto-create form verification record for the student
-        form_verification = AdmissionFormVerification(student_id=student_id)
-        db.add(form_verification)
-        await _safe_commit(db)
-        await db.refresh(form_verification)
+    form_verification = await _get_or_create_form_verification(db, student_id)
 
     # Check if document type exists
     cert_query = select(DocumentType).where(
@@ -634,19 +655,7 @@ async def get_submitted_certificates(
     """
     Get all certificates submitted by a student
     """
-    # Get or create form verification record
-    fv_query = select(AdmissionFormVerification).where(
-        AdmissionFormVerification.student_id == student_id
-    )
-    result = await db.execute(fv_query)
-    form_verification = result.scalar_one_or_none()
-
-    if not form_verification:
-        # Auto-create form verification record for the student
-        form_verification = AdmissionFormVerification(student_id=student_id)
-        db.add(form_verification)
-        await _safe_commit(db)
-        await db.refresh(form_verification)
+    form_verification = await _get_or_create_form_verification(db, student_id)
 
     # Get all submitted certificates
     certs_query = select(SubmittedCertificate).where(
