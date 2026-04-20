@@ -26,4 +26,4 @@ RUN poetry install --no-ansi --without ocr --no-root
 
 COPY --chown=gnyanamani:gnyanamani . .
 
-CMD ["sh","-c","poetry run python main.py"]
+CMD ["sh","-c","poetry run python src/main.py"]
