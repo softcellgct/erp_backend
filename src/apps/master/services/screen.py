@@ -19,7 +19,7 @@ class ScreenService:
                 select(Module)
                 .where(and_(Module.is_active.is_(True),
                             Module.deleted_at.is_(null())))
-                .options(selectinload(Module.screens.and_(Screen.is_active.is_(True))))
+                .options(selectinload(Module.screens))
             )
             result = await self.db.execute(query)
             modules = result.scalars().all()
@@ -32,6 +32,7 @@ class ScreenService:
                         "id": str(screen.id),
                         "name": screen.name,
                         "title": screen.title,
+                        "is_active": screen.is_active,
                         "parent_id": str(screen.parent_id)
                         if screen.parent_id
                         else None,
