@@ -1,7 +1,6 @@
 from fastapi import APIRouter, HTTPException, Query, Depends, Path, Request, status
 from components.db.base_model import Base
 from components.db.db import get_db_session
-from fastapi_querybuilder.dependencies import QueryBuilder
 from fastapi_pagination.ext.sqlalchemy import paginate
 from components.generator.schema.registry import get_schemas
 from fastapi_pagination import Page, add_pagination
@@ -9,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List
 from uuid import UUID
 import re
+from components.utils.query_builder import SafeQueryBuilder
 
 
 def create_crud_routes(
@@ -56,7 +56,7 @@ def create_crud_routes(
     async def read_all(
         request: Request,
         db: AsyncSession = Depends(get_db_session),
-        query=QueryBuilder(model),
+        query=SafeQueryBuilder(model),
     ):
         """
         Retrieve paginated {split_name} records with optional filtering, sorting, and searching.
