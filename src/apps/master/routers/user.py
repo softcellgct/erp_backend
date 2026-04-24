@@ -22,24 +22,24 @@ user_router = APIRouter()
 
 # Manual routes for users to use Service logic (hashing pw etc)
 @user_router.post("/", response_model=UserResponseSchema, tags=["Users"])
-@is_superadmin
+
 async def create_new_user(request: Request, user: UserCreateSchema, db: AsyncSession = Depends(get_db_session)):
     return await MasterUserService(db).create_user(user)
 
 @user_router.get("/", response_model=List[UserResponseSchema], tags=["Users"])
-@is_superadmin
+
 async def get_all_users(request: Request, db: AsyncSession = Depends(get_db_session)):
     return await MasterUserService(db).get_users()
 
 @user_router.put("/{user_id}", response_model=UserResponseSchema, tags=["Users"])
-@is_superadmin
+
 async def update_existing_user(
     request: Request, user_id: UUID, user: UserUpdateSchema, db: AsyncSession = Depends(get_db_session)
 ):
     return await MasterUserService(db).update_user(user_id, user)
 
 @user_router.delete("/{user_id}", tags=["Users"])
-@is_superadmin
+
 async def delete_existing_user(request: Request, user_id: UUID, db: AsyncSession = Depends(get_db_session)):
     return await MasterUserService(db).delete_user(user_id)
 

@@ -230,21 +230,29 @@ async def seed_initial_data() -> None:
             "ADMISSION": "Admission",
             "BILLING": "Billing",
             "GATE": "Gate",
+            "TRANSPORT": "Transport",
+            "HOSTEL": "Hostel",
+            "SIS": "Student Information System",
         }
 
         # Build map of existing modules by name (only those we need)
         module_by_name = {m.name.upper(): m for m in modules if m.name and m.name.upper() in required_modules}
         existing_names = set(module_by_name.keys())
 
-        # Only create missing modules, don't modify existing ones (idempotent)
+        # Create missing modules; reactivate required ones that were previously
+        # deactivated or soft-deleted (idempotent, scoped to required_modules).
         for module_name, module_title in required_modules.items():
-            if module_name not in existing_names:
+            existing = module_by_name.get(module_name)
+            if existing is None:
                 module = Module(name=module_name, title=module_title, is_active=True)
                 session.add(module)
                 await session.flush()
                 module_by_name[module_name] = module
-                await session.flush()
-                module_by_name[module_name] = module
+            else:
+                if not existing.is_active:
+                    existing.is_active = True
+                if getattr(existing, "deleted_at", None) is not None:
+                    existing.deleted_at = None
 
         # ── Screens ───────────────────────────────────
         screens = (await session.execute(select(Screen))).scalars().all()
@@ -312,8 +320,10 @@ async def seed_initial_data() -> None:
                 "REFERRAL_REPORT",
                 "COLLECTION_REPORT",
                 "STUDENT_REPORT",
+                "STUDENTS_REPORT",
                 "BILLING_REPORTS",
                 "CONCESSION_FEES",
+                "CONCESSION_RULES",
                 "FEES_HEAD_CREATION",
                 "FINANCIAL_YEAR",
                 "TRANSPORT_FEES_STRUCTURE",
@@ -322,8 +332,18 @@ async def seed_initial_data() -> None:
                 "ONLINE_PAYMENTS",
                 "SCREEN_APPROVAL",
                 "SCHOLARSHIPS",
+                "SCHOLARSHIP_CONFIGURATION",
+                "GOVERNMENT_SCHOLARSHIPS",
+                "MANUAL_CONCESSIONS",
+                "STAFF_REFERRAL_CONCESSION",
                 "REFUNDS",
+                "RECALL_RECEIPT",
                 "BULK_RECEIPTS",
+                "MULTI_RECEIPTS",
+                "GENERAL_LEDGER",
+                "STUDENT_LEDGER",
+                "STUDENT_DEPOSITS",
+                "INVOICES",
             ],
             "GATE": [
                 "GATE",
@@ -343,6 +363,24 @@ async def seed_initial_data() -> None:
                 "VEHICLE_OUT",
                 "VEHICLE_IN",
                 "VEHICLE_REPORTS",
+            ],
+            "TRANSPORT": [
+                "TRANSPORT_REQUESTS",
+                "TRANSPORT_VEHICLES",
+                "TRANSPORT_DRIVERS",
+                "TRANSPORT_ALLOCATIONS",
+                "TRANSPORT_REPORTS",
+            ],
+            "HOSTEL": [
+                "HOSTEL_REQUESTS",
+                "HOSTEL_ROOMS",
+                "HOSTEL_ALLOCATIONS",
+                "HOSTEL_MODULE_REPORTS",
+            ],
+            "SIS": [
+                "SIS_STUDENTS",
+                "SIS_ACADEMIC_STRUCTURE",
+                "SIS_REPORTS",
             ],
         }
 

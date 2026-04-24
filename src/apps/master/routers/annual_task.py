@@ -48,7 +48,6 @@ async def get_admission_active_years(
     response_model=list,
     tags=["Academic Years"],
 )
-@is_superadmin
 async def get_active_courses_for_year(
     request: Request,
     academic_year_id: str,
@@ -93,7 +92,6 @@ async def get_admission_eligible_programs(
     response_model=AcademicYearCourseResponse,
     tags=["Academic Years"],
 )
-@is_superadmin
 async def assign_course_to_academic_year(
     request: Request,
     academic_year_id: str, # UUID via Pydantic or str? service expects UUID. FastAPI converts path param if annotated. But here it's str in signature.
@@ -128,7 +126,6 @@ async def get_courses_for_academic_year(
     response_model=AcademicYearResponse,
     tags=["Academic Years"],
 )
-@is_superadmin
 async def create_academic_year(
     request: Request,
     data: AcademicYearSchema,
@@ -148,7 +145,6 @@ async def create_academic_year(
     response_model=AcademicYearResponse,
     tags=["Academic Years"],
 )
-@is_superadmin
 async def update_academic_year(
     request: Request,
     academic_year_id: str,
@@ -165,7 +161,6 @@ async def update_academic_year(
     response_model=AcademicYearResponse,
     tags=["Academic Years"],
 )
-@is_superadmin
 async def activate_academic_year(
     request: Request,
     academic_year_id: str,
@@ -180,7 +175,6 @@ async def activate_academic_year(
     response_model=AcademicYearResponse,
     tags=["Academic Years"],
 )
-@is_superadmin
 async def open_admissions_for_year(
     request: Request,
     academic_year_id: str,
@@ -199,7 +193,6 @@ async def open_admissions_for_year(
     response_model=AcademicYearCourseResponse,
     tags=["Academic Years"],
 )
-@is_superadmin
 async def update_course_config(
     request: Request,
     academic_year_id: str,
@@ -217,7 +210,6 @@ async def update_course_config(
     "/academic-years/{academic_year_id}/courses/{course_id}",
     tags=["Academic Years"],
 )
-@is_superadmin
 async def remove_course_from_academic_year(
     request: Request,
     academic_year_id: str,
