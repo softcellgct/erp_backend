@@ -27,7 +27,10 @@ from common.schemas.billing.invoice_schemas import (
 from common.models.billing.application_fees import Invoice
 from apps.billing.services import billing_service
 
+from apps.billing.report_routers import router as report_router
+
 router = APIRouter()
+router.include_router(report_router, prefix="/reports", tags=["Billing - Reports"])
 
 
 from common.models.billing.concession_rule import ConcessionRule
