@@ -1402,7 +1402,7 @@ async def get_enquiry_reports(
     db: AsyncSession = Depends(get_db_session)
 ):
     """Get detailed enquiry reports with filters."""
-    from datetime import datetime
+    from datetime import datetime, time
     
     # Build query for AdmissionStudents
     from common.models.admission.admission_entry import AdmissionGateEntry, AdmissionStudentPersonalDetails
@@ -1410,26 +1410,48 @@ async def get_enquiry_reports(
         selectinload(AdmissionStudent.personal_details),
         selectinload(AdmissionStudent.gate_entry)
     )
-    if source:
-        # source doesn't exist, ignore or filter on reference_type
-        pass
+    
+    # Apply filters
+    filters = []
+    if start_date:
+        try:
+            start_dt = datetime.combine(datetime.fromisoformat(start_date).date(), time.min)
+            filters.append(AdmissionStudent.created_at >= start_dt)
+        except (ValueError, TypeError):
+            pass
+            
+    if end_date:
+        try:
+            end_dt = datetime.combine(datetime.fromisoformat(end_date).date(), time.max)
+            filters.append(AdmissionStudent.created_at <= end_dt)
+        except (ValueError, TypeError):
+            pass
+            
+    if status:
+        filters.append(AdmissionStudent.status == status)
+        
     if reference_type:
-        query_students = query_students.where(AdmissionGateEntry.reference_type == reference_type)
+        filters.append(AdmissionGateEntry.reference_type == reference_type)
+        
+    if filters:
+        query_students = query_students.where(and_(*filters))
     
     res_students = await db.execute(query_students)
     students = res_students.scalars().all()
     
     # Normalize data
-    all_enquiries = [{
-        "id": str(s.id),
-        "enquiry_number": s.enquiry_number,
-        "name": s.personal_details.name if getattr(s, "personal_details", None) else None,
-        "mobile": s.personal_details.student_mobile if getattr(s, "personal_details", None) else None,
-        "status": s.status,
-        "source": getattr(s, "source", None).value if getattr(s, "source", None) else None,
-        "reference_type": getattr(s.gate_entry, "reference_type", None) if getattr(s, "gate_entry", None) else None,
-        "created_at": s.created_at.isoformat() if s.created_at else None,
-    } for s in students]
+    all_enquiries = []
+    for s in students:
+        all_enquiries.append({
+            "id": str(s.id),
+            "enquiry_number": s.enquiry_number,
+            "name": s.personal_details.name if getattr(s, "personal_details", None) else s.name,
+            "mobile": s.personal_details.student_mobile if getattr(s, "personal_details", None) else None,
+            "status": s.status.value if hasattr(s.status, "value") else s.status,
+            "source": s.source.value if hasattr(s.source, "value") else s.source,
+            "reference_type": getattr(s.gate_entry, "reference_type", None) if getattr(s, "gate_entry", None) else None,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+        })
     
     return {
         "total": len(all_enquiries),
