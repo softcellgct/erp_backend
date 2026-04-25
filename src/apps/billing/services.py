@@ -321,7 +321,7 @@ class BillingService:
         from common.models.admission.admission_entry import AdmissionStudent
         
         # 0. Fetch Student
-        stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+        stmt = select(AdmissionStudent).options(selectinload(AdmissionStudent.program_details), selectinload(AdmissionStudent.personal_details)).where(AdmissionStudent.id == student_id)
         res = await db.execute(stmt)
         student = res.scalar_one_or_none()
         if not student:
@@ -1688,7 +1688,7 @@ class BillingService:
 
         from common.models.admission.admission_entry import AdmissionStudent
 
-        students_stmt = select(AdmissionStudent).where(AdmissionStudent.id.in_(student_ids))
+        students_stmt = select(AdmissionStudent).options(selectinload(AdmissionStudent.program_details)).where(AdmissionStudent.id.in_(student_ids))
         students_res = await db.execute(students_stmt)
         students = students_res.scalars().all()
         student_map = {student.id: student for student in students}
@@ -1737,7 +1737,7 @@ class BillingService:
 
         # Get institution_id from first eligible student for the batch
         first_sid = next(iter(fs_id_for_student))
-        institution_id = student_map[first_sid].institution_id
+        institution_id = student_map[first_sid].program_details.institution_id if student_map[first_sid].program_details else None
         if not institution_id:
             raise ValueError("Could not determine institution from students")
 
@@ -2514,7 +2514,7 @@ class BillingService:
     ) -> dict:
         from common.models.admission.admission_entry import AdmissionStudent
 
-        student_stmt = select(AdmissionStudent).where(
+        student_stmt = select(AdmissionStudent).options(selectinload(AdmissionStudent.program_details)).where(
             AdmissionStudent.id == student_id,
             AdmissionStudent.deleted_at.is_(None),
         )
@@ -2522,12 +2522,13 @@ class BillingService:
         student = student_res.scalar_one_or_none()
         if not student:
             raise ValueError("Student not found")
-        if not student.institution_id:
+        inst_id = student.program_details.institution_id if student.program_details else getattr(student, "institution_id", None)
+        if not inst_id:
             raise ValueError("Student is not mapped to any institution")
 
         return await self._build_ledger(
             db=db,
-            institution_id=student.institution_id,
+            institution_id=inst_id,
             student_ids=[student.id],
             from_date=from_date,
             to_date=to_date,
