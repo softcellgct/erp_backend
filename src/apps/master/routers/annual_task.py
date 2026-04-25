@@ -239,6 +239,7 @@ academic_year_crud = create_crud_routes(
     AcademicYearResponse,
     AcademicYearResponse,
     decorators=[is_superadmin],
+    apply_decorators_on_read=False,
 )
 academic_year_router.include_router(
     academic_year_crud, prefix="/academic-years", tags=["Academic Years"]

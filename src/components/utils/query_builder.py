@@ -17,6 +17,21 @@ def SafeQueryBuilder(model: Type, searchable_fields: Optional[List[str]] = None)
         return build_safe_query(model, params, searchable_fields)
     return Depends(wrapper)
 
+def normalize_filters(f):
+    """
+    Recursively converts frontend filter format:
+    {"field": "name", "operator": "$eq", "value": "test"}
+    into the format expected by fastapi_querybuilder:
+    {"name": {"$eq": "test"}}
+    """
+    if isinstance(f, dict):
+        if "field" in f and "operator" in f and "value" in f:
+            return {f["field"]: {f["operator"]: f["value"]}}
+        return {k: normalize_filters(v) for k, v in f.items()}
+    elif isinstance(f, list):
+        return [normalize_filters(item) for item in f]
+    return f
+
 def build_safe_query(cls, params: QueryParams, searchable_fields: Optional[List[str]] = None):
     if hasattr(cls, 'deleted_at'):
         query = select(cls).where(cls.deleted_at.is_(None))
@@ -26,6 +41,7 @@ def build_safe_query(cls, params: QueryParams, searchable_fields: Optional[List[
     # Filters
     parsed_filters = parse_filter_query(params.filters)
     if parsed_filters:
+        parsed_filters = normalize_filters(parsed_filters)
         filter_expr, query = parse_filters(cls, parsed_filters, query)
         if filter_expr is not None:
             query = query.where(filter_expr)
