@@ -715,7 +715,11 @@ class AdmissionStudentPreviousAcademicDetails(Base):
     )
 
     sslc = Column(JSON, nullable=True)
+    sslc_total_marks = Column(Float, nullable=True)
+    sslc_obtained_marks = Column(Float, nullable=True)
     hsc = Column(JSON, nullable=True)
+    hsc_total_marks = Column(Float, nullable=True)
+    hsc_obtained_marks = Column(Float, nullable=True)
     diploma = Column(JSON, nullable=True)
     degree = Column(JSON, nullable=True)
 
