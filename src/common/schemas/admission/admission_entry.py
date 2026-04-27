@@ -162,7 +162,11 @@ class AdmissionProgramDetailsSection(BaseModel):
 
 class AdmissionPreviousAcademicDetailsSection(BaseModel):
     sslc: Optional[dict] = None
+    sslc_total_marks: Optional[float] = None
+    sslc_obtained_marks: Optional[float] = None
     hsc: Optional[dict] = None
+    hsc_total_marks: Optional[float] = None
+    hsc_obtained_marks: Optional[float] = None
     diploma: Optional[dict] = None
     degree: Optional[dict] = None
 
