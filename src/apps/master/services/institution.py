@@ -216,28 +216,16 @@ class InstitutionService:
     async def list_admission_eligible_programs(self, institution_id: UUID, academic_year_id: UUID):
         """
         Return departments and courses eligible for admission entry selection.
-
-        Eligibility rule:
-        - Department is active
-        - Course is active
-        - AcademicYearCourse config exists for selected year
-        - AcademicYearCourse config is active
-        - AcademicYearCourse.application_fee > 0
         """
         stmt = (
             select(Department, Course)
             .join(Course, Course.department_id == Department.id)
-            .join(AcademicYearCourse, AcademicYearCourse.course_id == Course.id)
             .where(
                 Department.institution_id == institution_id,
                 or_(Department.is_active == True, Department.is_active.is_(None)),
                 Department.deleted_at.is_(None),
                 or_(Course.is_active == True, Course.is_active.is_(None)),
                 Course.deleted_at.is_(None),
-                AcademicYearCourse.academic_year_id == academic_year_id,
-                or_(AcademicYearCourse.is_active == True, AcademicYearCourse.is_active.is_(None)),
-                func.coalesce(AcademicYearCourse.application_fee, 0) > 0,
-                AcademicYearCourse.deleted_at.is_(None),
             )
             .order_by(Department.name, Course.title)
         )
