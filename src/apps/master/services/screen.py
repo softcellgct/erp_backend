@@ -60,13 +60,16 @@ class ScreenService:
             modules_result = await self.db.execute(modules_query)
             active_modules = {m.id: m for m in modules_result.scalars().all()}
 
+            # Ensure role_id is a UUID object for consistent querying
+            role_uuid = role_id if isinstance(role_id, UUID) else UUID(str(role_id))
+
             # Query all RolePermission entries for the given role_id, eagerly loading related Screen and Module
             role_query = (
                 select(RolePermission)
                 .options(
                     selectinload(RolePermission.screen).selectinload(Screen.module)
                 )
-                .where(RolePermission.role_id == role_id)
+                .where(RolePermission.role_id == role_uuid)
             )
             role_result = await self.db.execute(role_query)
             role_permissions = role_result.scalars().all()
@@ -85,7 +88,7 @@ class ScreenService:
                 user_permissions = user_result.scalars().all()
 
             # Fetch the role itself
-            role_query = select(Role).where(Role.id == role_id)
+            role_query = select(Role).where(Role.id == role_uuid)
             role_result = await self.db.execute(role_query)
             role = role_result.scalar_one_or_none()
 
@@ -98,12 +101,15 @@ class ScreenService:
                 module = screen.module if screen else None
                 # Only include active modules
                 if module and module.id in active_modules:
-                    modules[module.id] = {
-                        "id": str(module.id),
-                        "name": module.name,
-                        "title": module.title,
-                        "module_img_url": module.module_img_url,
-                    }
+                    # Only add to permitted_modules if the user can actually view at least one screen in it
+                    # or has some other permission that implies viewing
+                    if rp.can_view or rp.can_create or rp.can_edit or rp.can_delete:
+                        modules[module.id] = {
+                            "id": str(module.id),
+                            "name": module.name,
+                            "title": module.title,
+                            "module_img_url": module.module_img_url,
+                        }
                 if screen and module and module.id in active_modules:
                     role_screens.append(
                         {
@@ -171,8 +177,10 @@ class ScreenService:
                         status_code=400,
                         detail="role_id is required when permissions_data is empty",
                     )
+                # Ensure role_id is a UUID object
+                role_uuid = role_id if isinstance(role_id, UUID) else UUID(str(role_id))
                 delete_query = delete(RolePermission).where(
-                    RolePermission.role_id == role_id
+                    RolePermission.role_id == role_uuid
                 )
                 await self.db.execute(delete_query)
                 await self.db.commit()
