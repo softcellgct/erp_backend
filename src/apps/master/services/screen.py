@@ -99,10 +99,9 @@ class ScreenService:
             for rp in role_permissions:
                 screen = rp.screen
                 module = screen.module if screen else None
-                # Only include active modules
-                if module and module.id in active_modules:
-                    # Only add to permitted_modules if the user can actually view at least one screen in it
-                    # or has some other permission that implies viewing
+                # Only include screens from active modules
+                if screen and module and module.id in active_modules:
+                    # Add module to permitted list if any permission is granted
                     if rp.can_view or rp.can_create or rp.can_edit or rp.can_delete:
                         modules[module.id] = {
                             "id": str(module.id),
@@ -110,7 +109,6 @@ class ScreenService:
                             "title": module.title,
                             "module_img_url": module.module_img_url,
                         }
-                if screen and module and module.id in active_modules:
                     role_screens.append(
                         {
                             "id": str(screen.id),
@@ -123,6 +121,7 @@ class ScreenService:
                             "can_delete": rp.can_delete,
                         }
                     )
+
 
             for up in user_permissions:
                 screen = up.screen
