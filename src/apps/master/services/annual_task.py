@@ -246,14 +246,29 @@ class AnnualTaskService: # Or AcademicService
 
     async def get_courses_for_academic_year(self, academic_year_id: UUID):
         from common.models.master.annual_task import AcademicYearCourse
+        from common.models.master.institution import Course
         # Verify academic year exists
         await self.get_academic_year(academic_year_id)
         
-        stmt = select(AcademicYearCourse).where(
+        stmt = select(AcademicYearCourse, Course.title).join(
+            Course, AcademicYearCourse.course_id == Course.id
+        ).where(
             AcademicYearCourse.academic_year_id == academic_year_id
         )
         result = await self.db.execute(stmt)
-        return result.scalars().all()
+        
+        courses_with_titles = []
+        for row in result.all():
+            ay_course, title = row
+            courses_with_titles.append({
+                "id": ay_course.id,
+                "course_id": ay_course.course_id,
+                "application_fee": float(ay_course.application_fee),
+                "is_active": ay_course.is_active,
+                "course_title": title
+            })
+            
+        return courses_with_titles
 
     async def update_course_config(self, academic_year_id: UUID, course_id: UUID, data: AcademicYearCourseCreate):
          from common.models.master.annual_task import AcademicYearCourse
