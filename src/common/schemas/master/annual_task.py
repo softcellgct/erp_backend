@@ -25,6 +25,7 @@ class AcademicYearCourseCreate(BaseModel):
 class AcademicYearCourseResponse(BaseModel):
     id: UUID
     course_id: UUID
+    course_title: Optional[str] = None
     application_fee: float
     is_active: bool
     
