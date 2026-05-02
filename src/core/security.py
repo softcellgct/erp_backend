@@ -134,9 +134,9 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
         identity_type = payload.get("identity_type", "user")
 
-        from core.database import get_session
-
-        async for session in get_session():
+        from core.database import _async_session_factory
+        
+        async with _async_session_factory() as session:
             if identity_type == "cash_counter":
                 from common.models.billing.cash_counter import CashCounter
                 result = await session.execute(select(CashCounter).where(CashCounter.id == user_id))

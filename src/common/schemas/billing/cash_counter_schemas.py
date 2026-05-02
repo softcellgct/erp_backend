@@ -33,6 +33,7 @@ from common.schemas.billing.invoice_schemas import InvoiceResponse
 class StudentDuesResponse(BaseModel):
     student_id: UUID
     application_number: Optional[str] = None
+    roll_number: Optional[str] = None
     name: str
     department: Optional[str] = None
     course: Optional[str] = None
