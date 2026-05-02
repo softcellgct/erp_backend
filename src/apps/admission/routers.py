@@ -1755,7 +1755,12 @@ async def get_applied_admission_students(
     """Get all admission students with status 'Applied'."""
     from sqlalchemy.orm import raiseload
     result = await db.execute(
-        select(AdmissionStudent).where(AdmissionStudent.status == AdmissionStatusEnum.APPLIED.value).options(raiseload("*"))
+        select(AdmissionStudent)
+        .where(AdmissionStudent.status == AdmissionStatusEnum.APPLIED.value)
+        .options(
+            selectinload(AdmissionStudent.personal_details),
+            selectinload(AdmissionStudent.program_details)
+        )
     )
     students = result.scalars().all()
     # Return dict format to avoid circular reference encoding
@@ -1848,7 +1853,14 @@ async def set_fee_structure_and_lock(
     request: Request,
     db: AsyncSession = Depends(get_db_session),
 ):
-    stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+    stmt = (
+        select(AdmissionStudent)
+        .options(
+            selectinload(AdmissionStudent.program_details),
+            selectinload(AdmissionStudent.personal_details)
+        )
+        .where(AdmissionStudent.id == student_id)
+    )
     res = await db.execute(stmt)
     student = res.scalar_one_or_none()
 
@@ -2197,8 +2209,15 @@ async def record_deposit(
         from common.models.billing.student_deposit import StudentDeposit
         from datetime import datetime
         
-        # Get the student
-        student_stmt = select(AdmissionStudent).where(AdmissionStudent.id == student_id)
+        # Get the student with related details
+        student_stmt = (
+            select(AdmissionStudent)
+            .options(
+                selectinload(AdmissionStudent.program_details),
+                selectinload(AdmissionStudent.gate_entry)
+            )
+            .where(AdmissionStudent.id == student_id)
+        )
         student_res = await db.execute(student_stmt)
         student = student_res.scalar_one_or_none()
 
@@ -2224,9 +2243,20 @@ async def record_deposit(
 
         # Create deposit record if doesn't exist
         if not deposit:
+            # Get institution_id from program_details or fallback to gate_entry
+            inst_id = student.program_details.institution_id if student.program_details else None
+            if not inst_id and student.gate_entry:
+                inst_id = student.gate_entry.institution_id
+                
+            if not inst_id:
+                raise HTTPException(
+                    status_code=400, 
+                    detail="Student has no associated institution. Please complete admission entry first."
+                )
+
             deposit = StudentDeposit(
                 student_id=student_id,
-                institution_id=student.institution_id,
+                institution_id=inst_id,
                 application_number=student.application_number,
                 total_deposited=0,
                 used_amount=0,
@@ -2312,6 +2342,7 @@ async def get_student_deposit(
             return {
                 "student_id": str(student_id),
                 "application_number": student.application_number,
+                "roll_number": student.roll_number,
                 "total_deposited": 0,
                 "used_amount": 0,
                 "available_balance": 0,
@@ -2323,6 +2354,7 @@ async def get_student_deposit(
             "id": str(deposit.id),
             "student_id": str(deposit.student_id),
             "application_number": deposit.application_number,
+            "roll_number": deposit.student.roll_number if deposit.student else student.roll_number,
             "total_deposited": float(deposit.total_deposited),
             "used_amount": float(deposit.used_amount),
             "refunds_issued": float(deposit.refunds_issued),
@@ -2357,23 +2389,49 @@ async def get_deposit_by_application(
     try:
         from common.models.billing.student_deposit import StudentDeposit
         
-        # Get deposit by application number
-        deposit_stmt = select(StudentDeposit).where(
-            StudentDeposit.application_number == application_number
+        # Get deposit by application number or roll number
+        deposit_stmt = select(StudentDeposit).outerjoin(AdmissionStudent).where(
+            or_(
+                StudentDeposit.application_number == application_number,
+                AdmissionStudent.roll_number == application_number
+            )
         )
         deposit_res = await db.execute(deposit_stmt)
         deposit = deposit_res.scalar_one_or_none()
 
         if not deposit:
-            raise HTTPException(
-                status_code=404, 
-                detail=f"No deposit found for application number {application_number}"
+            # Check if student exists (by app no or roll no) to return empty deposit structure
+            student_stmt = select(AdmissionStudent).where(
+                or_(
+                    AdmissionStudent.application_number == application_number,
+                    AdmissionStudent.roll_number == application_number
+                )
             )
+            student_res = await db.execute(student_stmt)
+            student = student_res.scalar_one_or_none()
+            
+            if not student:
+                raise HTTPException(
+                    status_code=404, 
+                    detail=f"No student or deposit found for identifier: {application_number}"
+                )
+
+            return {
+                "student_id": str(student.id),
+                "application_number": application_number,
+                "roll_number": student.roll_number,
+                "total_deposited": 0,
+                "used_amount": 0,
+                "available_balance": 0,
+                "status": "ACTIVE",
+                "message": "No deposits recorded for this student",
+            }
 
         return {
             "id": str(deposit.id),
             "student_id": str(deposit.student_id),
             "application_number": deposit.application_number,
+            "roll_number": deposit.student.roll_number if deposit.student else None,
             "total_deposited": float(deposit.total_deposited),
             "used_amount": float(deposit.used_amount),
             "refunds_issued": float(deposit.refunds_issued),

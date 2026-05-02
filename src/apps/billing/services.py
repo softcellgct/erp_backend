@@ -2118,6 +2118,7 @@ class BillingService:
         return {
             "student_id": student.id,
             "application_number": student.application_number,
+            "roll_number": student.roll_number,
             "name": name_val,
             "department": student.program_details.department.name if student.program_details and student.program_details.department else None,
             "course": student.program_details.course.title if student.program_details and student.program_details.course else None,
