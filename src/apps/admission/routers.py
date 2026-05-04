@@ -191,32 +191,32 @@ async def get_admission_student(
     pers = student.personal_details
     prev = student.previous_academic_details
 
-    religion_val = get_nested(pers, "religion")
-    community_val = get_nested(pers, "community")
-    caste_val = get_nested(pers, "caste")
+    # religion_val = get_nested(pers, "religion")
+    # community_val = get_nested(pers, "community")
+    # caste_val = get_nested(pers, "caste")
 
-    import uuid
-    def is_valid_uuid(val):
-        try:
-            uuid.UUID(str(val))
-            return True
-        except (ValueError, TypeError):
-            return False
+    # import uuid
+    # def is_valid_uuid(val):
+    #     try:
+    #         uuid.UUID(str(val))
+    #         return True
+    #     except (ValueError, TypeError):
+    #         return False
 
-    if is_valid_uuid(religion_val):
-        from common.models.meta.models import Religion
-        real_religion = await db.scalar(select(Religion.name).where(Religion.id == uuid.UUID(str(religion_val))))
-        if real_religion: religion_val = real_religion
+    # if is_valid_uuid(religion_val):
+    #     from common.models.meta.models import Religion
+    #     real_religion = await db.scalar(select(Religion.name).where(Religion.id == uuid.UUID(str(religion_val))))
+    #     if real_religion: religion_val = real_religion
 
-    if is_valid_uuid(community_val):
-        from common.models.meta.models import Community
-        real_community = await db.scalar(select(Community.name).where(Community.id == uuid.UUID(str(community_val))))
-        if real_community: community_val = real_community
+    # if is_valid_uuid(community_val):
+    #     from common.models.meta.models import Community
+    #     real_community = await db.scalar(select(Community.name).where(Community.id == uuid.UUID(str(community_val))))
+    #     if real_community: community_val = real_community
 
-    if is_valid_uuid(caste_val):
-        from common.models.meta.models import Caste
-        real_caste = await db.scalar(select(Caste.name).where(Caste.id == uuid.UUID(str(caste_val))))
-        if real_caste: caste_val = real_caste
+    # if is_valid_uuid(caste_val):
+    #     from common.models.meta.models import Caste
+    #     real_caste = await db.scalar(select(Caste.name).where(Caste.id == uuid.UUID(str(caste_val))))
+    #     if real_caste: caste_val = real_caste
 
     return {
         "id": str(student.id),
@@ -233,9 +233,9 @@ async def get_admission_student(
         "gate_pass_number": get_nested(gate, "gate_pass_number"),
         "reference_type": get_nested(gate, "reference_type"),
         "gate_entry_id": str(student.gate_entry_id) if student.gate_entry_id else None,
-        "religion": religion_val,
-        "community": community_val,
-        "caste": caste_val,
+        "religion": get_nested(pers, "religion"),
+        "community": get_nested(pers, "community"),
+        "caste": get_nested(pers, "caste"),
         "parent_income": float(get_nested(pers, "parent_income")) if get_nested(pers, "parent_income") else None,
         "door_no": get_nested(pers, "door_no"),
         "street_name": get_nested(pers, "street_name"),
