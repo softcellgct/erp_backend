@@ -560,13 +560,13 @@ class AdmissionStudent(Base):
         result = await session.execute(
             select(cls).where(cls.id.in_(student_ids), cls.deleted_at.is_(None))
         )
-        existing_students = {student.id: student for student in result.scalars().all()}
+        existing_students = {str(student.id): student for student in result.scalars().all()}
 
         def as_str(value):
             return str(value) if value is not None else None
 
         for data in normalized_items:
-            student = existing_students.get(data["id"])
+            student = existing_students.get(str(data["id"]))
             
             # Sync name from personal_details if provided
             personal_details = data.get("personal_details")
@@ -574,10 +574,22 @@ class AdmissionStudent(Base):
                 name = None
                 if isinstance(personal_details, dict):
                     name = personal_details.get("name")
+                    # Ensure nested record IDs are set to prevent duplication
+                    if student and student.personal_details:
+                        personal_details["id"] = student.personal_details.id
                 elif hasattr(personal_details, "name"):
                     name = personal_details.name
                 if name:
                     data["name"] = name
+            
+            # Ensure other nested record IDs are set
+            program_details = data.get("program_details")
+            if isinstance(program_details, dict) and student and student.program_details:
+                program_details["id"] = student.program_details.id
+                
+            academic_details = data.get("previous_academic_details")
+            if isinstance(academic_details, dict) and student and student.previous_academic_details:
+                academic_details["id"] = student.previous_academic_details.id
             
             if not student or not getattr(student, "is_fee_structure_locked", False):
                 continue
@@ -615,13 +627,23 @@ class AdmissionStudent(Base):
 
         updated_count = await super().update(request, session, normalized_items)
 
-        for data in normalized_items:
+        for student_id, data in zip(student_ids, normalized_items):
             gate_entry_id = data.get("gate_entry_id")
             if gate_entry_id:
                 await cls._link_gate_references_to_student(
                     session,
                     gate_entry_id=gate_entry_id,
-                    student_id=data["id"],
+                    student_id=student_id,
+                )
+            
+            # Sync name back to gate entry if it changed
+            new_name = data.get("name")
+            student = existing_students.get(str(student_id))
+            if new_name and student and student.gate_entry_id:
+                await session.execute(
+                    update(AdmissionGateEntry)
+                    .where(AdmissionGateEntry.id == student.gate_entry_id)
+                    .values(student_name=new_name)
                 )
 
         await session.commit()

@@ -283,16 +283,15 @@ class Base:  # noqa: F811
             obj_ids.append(obj_id)
 
         # Fetch all existing records
-        # Note: Don't use raiseload("*") here as it prevents relationship access
-        # The model's relationship lazy loading strategy will be used instead
         result = await session.execute(
             select(cls).where(cls.id.in_(obj_ids), cls.deleted_at.is_(None))
         )
         existing_objs = result.scalars().all()
-        existing_objs_map = {obj.id: obj for obj in existing_objs}
+        # Key by string representation to handle both string and UUID lookups
+        existing_objs_map = {str(obj.id): obj for obj in existing_objs}
 
         # Check for missing records
-        missing_ids = [oid for oid in obj_ids if oid not in existing_objs_map]
+        missing_ids = [oid for oid in obj_ids if str(oid) not in existing_objs_map]
         if missing_ids:
             raise ValueError(f"Records with IDs {missing_ids} not found or deleted.")
 
@@ -304,7 +303,7 @@ class Base:  # noqa: F811
                 if hasattr(data_obj, "dict")
                 else data_obj
             )
-            obj_id = data.pop("id")
+            obj_id = str(data.pop("id"))
             instance = existing_objs_map[obj_id]
 
             # Inspect mapper to handle nested relationship payloads (dicts/lists)
