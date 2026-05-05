@@ -59,10 +59,6 @@ class PersonType(Base):
     description: Mapped[str | None] = mapped_column(String(255), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
-    visitors: Mapped[list["Visitor"]] = relationship(
-        "Visitor", back_populates="person_type", lazy="selectin"
-    )
-
 
 class Visitor(Base):
     """

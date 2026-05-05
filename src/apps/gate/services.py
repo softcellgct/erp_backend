@@ -785,7 +785,6 @@ class GeneralVisitorCRUD:
         stmt = select(Visitor).options(
             selectinload(Visitor.institution),
             selectinload(Visitor.department),
-            selectinload(Visitor.person_type),
         )
 
         if search and search.strip():
