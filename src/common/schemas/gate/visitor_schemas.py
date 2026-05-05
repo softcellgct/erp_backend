@@ -54,6 +54,8 @@ class PersonTypeResponse(BaseModel):
 
 class VisitorCreate(BaseModel):
     name: str = Field(..., max_length=255, description="Name of the visitor")
+    company_name: Optional[str] = Field(None, max_length=255, description="Company name for vendor visitors")
+    representative_name: Optional[str] = Field(None, max_length=255, description="Alias for name, used in vendor visitors")
     contact_number: str = Field(..., max_length=20, description="Contact number")
     members_count: int = Field(1, ge=1, description="Number of members in the group")
     visitor_type: VisitorTypeEnum = Field(
@@ -62,7 +64,7 @@ class VisitorCreate(BaseModel):
     
     institution_id: UUID = Field(..., description="Institution ID")
     department_id: UUID = Field(..., description="Department ID")
-    person_type_id: UUID = Field(..., description="Person type ID")
+    person_type: str = Field(..., max_length=100, description="Type of person (e.g. Staff, Student)")
     person_name: str = Field(..., max_length=255, description="Name of person to meet")
     
     purpose_of_visit: str = Field(..., description="Purpose of the visit")
@@ -84,13 +86,15 @@ class VisitorCreate(BaseModel):
 
 class VisitorUpdate(BaseModel):
     name: Optional[str] = Field(None, max_length=255)
+    company_name: Optional[str] = Field(None, max_length=255)
+    representative_name: Optional[str] = Field(None, max_length=255)
     contact_number: Optional[str] = Field(None, max_length=20)
     members_count: Optional[int] = Field(None, ge=1)
     visitor_type: Optional[VisitorTypeEnum] = None
     
     institution_id: Optional[UUID] = None
     department_id: Optional[UUID] = None
-    person_type_id: Optional[UUID] = None
+    person_type: Optional[str] = Field(None, max_length=100)
     person_name: Optional[str] = Field(None, max_length=255)
     
     purpose_of_visit: Optional[str] = None
@@ -108,13 +112,14 @@ class VisitorUpdate(BaseModel):
 class VisitorResponse(BaseModel):
     id: UUID
     name: str
+    company_name: Optional[str]
     contact_number: str
     members_count: int
     visitor_type: VisitorTypeEnum
     
     institution_id: UUID
     department_id: UUID
-    person_type_id: UUID
+    person_type: str
     person_name: str
     
     purpose_of_visit: str

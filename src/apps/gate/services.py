@@ -712,4 +712,105 @@ class AdmissionVisitorCRUD:
         return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
+from common.models.gate.visitor_model import Visitor, VisitorType
+from common.schemas.gate.visitor_schemas import VisitorCreate, VisitorUpdate
+
+class GeneralVisitorCRUD:
+    async def create(self, db: AsyncSession, payload: VisitorCreate):
+        data = payload.dict(exclude_unset=True)
+        
+        # Handle representative_name mapping to name if name is empty and representative_name is provided
+        if not data.get("name") and data.get("representative_name"):
+            data["name"] = data.pop("representative_name")
+        elif data.get("representative_name"):
+            # If both are provided, representative_name takes precedence for vendor visitors
+            # But we keep 'name' as the primary field in DB
+            data["name"] = data.pop("representative_name")
+        
+        if not data.get("pass_number"):
+            data["pass_number"] = await self._generate_unique_pass_no(db)
+            
+        visitor = Visitor(**data)
+        visitor.check_in_time = func.now()
+        visitor.visit_status = VisitStatusEnum.CHECKED_IN
+        
+        db.add(visitor)
+        try:
+            await db.commit()
+            await db.refresh(visitor)
+            return visitor
+        except Exception:
+            await db.rollback()
+            raise
+
+    async def _generate_unique_pass_no(self, db: AsyncSession) -> str:
+        today = datetime.now()
+        date_str = today.strftime("%Y%m%d")
+        prefix = f"VP/{date_str}/"
+
+        result = await db.execute(
+            text(
+                "SELECT pass_number FROM visitors "
+                "WHERE pass_number LIKE :prefix "
+                "ORDER BY CAST(SUBSTRING(pass_number FROM 13) AS INTEGER) DESC LIMIT 1"
+            ),
+            {"prefix": f"{prefix}%"},
+        )
+        last_pass = result.scalar_one_or_none()
+
+        if not last_pass:
+            next_num = 1
+        else:
+            try:
+                next_num = int(last_pass.split("/")[-1]) + 1
+            except (IndexError, ValueError):
+                next_num = 1
+
+        return f"{prefix}{next_num:03d}"
+
+    async def get_one(self, db: AsyncSession, visitor_id: UUID):
+        stmt = select(Visitor).where(Visitor.id == visitor_id)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_all_filtered(
+        self,
+        db: AsyncSession,
+        page: int = 1,
+        size: int = 50,
+        search: str | None = None,
+        sort: str = "created_at:desc",
+        filters: str | None = None,
+    ):
+        stmt = select(Visitor).options(
+            selectinload(Visitor.institution),
+            selectinload(Visitor.department),
+            selectinload(Visitor.person_type),
+        )
+
+        if search and search.strip():
+            pattern = f"%{search.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    Visitor.name.ilike(pattern),
+                    Visitor.contact_number.ilike(pattern),
+                    Visitor.pass_number.ilike(pattern),
+                    Visitor.company_name.ilike(pattern),
+                    Visitor.person_type.ilike(pattern),
+                    Visitor.person_name.ilike(pattern),
+                )
+            )
+
+        # Apply basic sorting
+        sort_field = "created_at"
+        sort_dir = "desc"
+        if sort and ":" in sort:
+            sort_field, sort_dir = sort.split(":", 1)
+        
+        column = getattr(Visitor, sort_field, Visitor.created_at)
+        stmt = stmt.order_by(desc(column) if sort_dir == "desc" else asc(column))
+
+        return await paginate(db, stmt, Params(page=page, size=size))
+
 admission_crud = AdmissionVisitorCRUD()
+general_visitor_crud = GeneralVisitorCRUD()

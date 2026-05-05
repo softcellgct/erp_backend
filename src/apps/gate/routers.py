@@ -61,17 +61,64 @@ person_type_router.include_router(
 # =====================================================
 # Visitor CRUD Routes
 # =====================================================
-visitor_router = APIRouter()
-visitor_crud = create_crud_routes(
-    Visitor,
-    CreateSchema=VisitorCreate,
-    UpdateSchema=VisitorUpdate,
-    AllResponseSchema=VisitorResponse,
-    IdResponseSchema=VisitorResponse,
+from .services import general_visitor_crud
+
+visitor_router = APIRouter(
+    prefix="/visitors",
+    tags=["Gate - Visitors"],
 )
-visitor_router.include_router(
-    visitor_crud, prefix="/visitors", tags=["Gate - Visitors"]
+
+@visitor_router.post(
+    "",
+    response_model=VisitorResponse,
+    name="Create Visitor",
+    description="Create a new general or vendor visitor record.",
 )
+async def create_visitor(
+    request: Request,
+    payload: VisitorCreate | list[VisitorCreate],
+    db: AsyncSession = Depends(get_db_session),
+):
+    # Handle single or list payload
+    if isinstance(payload, list):
+        # For simplicity, if it's a list, we process the first one for now as per current frontend usage
+        # or we could loop and return a list, but response_model is single VisitorResponse
+        if not payload:
+             raise HTTPException(status_code=400, detail="Empty payload")
+        visitor = await general_visitor_crud.create(db, payload[0])
+    else:
+        visitor = await general_visitor_crud.create(db, payload)
+    return visitor
+
+@visitor_router.get(
+    "/{visitor_id}",
+    response_model=VisitorResponse,
+    name="Get Visitor",
+)
+async def get_visitor(
+    visitor_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+):
+    visitor = await general_visitor_crud.get_one(db, visitor_id)
+    if not visitor:
+        raise HTTPException(status_code=404, detail="Visitor not found")
+    return visitor
+
+@visitor_router.get(
+    "",
+    response_model=Page[VisitorResponse],
+    name="Get All Visitors",
+)
+async def get_all_visitors(
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=50, ge=1, le=200),
+    search: str | None = Query(default=None),
+    sort: str = Query(default="created_at:desc"),
+    db: AsyncSession = Depends(get_db_session),
+):
+    return await general_visitor_crud.get_all_filtered(
+        db, page=page, size=size, search=search, sort=sort
+    )
 
 
 from .services import admission_crud
