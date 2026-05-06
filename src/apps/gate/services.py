@@ -169,7 +169,10 @@ class AdmissionVisitorCRUD:
             desc(AdmissionGateEntry.id),
         )
 
-        return await paginate(db, stmt, Params(page=page, size=size))
+        paginated = await paginate(db, stmt, Params(page=page, size=size))
+        for item in paginated.items:
+            await self._enrich_reference_names(db, item)
+        return paginated
 
     async def create(self, db: AsyncSession, payload: AdmissionVisitorCreate):
         try:
