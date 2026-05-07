@@ -281,6 +281,7 @@ async def seed_initial_data() -> None:
                 "RELIGION",
                 "COMMUNITY",
                 "CASTE",
+                "PERSON_TYPES",
             ],
             "ADMISSION": [
                 "PRE_ADMISSION",
@@ -447,5 +448,16 @@ async def seed_initial_data() -> None:
                         can_delete=True,
                     )
                 )
+
+        # ── Person Types ──────────────────────────────
+        from common.models.gate.visitor_model import PersonType
+        person_types_to_seed = [
+            ("General Visitor", "Standard visitor type"),
+            ("Vendor Visitor", "Supplier or vendor visitor"),
+        ]
+        for name, desc in person_types_to_seed:
+            existing = await session.execute(select(PersonType).where(PersonType.name == name))
+            if not existing.scalars().first():
+                session.add(PersonType(name=name, description=desc, is_active=True))
 
         await session.commit()
