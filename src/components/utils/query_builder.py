@@ -39,10 +39,32 @@ def build_safe_query(cls, params: QueryParams, searchable_fields: Optional[List[
         query = select(cls)
 
     # Filters
-    parsed_filters = parse_filter_query(params.filters)
-    if parsed_filters:
-        parsed_filters = normalize_filters(parsed_filters)
-        filter_expr, query = parse_filters(cls, parsed_filters, query)
+    filter_expr = None
+    if params.filters:
+        try:
+            import json
+            parsed_filters = json.loads(params.filters)
+            if parsed_filters:
+                # Normalize and ensure it's a dict for parse_filters
+                normalized = normalize_filters(parsed_filters)
+                if isinstance(normalized, list):
+                    # Merge multiple filters into a single dict structure if needed
+                    # Or just use the first one if that's the common case
+                    # For fastapi_querybuilder, it usually expects {field: {op: val}}
+                    if len(normalized) > 0:
+                        merged = {}
+                        for f in normalized:
+                            if isinstance(f, dict):
+                                merged.update(f)
+                        normalized = merged
+                    else:
+                        normalized = {}
+                
+                filter_expr, query = parse_filters(cls, normalized, query)
+        except Exception as e:
+            logger.error(f"Error parsing filters: {e}")
+            # Fallback or raise a more descriptive error
+            pass
         if filter_expr is not None:
             query = query.where(filter_expr)
 

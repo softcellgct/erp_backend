@@ -31,6 +31,7 @@ class PersonTypeCreate(BaseModel):
 
 
 class PersonTypeUpdate(BaseModel):
+    id: UUID
     name: Optional[str] = Field(None, max_length=100)
     description: Optional[str] = Field(None, max_length=255)
     is_active: Optional[bool] = None
@@ -85,6 +86,7 @@ class VisitorCreate(BaseModel):
 
 
 class VisitorUpdate(BaseModel):
+    id: UUID
     name: Optional[str] = Field(None, max_length=255)
     company_name: Optional[str] = Field(None, max_length=255)
     representative_name: Optional[str] = Field(None, max_length=255)
