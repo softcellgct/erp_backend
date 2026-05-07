@@ -54,6 +54,7 @@ class StaffReferenceRead(BaseModel):
     id: UUID
     staff_id: UUID
     staff_name: Optional[str] = None
+    designation: Optional[str] = None
 
     class Config:
         from_attributes = True

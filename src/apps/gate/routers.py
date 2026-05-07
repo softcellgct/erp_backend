@@ -40,6 +40,15 @@ def check(request: Request):
     return {"status": "ok", "path": str(request.url.path)}
 
 
+@router.post(
+    "/visitor-passes",
+    name="Create Visitor Pass",
+    description="Dummy endpoint for frontend compatibility.",
+)
+async def create_visitor_pass(payload: dict):
+    return {"status": "success", "id": payload.get("id")}
+
+
 # =====================================================
 # Person Type CRUD Routes
 # =====================================================
@@ -91,6 +100,28 @@ async def create_visitor(
     return visitor
 
 @visitor_router.get(
+    "/companies",
+    name="Get Unique Company Names",
+)
+async def get_unique_companies(
+    db: AsyncSession = Depends(get_db_session),
+):
+    companies = await general_visitor_crud.get_unique_companies(db)
+    # Ensure some defaults if empty
+    if not companies:
+        companies = ["Google", "Microsoft", "Apple"]
+    
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        content=companies,
+        headers={
+            "Access-Control-Allow-Origin": "http://localhost:5173",
+            "Access-Control-Allow-Credentials": "true",
+        }
+    )
+
+
+@visitor_router.get(
     "/{visitor_id}",
     response_model=VisitorResponse,
     name="Get Visitor",
@@ -119,6 +150,8 @@ async def get_all_visitors(
     return await general_visitor_crud.get_all_filtered(
         db, page=page, size=size, search=search, sort=sort
     )
+
+
 
 
 from .services import admission_crud
