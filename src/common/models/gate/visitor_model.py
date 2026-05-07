@@ -85,7 +85,9 @@ class Visitor(Base):
         ForeignKey("departments.id"), nullable=False, index=True
     )
     representative_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    person_type: Mapped[str] = mapped_column(String(100), nullable=False)
+    person_type_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("person_types.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     person_name: Mapped[str] = mapped_column(String(255), nullable=False)
 
     purpose_of_visit: Mapped[str] = mapped_column(Text, nullable=False)
@@ -122,6 +124,9 @@ class Visitor(Base):
     )
     department: Mapped["Department"] = relationship(
         "Department", foreign_keys=[department_id], lazy="selectin"
+    )
+    person_type: Mapped["PersonType"] = relationship(
+        "PersonType", foreign_keys=[person_type_id], lazy="selectin"
     )
 
 

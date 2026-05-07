@@ -162,9 +162,15 @@ async def get_admission_student(
     other_ref = student.other_reference or (gate.other_reference if gate else None)
 
     staff_name = None
+    staff_designation = None
     if staff_ref and staff_ref.staff_id:
         from common.models.master.institution import Staff
-        staff_name = await db.scalar(select(Staff.name).where(Staff.id == staff_ref.staff_id))
+        staff_data = (await db.execute(
+            select(Staff.name, Staff.designation).where(Staff.id == staff_ref.staff_id)
+        )).first()
+        if staff_data:
+            staff_name = staff_data.name
+            staff_designation = staff_data.designation
 
     consultancy_name = None
     if consultancy_ref and consultancy_ref.consultancy_id:
@@ -282,7 +288,7 @@ async def get_admission_student(
         "diploma_details": get_nested(prev, "diploma"),
         "pg_details": get_nested(prev, "degree"),
         "consultancy_reference": {**obj_to_dict(consultancy_ref), "consultancy_name": consultancy_name} if consultancy_ref else None,
-        "staff_reference": {**obj_to_dict(staff_ref), "staff_name": staff_name} if staff_ref else None,
+        "staff_reference": {**obj_to_dict(staff_ref), "staff_name": staff_name, "designation": staff_designation} if staff_ref else None,
         "student_reference": obj_to_dict(student_ref_obj),
         "other_reference": obj_to_dict(other_ref),
         "gate_entry": obj_to_dict(student.gate_entry),

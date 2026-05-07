@@ -300,10 +300,12 @@ class AdmissionVisitorCRUD:
         sref = getattr(gate_entry, "staff_reference", None)
         if sref and getattr(sref, "staff_id", None):
             from common.models.master.institution import Staff
-            name = await db.scalar(
-                select(Staff.name).where(Staff.id == sref.staff_id)
-            )
-            setattr(sref, "staff_name", name)
+            staff_data = (await db.execute(
+                select(Staff.name, Staff.designation).where(Staff.id == sref.staff_id)
+            )).first()
+            if staff_data:
+                setattr(sref, "staff_name", staff_data.name)
+                setattr(sref, "designation", staff_data.designation)
 
         return gate_entry
 
@@ -772,7 +774,11 @@ class GeneralVisitorCRUD:
         return f"{prefix}{next_num:03d}"
 
     async def get_one(self, db: AsyncSession, visitor_id: UUID):
-        stmt = select(Visitor).where(Visitor.id == visitor_id)
+        stmt = select(Visitor).where(Visitor.id == visitor_id).options(
+            selectinload(Visitor.institution),
+            selectinload(Visitor.department),
+            selectinload(Visitor.person_type),
+        )
         result = await db.execute(stmt)
         return result.scalar_one_or_none()
 
@@ -788,6 +794,7 @@ class GeneralVisitorCRUD:
         stmt = select(Visitor).options(
             selectinload(Visitor.institution),
             selectinload(Visitor.department),
+            selectinload(Visitor.person_type),
         )
 
         if search and search.strip():
@@ -813,6 +820,15 @@ class GeneralVisitorCRUD:
         stmt = stmt.order_by(desc(column) if sort_dir == "desc" else asc(column))
 
         return await paginate(db, stmt, Params(page=page, size=size))
+
+    async def get_unique_companies(self, db: AsyncSession):
+        try:
+            stmt = select(Visitor.company_name).distinct()
+            result = await db.execute(stmt)
+            return [str(c) for c in result.scalars().all() if c]
+        except Exception as e:
+            print(f"Error in get_unique_companies: {e}")
+            return []
 
 admission_crud = AdmissionVisitorCRUD()
 general_visitor_crud = GeneralVisitorCRUD()

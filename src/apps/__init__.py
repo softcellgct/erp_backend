@@ -41,7 +41,7 @@ ROUTERS = [
     (users_router, "/api/users"),
     (role_router, "/api"),
     (permissions_router, "/api"),
-    (gate_router, "/api"),
+    (gate_router, "/api/gate"),
     (institution_router, "/api/master"),
     (department_router, "/api/master"),
     (course_router, "/api/master"),

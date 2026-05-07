@@ -64,7 +64,7 @@ class VisitorCreate(BaseModel):
     
     institution_id: UUID = Field(..., description="Institution ID")
     department_id: UUID = Field(..., description="Department ID")
-    person_type: str = Field(..., max_length=100, description="Type of person (e.g. Staff, Student)")
+    person_type_id: Optional[UUID] = Field(None, description="UUID of the PersonType record")
     person_name: str = Field(..., max_length=255, description="Name of person to meet")
     
     purpose_of_visit: str = Field(..., description="Purpose of the visit")
@@ -95,6 +95,7 @@ class VisitorUpdate(BaseModel):
     institution_id: Optional[UUID] = None
     department_id: Optional[UUID] = None
     person_type: Optional[str] = Field(None, max_length=100)
+    person_type_id: Optional[UUID] = None
     person_name: Optional[str] = Field(None, max_length=255)
     
     purpose_of_visit: Optional[str] = None
@@ -119,7 +120,8 @@ class VisitorResponse(BaseModel):
     
     institution_id: UUID
     department_id: UUID
-    person_type: str
+    person_type: Optional[str] = None
+    person_type_id: Optional[UUID] = None
     person_name: str
     
     purpose_of_visit: str
@@ -144,6 +146,12 @@ class VisitorResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+    @validator("person_type", pre=True)
+    def validate_person_type(cls, v):
+        if hasattr(v, "name"):
+            return v.name
+        return v
 
 
 
