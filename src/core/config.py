@@ -26,7 +26,11 @@ class Settings(BaseSettings):
     minio_bucket: str = "erp"
 
     # ── CORS ──────────────────────────────────────────
-    cors_origins: list[str] = ["*"]
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://erp.thamizhoviyaa.in",
+    ]
 
     # ── App ───────────────────────────────────────────
     app_name: str = "ERP Backend"
