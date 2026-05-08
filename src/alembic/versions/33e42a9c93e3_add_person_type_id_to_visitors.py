@@ -20,9 +20,13 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Upgrade schema."""
-    op.add_column('visitors', sa.Column('person_type_id', sa.UUID(), nullable=True))
-    op.create_foreign_key('visitors_person_type_id_fkey', 'visitors', 'person_types', ['person_type_id'], ['id'], ondelete='SET NULL')
-    op.create_index(op.f('ix_visitors_person_type_id'), 'visitors', ['person_type_id'], unique=False)
+    bind = op.get_bind()
+    # Check if person_type_id already exists
+    result = bind.execute(sa.text("SELECT column_name FROM information_schema.columns WHERE table_name = 'visitors' AND column_name = 'person_type_id'"))
+    if not result.fetchone():
+        op.add_column('visitors', sa.Column('person_type_id', sa.UUID(), nullable=True))
+        op.create_foreign_key('visitors_person_type_id_fkey', 'visitors', 'person_types', ['person_type_id'], ['id'], ondelete='SET NULL')
+        op.create_index(op.f('ix_visitors_person_type_id'), 'visitors', ['person_type_id'], unique=False)
 
 
 def downgrade() -> None:
