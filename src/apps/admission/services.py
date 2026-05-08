@@ -34,19 +34,32 @@ async def generate_enquiry_number(db: AsyncSession, institution_id=None) -> str:
     prefix = f"ENQ-{inst_code}-{date_str}-" if inst_code else f"ENQ-{date_str}-"
     like_pattern = f"{prefix}%"
 
-    student_result = await db.execute(
-        select(func.count(AdmissionStudent.id)).where(
-            AdmissionStudent.enquiry_number.ilike(like_pattern)
-        )
+    # Get the maximum enquiry number from both tables to find the highest sequence
+    student_max_stmt = select(func.max(AdmissionStudent.enquiry_number)).where(
+        AdmissionStudent.enquiry_number.ilike(like_pattern)
     )
-    student_count = student_result.scalar() or 0
-
-    gate_result = await db.execute(
-        select(func.count(AdmissionGateEntry.id)).where(
-            AdmissionGateEntry.enquiry_number.ilike(like_pattern)
-        )
+    gate_max_stmt = select(func.max(AdmissionGateEntry.enquiry_number)).where(
+        AdmissionGateEntry.enquiry_number.ilike(like_pattern)
     )
-    gate_count = gate_result.scalar() or 0
 
-    sequence = str(student_count + gate_count + 1).zfill(4)
-    return f"{prefix}{sequence}"
+    student_max_res = await db.execute(student_max_stmt)
+    gate_max_res = await db.execute(gate_max_stmt)
+
+    s_max_val = student_max_res.scalar()
+    g_max_val = gate_max_res.scalar()
+
+    max_sequence = 0
+    for val in [s_max_val, g_max_val]:
+        if val and "-" in val:
+            try:
+                # Extract the last numeric part after the last hyphen
+                parts = val.split("-")
+                if parts:
+                    seq_num = int(parts[-1])
+                    if seq_num > max_sequence:
+                        max_sequence = seq_num
+            except (ValueError, IndexError):
+                continue
+
+    next_sequence = str(max_sequence + 1).zfill(4)
+    return f"{prefix}{next_sequence}"

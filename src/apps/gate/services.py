@@ -19,7 +19,9 @@ from common.models.gate.visitor_model import (
     ReferenceType,
     StaffReference,
     StudentReference,
-    VisitStatus as VisitorVisitStatus,
+    VisitStatus,
+    PersonType,
+    Visitor,
 )
 from common.models.master.institution import Institution
 from common.schemas.gate.admission_visitor import (
@@ -28,6 +30,13 @@ from common.schemas.gate.admission_visitor import (
     AdmissionVisitorReportSummary,
     AdmissionVisitorUpdate,
 )
+from common.schemas.gate.visitor_schemas import (
+    VisitorCreate,
+    VisitorUpdate,
+    VisitorReportResponse,
+    VisitorReportSummary,
+)
+from common.models.master.institution import Department
 
 # Maps incoming payload field names to AdmissionGateEntry column names
 _FIELD_MAP = {
@@ -718,7 +727,6 @@ class AdmissionVisitorCRUD:
         return value.astimezone(timezone.utc).replace(tzinfo=None)
 
 
-from common.models.gate.visitor_model import Visitor, VisitorType
 from common.schemas.gate.visitor_schemas import VisitorCreate, VisitorUpdate
 
 class GeneralVisitorCRUD:
@@ -738,7 +746,7 @@ class GeneralVisitorCRUD:
             
         visitor = Visitor(**data)
         visitor.check_in_time = func.now()
-        visitor.visit_status = VisitorVisitStatus.CHECKED_IN
+        visitor.visit_status = VisitStatus.CHECKED_IN
         
         db.add(visitor)
         try:
@@ -834,6 +842,284 @@ class GeneralVisitorCRUD:
         except Exception as e:
             print(f"Error in get_unique_companies: {e}")
             return []
+
+
+    async def get_report(
+        self,
+        db: AsyncSession,
+        *,
+        date_from: date | None,
+        date_to: date | None,
+        visit_status: VisitStatus | None,
+        institution_id: UUID | None,
+        search: str | None,
+        page: int,
+        size: int,
+    ):
+        filters = self._build_report_filters(
+            date_from=date_from,
+            date_to=date_to,
+            visit_status=visit_status,
+            institution_id=institution_id,
+            search=search,
+            for_items=True,
+        )
+        total = await self._get_report_count(db, filters)
+
+        stmt = (
+            select(
+                Visitor,
+                Institution.name.label("institution_name"),
+                Department.name.label("department_name"),
+                PersonType.name.label("person_type_name"),
+            )
+            .select_from(Visitor)
+            .join(Institution, Institution.id == Visitor.institution_id, isouter=True)
+            .join(Department, Department.id == Visitor.department_id, isouter=True)
+            .join(PersonType, PersonType.id == Visitor.person_type_id, isouter=True)
+            .where(*filters)
+            .order_by(
+                Visitor.check_in_time.desc(),
+                Visitor.created_at.desc(),
+            )
+            .offset((page - 1) * size)
+            .limit(size)
+        )
+        rows = (await db.execute(stmt)).all()
+        items = [self._row_to_report_item(row) for row in rows]
+
+        summary = await self._get_report_summary(
+            db,
+            date_from=date_from,
+            date_to=date_to,
+            visit_status=visit_status,
+            institution_id=institution_id,
+            search=search,
+        )
+
+        pages = math.ceil(total / size) if size else 0
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "size": size,
+            "pages": pages,
+            "summary": summary.model_dump()
+            if hasattr(summary, "model_dump")
+            else summary.dict(),
+        }
+
+    async def export_report_csv(
+        self,
+        db: AsyncSession,
+        *,
+        date_from: date | None,
+        date_to: date | None,
+        visit_status: VisitStatus | None,
+        institution_id: UUID | None,
+        search: str | None,
+    ):
+        filters = self._build_report_filters(
+            date_from=date_from,
+            date_to=date_to,
+            visit_status=visit_status,
+            institution_id=institution_id,
+            search=search,
+            for_items=True,
+        )
+
+        stmt = (
+            select(
+                Visitor,
+                Institution.name.label("institution_name"),
+                Department.name.label("department_name"),
+                PersonType.name.label("person_type_name"),
+            )
+            .select_from(Visitor)
+            .join(Institution, Institution.id == Visitor.institution_id, isouter=True)
+            .join(Department, Department.id == Visitor.department_id, isouter=True)
+            .join(PersonType, PersonType.id == Visitor.person_type_id, isouter=True)
+            .where(*filters)
+            .order_by(
+                Visitor.check_in_time.desc(),
+                Visitor.created_at.desc(),
+            )
+        )
+        rows = (await db.execute(stmt)).all()
+        report_rows = [self._row_to_report_item(row) for row in rows]
+
+        output = StringIO()
+        writer = csv.writer(output)
+        writer.writerow(
+            [
+                "pass_number",
+                "name",
+                "contact_number",
+                "company_name",
+                "members_count",
+                "visitor_type",
+                "institution_name",
+                "department_name",
+                "person_type",
+                "person_name",
+                "purpose_of_visit",
+                "visit_status",
+                "check_in_time",
+                "check_out_time",
+                "vehicle_number",
+            ]
+        )
+        for item in report_rows:
+            writer.writerow(
+                [
+                    item["pass_number"],
+                    item["name"],
+                    item["contact_number"],
+                    item["company_name"] or "",
+                    item["members_count"],
+                    item["visitor_type"],
+                    item["institution_name"] or "",
+                    item["department_name"] or "",
+                    item["person_type"] or "",
+                    item["person_name"],
+                    item["purpose_of_visit"],
+                    item["visit_status"],
+                    item["check_in_time"] or "",
+                    item["check_out_time"] or "",
+                    item["vehicle_number"] or "",
+                ]
+            )
+
+        date_tag = datetime.now().strftime("%Y%m%d")
+        filename = f"visitor_reports_{date_tag}.csv"
+        return output.getvalue(), filename
+
+    def _build_report_filters(
+        self,
+        *,
+        date_from: date | None,
+        date_to: date | None,
+        visit_status: VisitStatus | None,
+        institution_id: UUID | None,
+        search: str | None,
+        for_items: bool,
+    ):
+        filters = []
+        # In this project, Visitor model might not have deleted_at, let's check
+        # Based on previous view, it inherits from Base. Base usually has deleted_at if configured.
+        # But looking at models/gate/visitor_model.py, it doesn't explicitly define deleted_at.
+        # Let's assume it doesn't unless Base has it.
+        # Actually, let's play it safe and NOT include it if I didn't see it.
+        
+        if visit_status:
+            filters.append(Visitor.visit_status == visit_status)
+
+        if institution_id:
+            filters.append(Visitor.institution_id == institution_id)
+
+        if search:
+            like = f"%{search.strip()}%"
+            filters.append(
+                or_(
+                    Visitor.pass_number.ilike(like),
+                    Visitor.name.ilike(like),
+                    Visitor.contact_number.ilike(like),
+                    Visitor.company_name.ilike(like),
+                    Visitor.person_name.ilike(like),
+                )
+            )
+
+        if for_items and (date_from or date_to):
+            in_range_in = and_(
+                *self._time_range_filters(Visitor.check_in_time, date_from, date_to)
+            )
+            in_range_out = and_(
+                *self._time_range_filters(Visitor.check_out_time, date_from, date_to)
+            )
+            filters.append(or_(in_range_in, in_range_out))
+
+        return filters
+
+    def _time_range_filters(self, column, date_from: date | None, date_to: date | None):
+        filters = []
+        if date_from:
+            filters.append(column >= datetime.combine(date_from, time.min, tzinfo=timezone.utc))
+        if date_to:
+            filters.append(column <= datetime.combine(date_to, time.max, tzinfo=timezone.utc))
+        return filters
+
+    async def _get_report_count(self, db: AsyncSession, filters):
+        stmt = select(func.count()).select_from(Visitor).where(*filters)
+        result = await db.execute(stmt)
+        return result.scalar_one() or 0
+
+    async def _get_report_summary(
+        self,
+        db: AsyncSession,
+        *,
+        date_from: date | None,
+        date_to: date | None,
+        visit_status: VisitStatus | None,
+        institution_id: UUID | None,
+        search: str | None,
+    ) -> VisitorReportSummary:
+        common_filters = self._build_report_filters(
+            date_from=None,
+            date_to=None,
+            visit_status=visit_status,
+            institution_id=institution_id,
+            search=search,
+            for_items=False,
+        )
+
+        entries_filters = list(common_filters)
+        entries_filters.extend(self._time_range_filters(Visitor.check_in_time, date_from, date_to))
+        total_entries = await self._get_report_count(db, entries_filters)
+
+        exits_filters = list(common_filters)
+        exits_filters.append(Visitor.check_out_time.is_not(None))
+        exits_filters.extend(self._time_range_filters(Visitor.check_out_time, date_from, date_to))
+        total_exits = await self._get_report_count(db, exits_filters)
+
+        inside_filters = list(common_filters)
+        inside_filters.append(Visitor.visit_status == VisitStatus.CHECKED_IN)
+        inside_campus = await self._get_report_count(db, inside_filters)
+
+        return VisitorReportSummary(
+            total_entries=total_entries,
+            total_exits=total_exits,
+            inside_campus=inside_campus,
+        )
+
+    def _row_to_report_item(self, row):
+        visitor = row[0]
+        institution_name = row[1]
+        department_name = row[2]
+        person_type_name = row[3]
+        return {
+            "id": visitor.id,
+            "pass_number": visitor.pass_number,
+            "name": visitor.name,
+            "contact_number": visitor.contact_number,
+            "company_name": visitor.company_name,
+            "members_count": visitor.members_count,
+            "visitor_type": visitor.visitor_type.value if hasattr(visitor.visitor_type, "value") else str(visitor.visitor_type),
+            "institution_id": visitor.institution_id,
+            "institution_name": institution_name,
+            "department_id": visitor.department_id,
+            "department_name": department_name,
+            "person_type": person_type_name,
+            "person_name": visitor.person_name,
+            "purpose_of_visit": visitor.purpose_of_visit,
+            "visit_status": visitor.visit_status.value if hasattr(visitor.visit_status, "value") else str(visitor.visit_status),
+            "check_in_time": visitor.check_in_time.isoformat() if visitor.check_in_time else None,
+            "check_out_time": visitor.check_out_time.isoformat() if visitor.check_out_time else None,
+            "has_vehicle": visitor.has_vehicle,
+            "vehicle_number": visitor.vehicle_number,
+            "vehicle_type": visitor.vehicle_type,
+            "created_at": visitor.created_at.isoformat() if visitor.created_at else None,
+            "updated_at": visitor.updated_at.isoformat() if visitor.updated_at else None,
+        }
 
 admission_crud = AdmissionVisitorCRUD()
 general_visitor_crud = GeneralVisitorCRUD()

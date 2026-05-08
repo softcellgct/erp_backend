@@ -16,7 +16,9 @@ from common.schemas.gate.visitor_schemas import (
     VisitorCreate,
     VisitorUpdate,
     VisitorResponse,
+    VisitorReportResponse,
 )
+from common.models.gate.visitor_model import VisitStatus as VisitorVisitStatus
 from common.schemas.gate.admission_visitor import (
     AdmissionVisitorCreate,
     AdmissionVisitorPassOutRequest,
@@ -150,6 +152,58 @@ async def get_all_visitors(
     return await general_visitor_crud.get_all_filtered(
         db, page=page, size=size, search=search, sort=sort
     )
+
+
+@visitor_router.get(
+    "/reports",
+    response_model=VisitorReportResponse,
+    name="Get General Visitor Reports",
+)
+async def get_general_visitor_reports(
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    visit_status: VisitorVisitStatus | None = Query(default=None),
+    institution_id: UUID | None = Query(default=None),
+    search: str | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=20, ge=1, le=200),
+    db: AsyncSession = Depends(get_db_session),
+):
+    return await general_visitor_crud.get_report(
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        visit_status=visit_status,
+        institution_id=institution_id,
+        search=search,
+        page=page,
+        size=size,
+    )
+
+
+@visitor_router.get(
+    "/reports/export",
+    name="Export General Visitor Reports CSV",
+)
+async def export_general_visitor_reports(
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    visit_status: VisitorVisitStatus | None = Query(default=None),
+    institution_id: UUID | None = Query(default=None),
+    search: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db_session),
+):
+    csv_text, filename = await general_visitor_crud.export_report_csv(
+        db,
+        date_from=date_from,
+        date_to=date_to,
+        visit_status=visit_status,
+        institution_id=institution_id,
+        search=search,
+    )
+    stream = BytesIO(csv_text.encode("utf-8"))
+    headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
+    return StreamingResponse(stream, media_type="text/csv", headers=headers)
 
 
 

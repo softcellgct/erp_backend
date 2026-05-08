@@ -158,3 +158,51 @@ class VisitorResponse(BaseModel):
 
 
 
+
+class VisitorReportSummary(BaseModel):
+    total_entries: int
+    total_exits: int
+    inside_campus: int
+
+
+class VisitorReportItem(BaseModel):
+    id: UUID
+    pass_number: Optional[str]
+    name: str
+    contact_number: str
+    company_name: Optional[str]
+    members_count: int
+    visitor_type: VisitorTypeEnum
+    
+    institution_id: UUID
+    institution_name: Optional[str]
+    department_id: UUID
+    department_name: Optional[str]
+    
+    person_type: Optional[str]
+    person_name: str
+    
+    purpose_of_visit: str
+    visit_status: VisitStatusEnum
+    
+    check_in_time: Optional[datetime]
+    check_out_time: Optional[datetime]
+    
+    has_vehicle: bool
+    vehicle_number: Optional[str]
+    vehicle_type: Optional[str]
+    
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class VisitorReportResponse(BaseModel):
+    items: list[VisitorReportItem]
+    total: int
+    page: int
+    size: int
+    pages: int
+    summary: VisitorReportSummary
