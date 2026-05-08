@@ -37,11 +37,7 @@ app = FastAPI(
 app.add_middleware(AuthMiddleware)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "*",
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=settings.cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -117,6 +113,8 @@ async def handle_integrity_error(_: Request, exc: IntegrityError):
             response_data["detail"] = "Invalid reference to related record"
         elif "not null" in error_message:
             response_data["detail"] = "Required field is missing"
+        elif "check constraint" in error_message:
+            response_data["detail"] = "Value violates a database check constraint (likely invalid enum value)"
     
     return JSONResponse(
         status_code=409,

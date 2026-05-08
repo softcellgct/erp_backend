@@ -19,6 +19,7 @@ from common.models.gate.visitor_model import (
     ReferenceType,
     StaffReference,
     StudentReference,
+    VisitStatus as VisitorVisitStatus,
 )
 from common.models.master.institution import Institution
 from common.schemas.gate.admission_visitor import (
@@ -737,7 +738,7 @@ class GeneralVisitorCRUD:
             
         visitor = Visitor(**data)
         visitor.check_in_time = func.now()
-        visitor.visit_status = VisitStatusEnum.CHECKED_IN
+        visitor.visit_status = VisitorVisitStatus.CHECKED_IN
         
         db.add(visitor)
         try:
@@ -799,14 +800,18 @@ class GeneralVisitorCRUD:
 
         if search and search.strip():
             pattern = f"%{search.strip()}%"
-            stmt = stmt.where(
+            # Join PersonType to allow filtering/searching by its name if needed, 
+            # though current query above only searches Visitor columns.
+            # If we want to search person_type name, we need to join it.
+            stmt = stmt.join(Visitor.person_type, isouter=True).where(
                 or_(
                     Visitor.name.ilike(pattern),
                     Visitor.contact_number.ilike(pattern),
                     Visitor.pass_number.ilike(pattern),
                     Visitor.company_name.ilike(pattern),
-                    Visitor.person_type.ilike(pattern),
                     Visitor.person_name.ilike(pattern),
+                    # Now we can search on the joined table
+                    text("person_types.name ILIKE :pattern").bindparams(pattern=pattern)
                 )
             )
 
