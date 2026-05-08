@@ -17,6 +17,7 @@ from common.schemas.gate.visitor_schemas import (
     VisitorUpdate,
     VisitorResponse,
     VisitorReportResponse,
+    UnifiedVisitorReportResponse,
 )
 from common.models.gate.visitor_model import VisitStatus as VisitorVisitStatus
 from common.schemas.gate.admission_visitor import (
@@ -124,47 +125,16 @@ async def get_unique_companies(
 
 
 @visitor_router.get(
-    "/{visitor_id}",
-    response_model=VisitorResponse,
-    name="Get Visitor",
-)
-async def get_visitor(
-    visitor_id: UUID,
-    db: AsyncSession = Depends(get_db_session),
-):
-    visitor = await general_visitor_crud.get_one(db, visitor_id)
-    if not visitor:
-        raise HTTPException(status_code=404, detail="Visitor not found")
-    return visitor
-
-@visitor_router.get(
-    "",
-    response_model=Page[VisitorResponse],
-    name="Get All Visitors",
-)
-async def get_all_visitors(
-    page: int = Query(default=1, ge=1),
-    size: int = Query(default=50, ge=1, le=200),
-    search: str | None = Query(default=None),
-    sort: str = Query(default="created_at:desc"),
-    db: AsyncSession = Depends(get_db_session),
-):
-    return await general_visitor_crud.get_all_filtered(
-        db, page=page, size=size, search=search, sort=sort
-    )
-
-
-@visitor_router.get(
     "/reports",
-    response_model=VisitorReportResponse,
-    name="Get General Visitor Reports",
+    response_model=UnifiedVisitorReportResponse,
+    name="Get Unified Visitor Reports",
 )
 async def get_general_visitor_reports(
     date_from: date | None = Query(default=None),
     date_to: date | None = Query(default=None),
-    visit_status: VisitorVisitStatus | None = Query(default=None),
+    visit_status: str | None = Query(default=None),
+    source: str | None = Query(default=None),
     institution_id: UUID | None = Query(default=None),
-    search: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=200),
     db: AsyncSession = Depends(get_db_session),
@@ -174,8 +144,8 @@ async def get_general_visitor_reports(
         date_from=date_from,
         date_to=date_to,
         visit_status=visit_status,
+        source=source,
         institution_id=institution_id,
-        search=search,
         page=page,
         size=size,
     )
@@ -204,6 +174,21 @@ async def export_general_visitor_reports(
     stream = BytesIO(csv_text.encode("utf-8"))
     headers = {"Content-Disposition": f'attachment; filename="{filename}"'}
     return StreamingResponse(stream, media_type="text/csv", headers=headers)
+
+
+@visitor_router.get(
+    "/{visitor_id}",
+    response_model=VisitorResponse,
+    name="Get Visitor",
+)
+async def get_visitor(
+    visitor_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+):
+    visitor = await general_visitor_crud.get_one(db, visitor_id)
+    if not visitor:
+        raise HTTPException(status_code=404, detail="Visitor not found")
+    return visitor
 
 
 

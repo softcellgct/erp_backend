@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from fastapi_pagination import Params
 from fastapi_pagination.ext.sqlalchemy import paginate
-from sqlalchemy import and_, asc, desc, func, or_, select, text
+from sqlalchemy import and_, asc, desc, func, or_, select, text, union_all, literal_column, cast, String, null, case
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -23,13 +23,14 @@ from common.models.gate.visitor_model import (
     PersonType,
     Visitor,
 )
-from common.models.master.institution import Institution
+from common.models.master.institution import Institution, Staff
 from common.schemas.gate.admission_visitor import (
     AdmissionVisitorCreate,
     AdmissionVisitorPassOutRequest,
     AdmissionVisitorReportSummary,
     AdmissionVisitorUpdate,
 )
+from common.models.admission.consultancy import Consultancy
 from common.schemas.gate.visitor_schemas import (
     VisitorCreate,
     VisitorUpdate,
@@ -848,65 +849,142 @@ class GeneralVisitorCRUD:
         self,
         db: AsyncSession,
         *,
-        date_from: date | None,
-        date_to: date | None,
-        visit_status: VisitStatus | None,
-        institution_id: UUID | None,
-        search: str | None,
-        page: int,
-        size: int,
+        page: int = 1,
+        size: int = 20,
+        date_from: date = None,
+        date_to: date = None,
+        visit_status: str = None,
+        source: str = None,
+        institution_id: UUID = None,
     ):
-        filters = self._build_report_filters(
-            date_from=date_from,
-            date_to=date_to,
-            visit_status=visit_status,
-            institution_id=institution_id,
-            search=search,
-            for_items=True,
+        # 1. Build Visitor Subquery
+        v_stmt = select(
+            Visitor.id,
+            Visitor.name,
+            Visitor.contact_number.label("contact"),
+            cast(Visitor.visitor_type, String).label("visitor_type"),
+            cast(Visitor.visit_status, String).label("visit_status"),
+            Visitor.check_in_time,
+            Visitor.check_out_time,
+            Visitor.pass_number,
+            Visitor.institution_id,
+            Institution.name.label("institution_name"),
+            Department.name.label("department_name"),
+            Visitor.person_name,
+            PersonType.name.label("person_type"),
+            Visitor.purpose_of_visit,
+            Visitor.photo_url.label("photo_path"),
+            null().label("native_place"),
+            null().label("parent_name"),
+            null().label("reference_type"),
+            Visitor.company_name,
+            Visitor.vehicle_number,
+            Visitor.members_count,
+            literal_column("'VISITOR'").label("source"),
+            Visitor.created_at
+        ).select_from(Visitor).join(
+            Institution, Institution.id == Visitor.institution_id, isouter=True
+        ).join(
+            Department, Department.id == Visitor.department_id, isouter=True
+        ).join(
+            PersonType, PersonType.id == Visitor.person_type_id, isouter=True
         )
-        total = await self._get_report_count(db, filters)
 
-        stmt = (
-            select(
-                Visitor,
-                Institution.name.label("institution_name"),
-                Department.name.label("department_name"),
-                PersonType.name.label("person_type_name"),
-            )
-            .select_from(Visitor)
-            .join(Institution, Institution.id == Visitor.institution_id, isouter=True)
-            .join(Department, Department.id == Visitor.department_id, isouter=True)
-            .join(PersonType, PersonType.id == Visitor.person_type_id, isouter=True)
-            .where(*filters)
-            .order_by(
-                Visitor.check_in_time.desc(),
-                Visitor.created_at.desc(),
-            )
+        # 2. Build Admission Subquery
+        a_stmt = select(
+            AdmissionGateEntry.id,
+            AdmissionGateEntry.student_name.label("name"),
+            AdmissionGateEntry.mobile_number.label("contact"),
+            literal_column("'ADMISSION'").label("visitor_type"),
+            cast(AdmissionGateEntry.visit_status, String).label("visit_status"),
+            AdmissionGateEntry.check_in_time,
+            AdmissionGateEntry.check_out_time,
+            AdmissionGateEntry.gate_pass_number.label("pass_number"),
+            AdmissionGateEntry.institution_id,
+            Institution.name.label("institution_name"),
+            null().label("department_name"),
+            null().label("person_name"),
+            null().label("person_type"),
+            null().label("purpose_of_visit"),
+            AdmissionGateEntry.image_url.label("photo_path"),
+            AdmissionGateEntry.native_place,
+            AdmissionGateEntry.parent_or_guardian_name.label("parent_name"),
+            case(
+                (StaffReference.id != None, func.concat('Staff (', Staff.name, case((Staff.designation != None, func.concat(' - ', Staff.designation)), else_=''), ')')),
+                (ConsultancyReference.id != None, func.concat('Consultancy (', Consultancy.name, ')')),
+                (StudentReference.id != None, func.concat('Student (', StudentReference.student_name, ')')),
+                (OtherReference.id != None, func.concat('Other (', OtherReference.description, ')')),
+                else_=AdmissionGateEntry.reference_type
+            ).label("reference_type"),
+            null().label("company_name"),
+            AdmissionGateEntry.vehicle_number,
+            literal_column("1").label("members_count"),
+            literal_column("'ADMISSION'").label("source"),
+            AdmissionGateEntry.created_at
+        ).select_from(AdmissionGateEntry).join(
+            Institution, Institution.id == AdmissionGateEntry.institution_id, isouter=True
+        ).join(
+            StaffReference, StaffReference.gate_entry_id == AdmissionGateEntry.id, isouter=True
+        ).join(
+            Staff, Staff.id == StaffReference.staff_id, isouter=True
+        ).join(
+            ConsultancyReference, ConsultancyReference.gate_entry_id == AdmissionGateEntry.id, isouter=True
+        ).join(
+            Consultancy, Consultancy.id == ConsultancyReference.consultancy_id, isouter=True
+        ).join(
+            StudentReference, StudentReference.gate_entry_id == AdmissionGateEntry.id, isouter=True
+        ).join(
+            OtherReference, OtherReference.gate_entry_id == AdmissionGateEntry.id, isouter=True
+        )
+
+        # 3. Apply Filters
+        if date_from:
+            dt_from = datetime.combine(date_from, time.min, tzinfo=timezone.utc)
+            v_stmt = v_stmt.where(Visitor.check_in_time >= dt_from)
+            a_stmt = a_stmt.where(AdmissionGateEntry.check_in_time >= dt_from)
+        
+        if date_to:
+            dt_to = datetime.combine(date_to, time.max, tzinfo=timezone.utc)
+            v_stmt = v_stmt.where(Visitor.check_in_time <= dt_to)
+            a_stmt = a_stmt.where(AdmissionGateEntry.check_in_time <= dt_to)
+
+        if visit_status:
+            v_stmt = v_stmt.where(cast(Visitor.visit_status, String) == visit_status)
+            a_stmt = a_stmt.where(cast(AdmissionGateEntry.visit_status, String) == visit_status)
+
+        if institution_id:
+            v_stmt = v_stmt.where(Visitor.institution_id == institution_id)
+            a_stmt = a_stmt.where(AdmissionGateEntry.institution_id == institution_id)
+
+        # 4. Handle Source Filtering & Union
+        if source == "VISITOR":
+            combined_stmt = v_stmt
+        elif source == "ADMISSION":
+            combined_stmt = a_stmt
+        else:
+            combined_stmt = union_all(v_stmt, a_stmt)
+
+        # 5. Get Total Count
+        count_stmt = select(func.count()).select_from(combined_stmt.subquery())
+        total = (await db.execute(count_stmt)).scalar() or 0
+
+        # 6. Execute Paginated & Sorted Query
+        final_stmt = (
+            select(combined_stmt.subquery())
+            .order_by(desc(text("check_in_time")))
             .offset((page - 1) * size)
             .limit(size)
         )
-        rows = (await db.execute(stmt)).all()
-        items = [self._row_to_report_item(row) for row in rows]
 
-        summary = await self._get_report_summary(
-            db,
-            date_from=date_from,
-            date_to=date_to,
-            visit_status=visit_status,
-            institution_id=institution_id,
-            search=search,
-        )
+        results = (await db.execute(final_stmt)).all()
+        items = [dict(row._mapping) for row in results]
 
-        pages = math.ceil(total / size) if size else 0
         return {
             "items": items,
             "total": total,
             "page": page,
             "size": size,
-            "pages": pages,
-            "summary": summary.model_dump()
-            if hasattr(summary, "model_dump")
-            else summary.dict(),
+            "pages": math.ceil(total / size) if size else 0
         }
 
     async def export_report_csv(

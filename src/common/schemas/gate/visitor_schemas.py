@@ -206,3 +206,40 @@ class VisitorReportResponse(BaseModel):
     size: int
     pages: int
     summary: VisitorReportSummary
+
+
+class UnifiedVisitorReportItem(BaseModel):
+    id: UUID
+    name: str
+    contact: str
+    visitor_type: str
+    visit_status: str
+    check_in_time: datetime
+    check_out_time: Optional[datetime] = None
+    pass_number: Optional[str] = None
+    institution_id: Optional[UUID] = None
+    institution_name: Optional[str] = None
+    department_name: Optional[str] = None
+    person_name: Optional[str] = None
+    person_type: Optional[str] = None
+    purpose_of_visit: Optional[str] = None
+    photo_path: Optional[str] = None
+    native_place: Optional[str] = None
+    parent_name: Optional[str] = None
+    reference_type: Optional[str] = None
+    company_name: Optional[str] = None
+    vehicle_number: Optional[str] = None
+    members_count: int = 1
+    source: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class UnifiedVisitorReportResponse(BaseModel):
+    items: list[UnifiedVisitorReportItem]
+    total: int
+    page: int
+    size: int
+    pages: int
