@@ -832,10 +832,14 @@ class GeneralVisitorCRUD:
         for field, value in update_data.items():
             if field in valid_columns:
                 setattr(visitor, field, value)
+        
+        # If person_type_id was provided, ensure it's set
+        if "person_type_id" in update_data:
+            visitor.person_type_id = update_data["person_type_id"]
 
         try:
             await db.commit()
-            await db.refresh(visitor)
+            await db.refresh(visitor, ["person_type", "institution", "department"])
             return visitor
         except Exception:
             await db.rollback()
@@ -969,12 +973,12 @@ class GeneralVisitorCRUD:
             null().label("aadhar_number"),
             literal_column("'VISITOR'").label("source"),
             Visitor.created_at.label("created_at")
-        ).select_from(Visitor).join(
-            Institution, Institution.id == Visitor.institution_id, isouter=True
-        ).join(
-            Department, Department.id == Visitor.department_id, isouter=True
-        ).join(
-            PersonType, PersonType.id == Visitor.person_type_id, isouter=True
+        ).select_from(Visitor).outerjoin(
+            Institution, Institution.id == Visitor.institution_id
+        ).outerjoin(
+            Department, Department.id == Visitor.department_id
+        ).outerjoin(
+            PersonType, PersonType.id == Visitor.person_type_id
         )
 
         # 2. Build Admission Subquery
@@ -992,7 +996,13 @@ class GeneralVisitorCRUD:
             null().label("department_name"),
             null().label("department_id"),
             null().label("person_name"),
-            null().label("person_type"),
+            case(
+                (StaffReference.id != None, func.concat('Staff (', Staff.name, case((Staff.designation != None, func.concat(' - ', Staff.designation)), else_=''), ')')),
+                (ConsultancyReference.id != None, func.concat('Consultancy (', Consultancy.name, ')')),
+                (StudentReference.id != None, func.concat('Student (', StudentReference.student_name, ')')),
+                (OtherReference.id != None, func.concat('Other (', OtherReference.description, ')')),
+                else_=AdmissionGateEntry.reference_type
+            ).label("person_type"),
             null().label("person_type_id"),
             null().label("purpose_of_visit"),
             AdmissionGateEntry.image_url.label("photo_path"),
@@ -1053,7 +1063,8 @@ class GeneralVisitorCRUD:
                 Visitor.contact_number.ilike(pattern),
                 Visitor.company_name.ilike(pattern),
                 Visitor.pass_number.ilike(pattern),
-                Visitor.person_name.ilike(pattern)
+                Visitor.person_name.ilike(pattern),
+                PersonType.name.ilike(pattern)
             ))
             a_stmt = a_stmt.where(or_(
                 AdmissionGateEntry.student_name.ilike(pattern),
