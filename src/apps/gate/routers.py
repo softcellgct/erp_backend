@@ -22,6 +22,7 @@ from common.schemas.gate.visitor_schemas import (
 from common.models.gate.visitor_model import VisitStatus as VisitorVisitStatus
 from common.schemas.gate.admission_visitor import (
     AdmissionVisitorCreate,
+    AdmissionVisitorUpdate,
     AdmissionVisitorPassOutRequest,
     AdmissionVisitorPassOutResponse,
     AdmissionVisitorReportResponse,
@@ -190,6 +191,21 @@ async def get_visitor(
         raise HTTPException(status_code=404, detail="Visitor not found")
     return visitor
 
+@visitor_router.put(
+    "/{visitor_id}",
+    response_model=VisitorResponse,
+    name="Update Visitor",
+)
+async def update_visitor(
+    visitor_id: UUID,
+    payload: VisitorUpdate,
+    db: AsyncSession = Depends(get_db_session),
+):
+    visitor = await general_visitor_crud.update(db, visitor_id, payload)
+    if not visitor:
+        raise HTTPException(status_code=404, detail="Visitor not found")
+    return visitor
+
 
 
 
@@ -328,6 +344,22 @@ async def get_admission_visitor(
     db: AsyncSession = Depends(get_db_session),
 ):
     visitor = await admission_crud.get_one(db, visitor_id)
+    if not visitor:
+        raise HTTPException(status_code=404, detail="Admission visitor not found")
+    return visitor
+
+@admission_visitor_router.put(
+    "/{visitor_id}",
+    response_model=AdmissionVisitorRead,
+    name="Update Admission Visitor",
+    description="Update an existing admission visitor record.",
+)
+async def update_admission_visitor(
+    visitor_id: UUID,
+    payload: AdmissionVisitorUpdate,
+    db: AsyncSession = Depends(get_db_session),
+):
+    visitor = await admission_crud.update(db, visitor_id, payload)
     if not visitor:
         raise HTTPException(status_code=404, detail="Admission visitor not found")
     return visitor

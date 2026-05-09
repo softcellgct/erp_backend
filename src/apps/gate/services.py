@@ -8,7 +8,7 @@ from uuid import UUID
 from fastapi import HTTPException
 from fastapi_pagination import Params
 from fastapi_pagination.ext.sqlalchemy import paginate
-from sqlalchemy import and_, asc, desc, func, or_, select, text, union_all, literal_column, cast, String, null, case
+from sqlalchemy import and_, asc, desc, func, or_, select, text, union_all, literal_column, cast, String, null, case, inspect
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -312,11 +312,12 @@ class AdmissionVisitorCRUD:
         if sref and getattr(sref, "staff_id", None):
             from common.models.master.institution import Staff
             staff_data = (await db.execute(
-                select(Staff.name, Staff.designation).where(Staff.id == sref.staff_id)
+                select(Staff.name, Staff.designation, Staff.department_id).where(Staff.id == sref.staff_id)
             )).first()
             if staff_data:
                 setattr(sref, "staff_name", staff_data.name)
                 setattr(sref, "designation", staff_data.designation)
+                setattr(sref, "department_id", staff_data.department_id)
 
         return gate_entry
 
@@ -386,6 +387,13 @@ class AdmissionVisitorCRUD:
             return None
 
         update_data = payload.dict(exclude_unset=True)
+        
+        # Extract nested reference data
+        consultancy_payload = update_data.pop("consultancy_reference", None)
+        staff_payload = update_data.pop("staff_reference", None)
+        student_payload = update_data.pop("student_reference", None)
+        other_payload = update_data.pop("other_reference", None)
+
         for old_key, new_key in _FIELD_MAP.items():
             if old_key in update_data:
                 update_data[new_key] = update_data.pop(old_key)
@@ -403,13 +411,56 @@ class AdmissionVisitorCRUD:
                     detail=f"Aadhar number {aadhar_val} already exists",
                 )
 
+        # Filter fields that exist in the model columns
+        mapper = inspect(AdmissionGateEntry)
+        column_names = {c.key for c in mapper.columns}
+        
         for field, value in update_data.items():
-            if hasattr(gate_entry, field):
+            if field in column_names:
                 setattr(gate_entry, field, value)
+
+        # Handle nested reference updates using relationships
+        ref_type = gate_entry.reference_type
+        
+        if ref_type == "consultancy" and consultancy_payload:
+            existing_ref = gate_entry.consultancy_reference
+            if existing_ref:
+                for k, v in consultancy_payload.items():
+                    if k != "id" and hasattr(existing_ref, k): setattr(existing_ref, k, v)
+            else:
+                consultancy_payload.pop("id", None)
+                gate_entry.consultancy_reference = ConsultancyReference(gate_entry_id=visitor_id, **consultancy_payload)
+                
+        elif ref_type == "staff" and staff_payload:
+            existing_ref = gate_entry.staff_reference
+            if existing_ref:
+                for k, v in staff_payload.items():
+                    if k != "id" and hasattr(existing_ref, k): setattr(existing_ref, k, v)
+            else:
+                staff_payload.pop("id", None)
+                gate_entry.staff_reference = StaffReference(gate_entry_id=visitor_id, **staff_payload)
+                
+        elif ref_type == "student" and student_payload:
+            existing_ref = gate_entry.student_reference
+            if existing_ref:
+                for k, v in student_payload.items():
+                    if k != "id" and hasattr(existing_ref, k): setattr(existing_ref, k, v)
+            else:
+                student_payload.pop("id", None)
+                gate_entry.student_reference = StudentReference(gate_entry_id=visitor_id, **student_payload)
+                
+        elif ref_type == "other" and other_payload:
+            existing_ref = gate_entry.other_reference
+            if existing_ref:
+                for k, v in other_payload.items():
+                    if k != "id" and hasattr(existing_ref, k): setattr(existing_ref, k, v)
+            else:
+                other_payload.pop("id", None)
+                gate_entry.other_reference = OtherReference(gate_entry_id=visitor_id, **other_payload)
 
         try:
             await db.commit()
-            await db.refresh(gate_entry)
+            return await self.get_one(db, visitor_id)
         except Exception as exc:
             await db.rollback()
             exc_str = str(exc).lower()
@@ -742,6 +793,8 @@ class GeneralVisitorCRUD:
             # But we keep 'name' as the primary field in DB
             data["name"] = data.pop("representative_name")
         
+        # Remove person_type string before model creation (it's a relationship)
+        data.pop("person_type", None)
         if not data.get("pass_number"):
             data["pass_number"] = await self._generate_unique_pass_no(db)
             
@@ -750,6 +803,36 @@ class GeneralVisitorCRUD:
         visitor.visit_status = VisitStatus.CHECKED_IN
         
         db.add(visitor)
+        try:
+            await db.commit()
+            await db.refresh(visitor)
+            return visitor
+        except Exception:
+            await db.rollback()
+            raise
+
+    async def update(
+        self, db: AsyncSession, visitor_id: UUID, payload: VisitorUpdate
+    ):
+        visitor = await self.get_one(db, visitor_id)
+        if not visitor:
+            return None
+
+        update_data = payload.dict(exclude_unset=True)
+        update_data.pop("id", None)
+        update_data.pop("person_type", None) # Remove person_type string
+        
+        # Handle representative_name mapping if provided
+        if update_data.get("representative_name"):
+            update_data["name"] = update_data.get("representative_name")
+
+        mapper = inspect(Visitor)
+        valid_columns = mapper.columns.keys()
+
+        for field, value in update_data.items():
+            if field in valid_columns:
+                setattr(visitor, field, value)
+
         try:
             await db.commit()
             await db.refresh(visitor)
@@ -870,8 +953,10 @@ class GeneralVisitorCRUD:
             Visitor.institution_id,
             Institution.name.label("institution_name"),
             Department.name.label("department_name"),
+            Visitor.department_id,
             Visitor.person_name,
             PersonType.name.label("person_type"),
+            Visitor.person_type_id,
             Visitor.purpose_of_visit,
             Visitor.photo_url.label("photo_path"),
             null().label("native_place"),
@@ -880,6 +965,7 @@ class GeneralVisitorCRUD:
             Visitor.company_name,
             Visitor.vehicle_number,
             Visitor.members_count,
+            null().label("aadhar_number"),
             literal_column("'VISITOR'").label("source"),
             Visitor.created_at
         ).select_from(Visitor).join(
@@ -903,8 +989,10 @@ class GeneralVisitorCRUD:
             AdmissionGateEntry.institution_id,
             Institution.name.label("institution_name"),
             null().label("department_name"),
+            null().label("department_id"),
             null().label("person_name"),
             null().label("person_type"),
+            null().label("person_type_id"),
             null().label("purpose_of_visit"),
             AdmissionGateEntry.image_url.label("photo_path"),
             AdmissionGateEntry.native_place,
@@ -919,6 +1007,7 @@ class GeneralVisitorCRUD:
             null().label("company_name"),
             AdmissionGateEntry.vehicle_number,
             literal_column("1").label("members_count"),
+            AdmissionGateEntry.aadhar_number,
             literal_column("'ADMISSION'").label("source"),
             AdmissionGateEntry.created_at
         ).select_from(AdmissionGateEntry).join(

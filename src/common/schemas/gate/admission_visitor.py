@@ -55,6 +55,7 @@ class StaffReferenceRead(BaseModel):
     staff_id: UUID
     staff_name: Optional[str] = None
     designation: Optional[str] = None
+    department_id: Optional[UUID] = None
 
     class Config:
         from_attributes = True
@@ -122,6 +123,11 @@ class AdmissionVisitorUpdate(BaseModel):
     vehicle_number: Optional[str] = None
     visit_status: Optional[VisitStatus] = None
     check_out_remarks: Optional[str] = None
+    
+    consultancy_reference: Optional[ConsultancyReferenceCreate] = None
+    staff_reference: Optional[StaffReferenceCreate] = None
+    student_reference: Optional[StudentReferenceCreate] = None
+    other_reference: Optional[OtherReferenceCreate] = None
 
 
 class AdmissionVisitorRead(BaseModel):

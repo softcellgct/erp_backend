@@ -220,8 +220,10 @@ class UnifiedVisitorReportItem(BaseModel):
     institution_id: Optional[UUID] = None
     institution_name: Optional[str] = None
     department_name: Optional[str] = None
+    department_id: Optional[UUID] = None
     person_name: Optional[str] = None
     person_type: Optional[str] = None
+    person_type_id: Optional[UUID] = None
     purpose_of_visit: Optional[str] = None
     photo_path: Optional[str] = None
     native_place: Optional[str] = None
@@ -230,6 +232,7 @@ class UnifiedVisitorReportItem(BaseModel):
     company_name: Optional[str] = None
     vehicle_number: Optional[str] = None
     members_count: int = 1
+    aadhar_number: Optional[str] = None
     source: str
     created_at: datetime
 
