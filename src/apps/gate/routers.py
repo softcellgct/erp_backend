@@ -136,6 +136,7 @@ async def get_general_visitor_reports(
     visit_status: str | None = Query(default=None),
     source: str | None = Query(default=None),
     institution_id: UUID | None = Query(default=None),
+    search: str | None = Query(default=None),
     page: int = Query(default=1, ge=1),
     size: int = Query(default=20, ge=1, le=200),
     db: AsyncSession = Depends(get_db_session),
@@ -147,6 +148,7 @@ async def get_general_visitor_reports(
         visit_status=visit_status,
         source=source,
         institution_id=institution_id,
+        search=search,
         page=page,
         size=size,
     )

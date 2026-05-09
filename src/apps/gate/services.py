@@ -939,35 +939,36 @@ class GeneralVisitorCRUD:
         visit_status: str = None,
         source: str = None,
         institution_id: UUID = None,
+        search: str = None,
     ):
         # 1. Build Visitor Subquery
         v_stmt = select(
-            Visitor.id,
-            Visitor.name,
+            Visitor.id.label("id"),
+            Visitor.name.label("name"),
             Visitor.contact_number.label("contact"),
             cast(Visitor.visitor_type, String).label("visitor_type"),
             cast(Visitor.visit_status, String).label("visit_status"),
-            Visitor.check_in_time,
-            Visitor.check_out_time,
-            Visitor.pass_number,
-            Visitor.institution_id,
+            Visitor.check_in_time.label("check_in_time"),
+            Visitor.check_out_time.label("check_out_time"),
+            Visitor.pass_number.label("pass_number"),
+            Visitor.institution_id.label("institution_id"),
             Institution.name.label("institution_name"),
             Department.name.label("department_name"),
-            Visitor.department_id,
-            Visitor.person_name,
+            Visitor.department_id.label("department_id"),
+            Visitor.person_name.label("person_name"),
             PersonType.name.label("person_type"),
-            Visitor.person_type_id,
-            Visitor.purpose_of_visit,
+            Visitor.person_type_id.label("person_type_id"),
+            Visitor.purpose_of_visit.label("purpose_of_visit"),
             Visitor.photo_url.label("photo_path"),
             null().label("native_place"),
             null().label("parent_name"),
             null().label("reference_type"),
-            Visitor.company_name,
-            Visitor.vehicle_number,
-            Visitor.members_count,
+            Visitor.company_name.label("company_name"),
+            Visitor.vehicle_number.label("vehicle_number"),
+            Visitor.members_count.label("members_count"),
             null().label("aadhar_number"),
             literal_column("'VISITOR'").label("source"),
-            Visitor.created_at
+            Visitor.created_at.label("created_at")
         ).select_from(Visitor).join(
             Institution, Institution.id == Visitor.institution_id, isouter=True
         ).join(
@@ -978,15 +979,15 @@ class GeneralVisitorCRUD:
 
         # 2. Build Admission Subquery
         a_stmt = select(
-            AdmissionGateEntry.id,
+            AdmissionGateEntry.id.label("id"),
             AdmissionGateEntry.student_name.label("name"),
             AdmissionGateEntry.mobile_number.label("contact"),
             literal_column("'ADMISSION'").label("visitor_type"),
             cast(AdmissionGateEntry.visit_status, String).label("visit_status"),
-            AdmissionGateEntry.check_in_time,
-            AdmissionGateEntry.check_out_time,
+            AdmissionGateEntry.check_in_time.label("check_in_time"),
+            AdmissionGateEntry.check_out_time.label("check_out_time"),
             AdmissionGateEntry.gate_pass_number.label("pass_number"),
-            AdmissionGateEntry.institution_id,
+            AdmissionGateEntry.institution_id.label("institution_id"),
             Institution.name.label("institution_name"),
             null().label("department_name"),
             null().label("department_id"),
@@ -995,7 +996,7 @@ class GeneralVisitorCRUD:
             null().label("person_type_id"),
             null().label("purpose_of_visit"),
             AdmissionGateEntry.image_url.label("photo_path"),
-            AdmissionGateEntry.native_place,
+            AdmissionGateEntry.native_place.label("native_place"),
             AdmissionGateEntry.parent_or_guardian_name.label("parent_name"),
             case(
                 (StaffReference.id != None, func.concat('Staff (', Staff.name, case((Staff.designation != None, func.concat(' - ', Staff.designation)), else_=''), ')')),
@@ -1005,11 +1006,11 @@ class GeneralVisitorCRUD:
                 else_=AdmissionGateEntry.reference_type
             ).label("reference_type"),
             null().label("company_name"),
-            AdmissionGateEntry.vehicle_number,
+            AdmissionGateEntry.vehicle_number.label("vehicle_number"),
             literal_column("1").label("members_count"),
-            AdmissionGateEntry.aadhar_number,
+            AdmissionGateEntry.aadhar_number.label("aadhar_number"),
             literal_column("'ADMISSION'").label("source"),
-            AdmissionGateEntry.created_at
+            AdmissionGateEntry.created_at.label("created_at")
         ).select_from(AdmissionGateEntry).join(
             Institution, Institution.id == AdmissionGateEntry.institution_id, isouter=True
         ).join(
@@ -1044,6 +1045,22 @@ class GeneralVisitorCRUD:
         if institution_id:
             v_stmt = v_stmt.where(Visitor.institution_id == institution_id)
             a_stmt = a_stmt.where(AdmissionGateEntry.institution_id == institution_id)
+
+        if search and search.strip():
+            pattern = f"%{search.strip()}%"
+            v_stmt = v_stmt.where(or_(
+                Visitor.name.ilike(pattern),
+                Visitor.contact_number.ilike(pattern),
+                Visitor.company_name.ilike(pattern),
+                Visitor.pass_number.ilike(pattern),
+                Visitor.person_name.ilike(pattern)
+            ))
+            a_stmt = a_stmt.where(or_(
+                AdmissionGateEntry.student_name.ilike(pattern),
+                AdmissionGateEntry.mobile_number.ilike(pattern),
+                AdmissionGateEntry.gate_pass_number.ilike(pattern),
+                AdmissionGateEntry.native_place.ilike(pattern)
+            ))
 
         # 4. Handle Source Filtering & Union
         if source == "VISITOR":
