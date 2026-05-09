@@ -40,7 +40,7 @@ from sqlalchemy.orm import selectinload, raiseload
 from uuid import UUID
 from typing import List
 from datetime import datetime, time
-from common.models.master.institution import Department, Course
+from common.models.master.institution import Department, Course, Institution
 from common.models.master.annual_task import AcademicYear
 
 from common.models.billing.application_fees import Invoice, InvoiceLineItem
@@ -197,32 +197,34 @@ async def get_admission_student(
     pers = student.personal_details
     prev = student.previous_academic_details
 
-    # religion_val = get_nested(pers, "religion")
-    # community_val = get_nested(pers, "community")
-    # caste_val = get_nested(pers, "caste")
+    import uuid as _uuid
+    from common.models.meta.models import Religion, Community, Caste
 
-    # import uuid
-    # def is_valid_uuid(val):
-    #     try:
-    #         uuid.UUID(str(val))
-    #         return True
-    #     except (ValueError, TypeError):
-    #         return False
+    def is_valid_uuid(val):
+        try:
+            _uuid.UUID(str(val))
+            return True
+        except (ValueError, TypeError):
+            return False
 
-    # if is_valid_uuid(religion_val):
-    #     from common.models.meta.models import Religion
-    #     real_religion = await db.scalar(select(Religion.name).where(Religion.id == uuid.UUID(str(religion_val))))
-    #     if real_religion: religion_val = real_religion
+    religion_val = get_nested(pers, "religion")
+    community_val = get_nested(pers, "community")
+    caste_val = get_nested(pers, "caste")
 
-    # if is_valid_uuid(community_val):
-    #     from common.models.meta.models import Community
-    #     real_community = await db.scalar(select(Community.name).where(Community.id == uuid.UUID(str(community_val))))
-    #     if real_community: community_val = real_community
+    if is_valid_uuid(religion_val):
+        real_religion = await db.scalar(select(Religion.name).where(Religion.id == _uuid.UUID(str(religion_val))))
+        if real_religion:
+            religion_val = real_religion
 
-    # if is_valid_uuid(caste_val):
-    #     from common.models.meta.models import Caste
-    #     real_caste = await db.scalar(select(Caste.name).where(Caste.id == uuid.UUID(str(caste_val))))
-    #     if real_caste: caste_val = real_caste
+    if is_valid_uuid(community_val):
+        real_community = await db.scalar(select(Community.name).where(Community.id == _uuid.UUID(str(community_val))))
+        if real_community:
+            community_val = real_community
+
+    if is_valid_uuid(caste_val):
+        real_caste = await db.scalar(select(Caste.name).where(Caste.id == _uuid.UUID(str(caste_val))))
+        if real_caste:
+            caste_val = real_caste
 
     return {
         "id": str(student.id),
@@ -239,9 +241,9 @@ async def get_admission_student(
         "gate_pass_number": get_nested(gate, "gate_pass_number"),
         "reference_type": get_nested(gate, "reference_type"),
         "gate_entry_id": str(student.gate_entry_id) if student.gate_entry_id else None,
-        "religion": get_nested(pers, "religion"),
-        "community": get_nested(pers, "community"),
-        "caste": get_nested(pers, "caste"),
+        "religion": religion_val,
+        "community": community_val,
+        "caste": caste_val,
         "parent_income": float(get_nested(pers, "parent_income")) if get_nested(pers, "parent_income") else None,
         "door_no": get_nested(pers, "door_no"),
         "street_name": get_nested(pers, "street_name"),
@@ -255,7 +257,7 @@ async def get_admission_student(
         "campus": get_nested(prog, "campus"),
         "has_vehicle": get_nested(gate, "vehicle", default=False),
         "vehicle_number": get_nested(gate, "vehicle_number"),
-        "status": student.status,
+        "status": student.status.value if hasattr(student.status, 'value') else student.status,
         "source": getattr(student, "source", None),
         "category": get_nested(prog, "category"),
         "quota_type": get_nested(prog, "quota_type"),
@@ -934,6 +936,14 @@ async def list_admission_students(
         
         department_ids = {student.program_details.department_id for student in students if student.program_details and student.program_details.department_id}
         course_ids = {student.program_details.course_id for student in students if student.program_details and student.program_details.course_id}
+        
+        institution_ids = set()
+        for student in students:
+            if student.program_details and student.program_details.institution_id:
+                institution_ids.add(student.program_details.institution_id)
+            elif student.gate_entry and student.gate_entry.institution_id:
+                institution_ids.add(student.gate_entry.institution_id)
+
         academic_year_ids = {
             student.program_details.academic_year_id
             for student in students
@@ -942,6 +952,7 @@ async def list_admission_students(
 
         department_name_map = {}
         course_title_map = {}
+        institution_name_map = {}
         academic_year_name_map = {}
 
         if department_ids:
@@ -955,6 +966,12 @@ async def list_admission_students(
                 select(Course.id, Course.title).where(Course.id.in_(course_ids))
             )
             course_title_map = {str(item[0]): item[1] for item in course_result.all()}
+            
+        if institution_ids:
+            institution_result = await db.execute(
+                select(Institution.id, Institution.name).where(Institution.id.in_(institution_ids))
+            )
+            institution_name_map = {str(item[0]): item[1] for item in institution_result.all()}
 
         if academic_year_ids:
             year_result = await db.execute(
@@ -1008,6 +1025,14 @@ async def list_admission_students(
 
             student_dict["department_name"] = department_name_map.get(str(student.program_details.department_id)) if student.program_details and getattr(student.program_details, 'department_id', None) else None
             student_dict["course_title"] = course_title_map.get(str(student.program_details.course_id)) if student.program_details and getattr(student.program_details, 'course_id', None) else None
+            
+            inst_id = None
+            if student.program_details and getattr(student.program_details, 'institution_id', None):
+                inst_id = student.program_details.institution_id
+            elif student.gate_entry and getattr(student.gate_entry, 'institution_id', None):
+                inst_id = student.gate_entry.institution_id
+            
+            student_dict["institution_name"] = institution_name_map.get(str(inst_id)) if inst_id else None
             student_dict["academic_year_name"] = academic_year_name_map.get(
                 str(student.program_details.academic_year_id)
             ) if student.program_details and getattr(student.program_details, "academic_year_id", None) else None
@@ -1408,42 +1433,90 @@ async def get_enquiry_reports(
     end_date: str = None,
     status: str = None,
     reference_type: str = None,
+    institution_id: UUID = None,
+    department_id: UUID = None,
     db: AsyncSession = Depends(get_db_session)
 ):
     """Get detailed enquiry reports with filters."""
-    from datetime import datetime, time
+    from datetime import datetime, time, timezone
+    from common.models.master.institution import Department, Institution, Staff
+    from common.models.admission.admission_entry import (
+        AdmissionGateEntry, 
+        AdmissionStudentPersonalDetails, 
+        AdmissionStudentProgramDetails
+    )
+    from common.models.gate.visitor_model import (
+        ConsultancyReference,
+        StaffReference,
+        StudentReference,
+        OtherReference
+    )
     
     # Build query for AdmissionStudents
-    from common.models.admission.admission_entry import AdmissionGateEntry, AdmissionStudentPersonalDetails
-    query_students = select(AdmissionStudent).outerjoin(AdmissionGateEntry).outerjoin(AdmissionStudentPersonalDetails).options(
+    query_students = select(AdmissionStudent).outerjoin(
+        AdmissionGateEntry
+    ).outerjoin(
+        AdmissionStudentPersonalDetails
+    ).outerjoin(
+        AdmissionStudentProgramDetails
+    ).options(
         selectinload(AdmissionStudent.personal_details),
-        selectinload(AdmissionStudent.gate_entry)
+        selectinload(AdmissionStudent.gate_entry).selectinload(AdmissionGateEntry.institution),
+        selectinload(AdmissionStudent.gate_entry).selectinload(AdmissionGateEntry.consultancy_reference).selectinload(ConsultancyReference.consultancy),
+        selectinload(AdmissionStudent.gate_entry).selectinload(AdmissionGateEntry.staff_reference),
+        selectinload(AdmissionStudent.gate_entry).selectinload(AdmissionGateEntry.student_reference),
+        selectinload(AdmissionStudent.gate_entry).selectinload(AdmissionGateEntry.other_reference),
+        selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.department),
+        selectinload(AdmissionStudent.program_details).selectinload(AdmissionStudentProgramDetails.institution),
     )
     
     # Apply filters
     filters = []
     if start_date:
         try:
-            start_dt = datetime.combine(datetime.fromisoformat(start_date).date(), time.min)
+            start_dt = datetime.combine(datetime.fromisoformat(start_date).date(), time.min).replace(tzinfo=timezone.utc)
             filters.append(AdmissionStudent.created_at >= start_dt)
         except (ValueError, TypeError):
             pass
             
     if end_date:
         try:
-            end_dt = datetime.combine(datetime.fromisoformat(end_date).date(), time.max)
+            end_dt = datetime.combine(datetime.fromisoformat(end_date).date(), time.max).replace(tzinfo=timezone.utc)
             filters.append(AdmissionStudent.created_at <= end_dt)
         except (ValueError, TypeError):
             pass
             
-    if status:
+    if status and status != "ALL":
         filters.append(AdmissionStudent.status == status)
         
-    if reference_type:
-        filters.append(AdmissionGateEntry.reference_type == reference_type)
+    if reference_type and reference_type != "ALL":
+        # Map frontend values to backend Enum values (usually lowercase in ReferenceType)
+        ref_val = reference_type.lower()
+        
+        if ref_val == "direct":
+            # For direct, it could be 'direct_admission' or NULL in the gate entry
+            filters.append(or_(
+                AdmissionGateEntry.reference_type == "direct_admission", 
+                AdmissionGateEntry.reference_type == "direct", 
+                AdmissionGateEntry.reference_type.is_(None)
+            ))
+        else:
+            filters.append(AdmissionGateEntry.reference_type == ref_val)
+
+    if institution_id:
+        # Check in both program_details and gate_entry
+        filters.append(or_(
+            AdmissionStudentProgramDetails.institution_id == institution_id,
+            AdmissionGateEntry.institution_id == institution_id
+        ))
+        
+    if department_id:
+        filters.append(AdmissionStudentProgramDetails.department_id == department_id)
         
     if filters:
         query_students = query_students.where(and_(*filters))
+    
+    query_students = query_students.order_by(desc(AdmissionStudent.created_at))
     
     res_students = await db.execute(query_students)
     students = res_students.scalars().all()
@@ -1451,14 +1524,51 @@ async def get_enquiry_reports(
     # Normalize data
     all_enquiries = []
     for s in students:
+        # Determine detailed source
+        source_label = s.source.value if hasattr(s.source, "value") else str(s.source)
+        ref_type = getattr(s.gate_entry, "reference_type", None) if s.gate_entry else None
+        
+        display_source = source_label
+        if ref_type:
+            ref_type_upper = ref_type.upper() if isinstance(ref_type, str) else str(ref_type).upper()
+            if ref_type_upper == "CONSULTANCY" and s.gate_entry.consultancy_reference:
+                c_name = getattr(s.gate_entry.consultancy_reference.consultancy, "name", "Consultancy")
+                display_source = f"Consultancy: {c_name}"
+            elif ref_type_upper == "STAFF" and s.gate_entry.staff_reference:
+                staff_id = s.gate_entry.staff_reference.staff_id
+                staff_name = await db.scalar(select(Staff.name).where(Staff.id == staff_id)) if staff_id else None
+                display_source = f"Staff: {staff_name}" if staff_name else "Staff"
+            elif ref_type_upper == "STUDENT" and s.gate_entry.student_reference:
+                s_name = s.gate_entry.student_reference.student_name
+                display_source = f"Student: {s_name}" if s_name else "Student Reference"
+            elif ref_type_upper == "OTHER" and s.gate_entry.other_reference:
+                desc_text = s.gate_entry.other_reference.description
+                display_source = f"Other: {desc_text}" if desc_text else "Other"
+            else:
+                display_source = ref_type.replace("_", " ").capitalize()
+
+        # Determine Institution name (check program details, then gate entry)
+        inst_name = "N/A"
+        if s.program_details and s.program_details.institution:
+            inst_name = s.program_details.institution.name
+        elif s.gate_entry and s.gate_entry.institution:
+            inst_name = s.gate_entry.institution.name
+            
+        # Determine Department name
+        dept_name = "N/A"
+        if s.program_details and s.program_details.department:
+            dept_name = s.program_details.department.name
+
         all_enquiries.append({
             "id": str(s.id),
             "enquiry_number": s.enquiry_number,
-            "name": s.personal_details.name if getattr(s, "personal_details", None) else s.name,
-            "mobile": s.personal_details.student_mobile if getattr(s, "personal_details", None) else None,
+            "name": s.personal_details.name if s.personal_details else s.name,
+            "mobile": s.personal_details.student_mobile if s.personal_details else None,
             "status": s.status.value if hasattr(s.status, "value") else s.status,
-            "source": s.source.value if hasattr(s.source, "value") else s.source,
-            "reference_type": getattr(s.gate_entry, "reference_type", None) if getattr(s, "gate_entry", None) else None,
+            "source": display_source,
+            "reference_type": ref_type,
+            "institution": inst_name,
+            "department": dept_name,
             "created_at": s.created_at.isoformat() if s.created_at else None,
         })
     
@@ -1473,16 +1583,16 @@ async def get_reference_summary(
     start_date: str = None,
     end_date: str = None,
     institution_id: str = None,
+    department_id: str = None,
     db: AsyncSession = Depends(get_db_session),
 ):
     """
-    Get admission counts grouped by consultancy and staff.
-    Returns two lists: consultancy_summary and staff_summary.
+    Get admission counts grouped by consultancy, staff, student, other, and direct.
     """
     from datetime import datetime as dt
-    from common.models.gate.visitor_model import ConsultancyReference, StaffReference
+    from common.models.gate.visitor_model import ConsultancyReference, StaffReference, StudentReference, OtherReference
     from common.models.admission.consultancy import Consultancy
-    from common.models.master.institution import Staff, Department
+    from common.models.master.institution import Staff, Department, Institution
     from common.models.admission.admission_entry import AdmissionStudentProgramDetails
 
     base_filters = [AdmissionStudent.deleted_at.is_(None)]
@@ -1494,11 +1604,13 @@ async def get_reference_summary(
             pass
     if end_date:
         try:
-            base_filters.append(AdmissionStudent.created_at <= dt.fromisoformat(end_date))
+            base_filters.append(AdmissionStudent.created_at <= dt.fromisoformat(end_date + 'T23:59:59'))
         except ValueError:
             pass
     if institution_id:
         base_filters.append(AdmissionStudentProgramDetails.institution_id == institution_id)
+    if department_id:
+        base_filters.append(AdmissionStudentProgramDetails.department_id == department_id)
 
     # Consultancy summary
     consultancy_stmt = (
@@ -1549,6 +1661,39 @@ async def get_reference_summary(
         for row in staff_result.all()
     ]
 
+    # Student reference count
+    student_count_stmt = (
+        select(func.count(AdmissionStudent.id))
+        .join(StudentReference, StudentReference.student_id == AdmissionStudent.id)
+        .outerjoin(AdmissionStudentProgramDetails, AdmissionStudentProgramDetails.admission_student_id == AdmissionStudent.id)
+        .where(*base_filters)
+    )
+    student_count = (await db.execute(student_count_stmt)).scalar_one() or 0
+
+    # Other reference count
+    other_count_stmt = (
+        select(func.count(AdmissionStudent.id))
+        .join(OtherReference, OtherReference.student_id == AdmissionStudent.id)
+        .outerjoin(AdmissionStudentProgramDetails, AdmissionStudentProgramDetails.admission_student_id == AdmissionStudent.id)
+        .where(*base_filters)
+    )
+    other_count = (await db.execute(other_count_stmt)).scalar_one() or 0
+
+    # Direct (no reference) count
+    from sqlalchemy import not_, exists
+    direct_count_stmt = (
+        select(func.count(AdmissionStudent.id))
+        .outerjoin(AdmissionStudentProgramDetails, AdmissionStudentProgramDetails.admission_student_id == AdmissionStudent.id)
+        .where(
+            *base_filters,
+            not_(exists(select(ConsultancyReference.id).where(ConsultancyReference.student_id == AdmissionStudent.id))),
+            not_(exists(select(StaffReference.id).where(StaffReference.student_id == AdmissionStudent.id))),
+            not_(exists(select(StudentReference.id).where(StudentReference.student_id == AdmissionStudent.id))),
+            not_(exists(select(OtherReference.id).where(OtherReference.student_id == AdmissionStudent.id))),
+        )
+    )
+    direct_count = (await db.execute(direct_count_stmt)).scalar_one() or 0
+
     # Totals
     total_consultancy = sum(c["admission_count"] for c in consultancy_summary)
     total_staff = sum(s["admission_count"] for s in staff_summary)
@@ -1562,6 +1707,9 @@ async def get_reference_summary(
         "total_admissions": total_admissions,
         "total_by_consultancy": total_consultancy,
         "total_by_staff": total_staff,
+        "total_by_student": student_count,
+        "total_by_other": other_count,
+        "total_by_direct": direct_count,
         "consultancy_summary": consultancy_summary,
         "staff_summary": staff_summary,
     }
@@ -1583,7 +1731,7 @@ async def get_reference_details(
     reference_id: UUID of the consultancy or staff member
     """
     from datetime import datetime as dt
-    from common.models.gate.visitor_model import ConsultancyReference, StaffReference
+    from common.models.gate.visitor_model import ConsultancyReference, StaffReference, StudentReference, OtherReference
 
     filters = [AdmissionStudent.deleted_at.is_(None)]
 
@@ -1620,6 +1768,50 @@ async def get_reference_details(
             .join(StaffReference, StaffReference.student_id == AdmissionStudent.id)
             .where(StaffReference.staff_id == reference_id, *filters)
         )
+    elif reference_type == "student":
+        stmt = (
+            select(AdmissionStudent)
+            .join(StudentReference, StudentReference.student_id == AdmissionStudent.id)
+            .where(*filters)
+        )
+        count_stmt = (
+            select(func.count(AdmissionStudent.id))
+            .join(StudentReference, StudentReference.student_id == AdmissionStudent.id)
+            .where(*filters)
+        )
+    elif reference_type == "other":
+        stmt = (
+            select(AdmissionStudent)
+            .join(OtherReference, OtherReference.student_id == AdmissionStudent.id)
+            .where(*filters)
+        )
+        count_stmt = (
+            select(func.count(AdmissionStudent.id))
+            .join(OtherReference, OtherReference.student_id == AdmissionStudent.id)
+            .where(*filters)
+        )
+    elif reference_type == "direct":
+        from sqlalchemy import not_, exists
+        stmt = (
+            select(AdmissionStudent)
+            .where(
+                *filters,
+                not_(exists(select(ConsultancyReference.id).where(ConsultancyReference.student_id == AdmissionStudent.id))),
+                not_(exists(select(StaffReference.id).where(StaffReference.student_id == AdmissionStudent.id))),
+                not_(exists(select(StudentReference.id).where(StudentReference.student_id == AdmissionStudent.id))),
+                not_(exists(select(OtherReference.id).where(OtherReference.student_id == AdmissionStudent.id))),
+            )
+        )
+        count_stmt = (
+            select(func.count(AdmissionStudent.id))
+            .where(
+                *filters,
+                not_(exists(select(ConsultancyReference.id).where(ConsultancyReference.student_id == AdmissionStudent.id))),
+                not_(exists(select(StaffReference.id).where(StaffReference.student_id == AdmissionStudent.id))),
+                not_(exists(select(StudentReference.id).where(StudentReference.student_id == AdmissionStudent.id))),
+                not_(exists(select(OtherReference.id).where(OtherReference.student_id == AdmissionStudent.id))),
+            )
+        )
     else:
         return {"items": [], "total": 0, "page": page, "size": size, "pages": 0}
 
@@ -1638,6 +1830,7 @@ async def get_reference_details(
         {
             "id": str(s.id),
             "enquiry_number": s.enquiry_number,
+            "application_number": s.application_number,
             "name": s.personal_details.name if s.personal_details else None,
             "mobile": s.personal_details.student_mobile if s.personal_details else None,
             "parent_name": s.personal_details.father_name if s.personal_details else None,
