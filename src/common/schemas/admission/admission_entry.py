@@ -188,7 +188,7 @@ class AdmissionStudentBase(BaseModel):
     boarding_place: Optional[str] = Field(None, max_length=200)
     admission_type_id: Optional[Union[UUID, str]] = None
     academic_year_id: Optional[UUID] = None
-    application_number: Optional[str] = Field(None, max_length=20)
+    application_number: Optional[str] = Field(None, max_length=50)
     roll_number: Optional[str] = Field(None, max_length=50)
     section: Optional[str] = Field(None, max_length=20)
     current_semester: Optional[int] = None
