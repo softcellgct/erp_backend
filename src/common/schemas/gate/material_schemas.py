@@ -12,7 +12,7 @@ class MaterialStatus(str, Enum):
 class MaterialPassBase(BaseModel):
     name: str
     material_name: str
-    quantity: int
+    quantity: str
     out_time: time
     out_date: date
     company_name: str
@@ -21,13 +21,13 @@ class MaterialPassBase(BaseModel):
     has_vehicle: bool = False
     vehicle_number: Optional[str] = None
     vehicle_name: Optional[str] = None
-    pending_quantity: Optional[int] = None
+    pending_quantity: Optional[str] = None
 
 class MaterialPassCreate(MaterialPassBase):
     pass
 
 class MaterialPassUpdate(BaseModel):
-    in_quantity: Optional[int] = None
+    in_quantity: Optional[str] = None
     status: Optional[MaterialStatus] = None
     description: Optional[str] = None
     in_date: Optional[date] = None
@@ -38,7 +38,7 @@ class MaterialPassResponse(MaterialPassBase):
     
     id: UUID
     pass_number: str
-    in_quantity: int
+    in_quantity: str
     status: MaterialStatus
     in_date: Optional[date] = None
     in_time: Optional[time] = None
@@ -48,13 +48,14 @@ class MaterialPassResponse(MaterialPassBase):
 class MaterialInBase(BaseModel):
     staff_name: str
     material_name: str
-    quantity: int
+    quantity: str
     bill_number: str
     bill_date: date
     total_amount: str
     company_name: str
     has_vehicle: bool = False
     vehicle_number: Optional[str] = None
+    vehicle_name: Optional[str] = None
     vehicle_charge: Optional[str] = None
 
 class MaterialInCreate(MaterialInBase):
@@ -74,7 +75,7 @@ class UnifiedMaterialReportItem(BaseModel):
     pass_type: str # "Material Out/In" or "New Material"
     name: str # staff_name or name
     material_name: str
-    quantity: int
+    quantity: str
     company_name: str
     place_or_bill: str # place or bill_number
     date: date # out_date or bill_date
@@ -82,8 +83,9 @@ class UnifiedMaterialReportItem(BaseModel):
     status: str # "active", "pending", "returned" or "received"
     in_date: Optional[date] = None
     in_time: Optional[time] = None
-    in_quantity: Optional[int] = None
-    pending_quantity: Optional[int] = None
+    in_quantity: Optional[str] = None
+    pending_quantity: Optional[str] = None
     vehicle_number: Optional[str] = None
     vehicle_name: Optional[str] = None
+    vehicle_charge: Optional[str] = None
     created_at: datetime

@@ -1332,7 +1332,7 @@ class MaterialPassCRUD:
         
         # Calculate pending if not provided
         if data.get("pending_quantity") is None:
-            data["pending_quantity"] = data.get("quantity")
+            data["pending_quantity"] = str(data.get("quantity"))
             
         material_pass = MaterialPass(**data)
         db.add(material_pass)
@@ -1375,13 +1375,24 @@ class MaterialPassCRUD:
         # Handle in_quantity logic
         if "in_quantity" in update_data:
             material_pass.in_quantity = update_data["in_quantity"]
-            material_pass.pending_quantity = material_pass.quantity - material_pass.in_quantity
             
-            if material_pass.pending_quantity <= 0:
-                material_pass.status = MaterialStatus.RETURNED
-                material_pass.pending_quantity = 0
-            else:
-                material_pass.status = MaterialStatus.PENDING
+            try:
+                # Attempt automated math only if both are numeric
+                qty_val = int(material_pass.quantity)
+                in_qty_val = int(material_pass.in_quantity)
+                pending_val = qty_val - in_qty_val
+                
+                material_pass.pending_quantity = str(max(0, pending_val))
+                
+                if pending_val <= 0:
+                    material_pass.status = MaterialStatus.RETURNED
+                else:
+                    material_pass.status = MaterialStatus.PENDING
+            except (ValueError, TypeError):
+                # If non-numeric (e.g. "10kg"), math is skipped. 
+                # Status remains unchanged unless explicitly provided.
+                if "status" not in update_data:
+                    material_pass.status = MaterialStatus.PENDING
 
         for key, value in update_data.items():
             if key != "in_quantity" and hasattr(material_pass, key):
@@ -1487,6 +1498,7 @@ class MaterialPassCRUD:
                 "status": "received",
                 "vehicle_number": i.vehicle_number,
                 "vehicle_name": i.vehicle_name,
+                "vehicle_charge": i.vehicle_charge,
                 "amount": i.total_amount,
                 "created_at": i.created_at
             })
