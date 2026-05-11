@@ -20,7 +20,7 @@ class MaterialPassBase(BaseModel):
     description: Optional[str] = None
     has_vehicle: bool = False
     vehicle_number: Optional[str] = None
-    vehicle_charge: Optional[str] = None
+    vehicle_name: Optional[str] = None
     pending_quantity: Optional[int] = None
 
 class MaterialPassCreate(MaterialPassBase):
@@ -85,4 +85,5 @@ class UnifiedMaterialReportItem(BaseModel):
     in_quantity: Optional[int] = None
     pending_quantity: Optional[int] = None
     vehicle_number: Optional[str] = None
+    vehicle_name: Optional[str] = None
     created_at: datetime

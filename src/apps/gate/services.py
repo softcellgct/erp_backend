@@ -1468,6 +1468,7 @@ class MaterialPassCRUD:
                 "in_quantity": p.in_quantity,
                 "pending_quantity": p.pending_quantity,
                 "vehicle_number": p.vehicle_number,
+                "vehicle_name": p.vehicle_name,
                 "created_at": p.created_at
             })
             
@@ -1485,6 +1486,7 @@ class MaterialPassCRUD:
                 "time": i.created_at.strftime("%H:%M"),
                 "status": "received",
                 "vehicle_number": i.vehicle_number,
+                "vehicle_name": i.vehicle_name,
                 "amount": i.total_amount,
                 "created_at": i.created_at
             })

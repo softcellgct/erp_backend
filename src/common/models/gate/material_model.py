@@ -41,7 +41,7 @@ class MaterialPass(Base):
     
     has_vehicle: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     vehicle_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    vehicle_charge: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    vehicle_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     
     status: Mapped[MaterialStatus] = mapped_column(
         SQLEnum(MaterialStatus, native_enum=False),
@@ -66,7 +66,7 @@ class MaterialIn(Base):
     
     has_vehicle: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     vehicle_number: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    vehicle_charge: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    vehicle_name: Mapped[str | None] = mapped_column(String(100), nullable=True)
     
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
