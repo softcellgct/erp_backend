@@ -16,6 +16,7 @@ from common.models.gate.visitor_model import (
     OtherReference,
     ConsultancyReference,
 )
+from common.models.gate.material_model import MaterialPass, MaterialStatus, MaterialIn
 
 from common.models.admission.admission_entry import (
     AdmissionStudent,
@@ -151,4 +152,7 @@ __all__ = [
     "ScholarshipConfiguration",
     "StaffReferralConcession",
     "ScholarshipTypeConfigEnum",
+    "MaterialPass",
+    "MaterialStatus",
+    "MaterialIn",
 ]
