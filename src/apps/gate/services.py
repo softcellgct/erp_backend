@@ -1427,7 +1427,7 @@ class MaterialPassCRUD:
 
         return f"{prefix}{next_num:04d}"
 
-    async def get_unified_report(self, db: AsyncSession, page: int = 1, size: int = 50, search: str | None = None, pass_type: str | None = None, status: str | None = None):
+    async def get_unified_report(self, db: AsyncSession, page: int = 1, size: int = 50, search: str | None = None, pass_type: str | None = None, status: str | None = None, date_from: date | None = None, date_to: date | None = None):
         # 1. Fetch Material Pass records
         stmt_passes = select(MaterialPass)
         if search:
@@ -1441,6 +1441,11 @@ class MaterialPassCRUD:
                 )
             )
         
+        if date_from:
+            stmt_passes = stmt_passes.where(MaterialPass.out_date >= date_from)
+        if date_to:
+            stmt_passes = stmt_passes.where(MaterialPass.out_date <= date_to)
+        
         # 2. Fetch Material In records
         stmt_in = select(MaterialIn)
         if search:
@@ -1453,6 +1458,11 @@ class MaterialPassCRUD:
                     MaterialIn.company_name.ilike(pattern)
                 )
             )
+        
+        if date_from:
+            stmt_in = stmt_in.where(MaterialIn.bill_date >= date_from)
+        if date_to:
+            stmt_in = stmt_in.where(MaterialIn.bill_date <= date_to)
 
         res_passes = await db.execute(stmt_passes)
         res_in = await db.execute(stmt_in)
