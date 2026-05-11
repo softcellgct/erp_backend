@@ -1316,5 +1316,241 @@ class GeneralVisitorCRUD:
             "updated_at": visitor.updated_at.isoformat() if visitor.updated_at else None,
         }
 
+from common.models.gate.material_model import MaterialPass, MaterialStatus, MaterialIn
+from common.schemas.gate.material_schemas import (
+    MaterialPassCreate, 
+    MaterialPassUpdate,
+    MaterialInCreate
+)
+
+class MaterialPassCRUD:
+    # ... (existing methods)
+    async def create(self, db: AsyncSession, payload: MaterialPassCreate):
+        data = payload.dict(exclude_unset=True)
+        if not data.get("pass_number"):
+            data["pass_number"] = await self._generate_unique_pass_no(db)
+        
+        # Calculate pending if not provided
+        if data.get("pending_quantity") is None:
+            data["pending_quantity"] = data.get("quantity")
+            
+        material_pass = MaterialPass(**data)
+        db.add(material_pass)
+        await db.commit()
+        await db.refresh(material_pass)
+        return material_pass
+
+    async def get_all(self, db: AsyncSession, page: int = 1, size: int = 50, search: str | None = None):
+        stmt = select(MaterialPass)
+        if search:
+            pattern = f"%{search.strip()}%"
+            stmt = stmt.where(
+                or_(
+                    MaterialPass.pass_number.ilike(pattern),
+                    MaterialPass.name.ilike(pattern),
+                    MaterialPass.material_name.ilike(pattern),
+                    MaterialPass.company_name.ilike(pattern)
+                )
+            )
+        stmt = stmt.order_by(desc(MaterialPass.created_at))
+        return await paginate(db, stmt, Params(page=page, size=size))
+
+    async def get_one(self, db: AsyncSession, pass_id: UUID):
+        stmt = select(MaterialPass).where(MaterialPass.id == pass_id)
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def get_by_pass_no(self, db: AsyncSession, pass_no: str):
+        stmt = select(MaterialPass).where(MaterialPass.pass_number == pass_no.strip())
+        result = await db.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def update(self, db: AsyncSession, pass_id: UUID, payload: MaterialPassUpdate):
+        material_pass = await self.get_one(db, pass_id)
+        if not material_pass:
+            return None
+        
+        update_data = payload.dict(exclude_unset=True)
+        
+        # Handle in_quantity logic
+        if "in_quantity" in update_data:
+            material_pass.in_quantity = update_data["in_quantity"]
+            material_pass.pending_quantity = material_pass.quantity - material_pass.in_quantity
+            
+            if material_pass.pending_quantity <= 0:
+                material_pass.status = MaterialStatus.RETURNED
+                material_pass.pending_quantity = 0
+            else:
+                material_pass.status = MaterialStatus.PENDING
+
+        for key, value in update_data.items():
+            if key != "in_quantity" and hasattr(material_pass, key):
+                setattr(material_pass, key, value)
+        
+        await db.commit()
+        await db.refresh(material_pass)
+        return material_pass
+
+    async def _generate_unique_pass_no(self, db: AsyncSession) -> str:
+        today = datetime.now()
+        date_str = today.strftime("%Y%m%d")
+        prefix = f"MAT-{date_str}/"
+
+        result = await db.execute(
+            text(
+                "SELECT pass_number FROM material_passes "
+                "WHERE pass_number LIKE :prefix "
+                "ORDER BY CAST(SUBSTRING(pass_number FROM 14) AS INTEGER) DESC LIMIT 1"
+            ),
+            {"prefix": f"{prefix}%"},
+        )
+        last_pass = result.scalar_one_or_none()
+
+        if not last_pass:
+            next_num = 1
+        else:
+            try:
+                next_num = int(last_pass.split("/")[-1]) + 1
+            except (IndexError, ValueError):
+                next_num = 1
+
+        return f"{prefix}{next_num:04d}"
+
+    async def get_unified_report(self, db: AsyncSession, page: int = 1, size: int = 50, search: str | None = None, pass_type: str | None = None, status: str | None = None):
+        # 1. Fetch Material Pass records
+        stmt_passes = select(MaterialPass)
+        if search:
+            pattern = f"%{search.strip()}%"
+            stmt_passes = stmt_passes.where(
+                or_(
+                    MaterialPass.pass_number.ilike(pattern),
+                    MaterialPass.name.ilike(pattern),
+                    MaterialPass.material_name.ilike(pattern),
+                    MaterialPass.company_name.ilike(pattern)
+                )
+            )
+        
+        # 2. Fetch Material In records
+        stmt_in = select(MaterialIn)
+        if search:
+            pattern = f"%{search.strip()}%"
+            stmt_in = stmt_in.where(
+                or_(
+                    MaterialIn.pass_number.ilike(pattern),
+                    MaterialIn.staff_name.ilike(pattern),
+                    MaterialIn.material_name.ilike(pattern),
+                    MaterialIn.company_name.ilike(pattern)
+                )
+            )
+
+        res_passes = await db.execute(stmt_passes)
+        res_in = await db.execute(stmt_in)
+        
+        passes = res_passes.scalars().all()
+        ins = res_in.scalars().all()
+        
+        combined = []
+        for p in passes:
+            combined.append({
+                "id": p.id,
+                "pass_number": p.pass_number,
+                "pass_type": "Material Out/In",
+                "name": p.name,
+                "material_name": p.material_name,
+                "quantity": p.quantity,
+                "company_name": p.company_name,
+                "place_or_bill": p.place,
+                "date": p.out_date,
+                "time": p.out_time,
+                "status": p.status.value,
+                "in_date": p.in_date,
+                "in_time": p.in_time,
+                "in_quantity": p.in_quantity,
+                "pending_quantity": p.pending_quantity,
+                "vehicle_number": p.vehicle_number,
+                "created_at": p.created_at
+            })
+            
+        for i in ins:
+            combined.append({
+                "id": i.id,
+                "pass_number": i.pass_number,
+                "pass_type": "New Material",
+                "name": i.staff_name,
+                "material_name": i.material_name,
+                "quantity": i.quantity,
+                "company_name": i.company_name,
+                "place_or_bill": i.bill_number,
+                "date": i.bill_date,
+                "time": i.created_at.strftime("%H:%M"),
+                "status": "received",
+                "vehicle_number": i.vehicle_number,
+                "amount": i.total_amount,
+                "created_at": i.created_at
+            })
+            
+        # Apply filters
+        if pass_type and pass_type != "All":
+            combined = [x for x in combined if x["pass_type"] == pass_type]
+        
+        if status and status != "All":
+            combined = [x for x in combined if x["status"] == status.lower()]
+
+        # Sort by created_at desc
+        combined.sort(key=lambda x: x["created_at"], reverse=True)
+        
+        # Manual pagination
+        total = len(combined)
+        start = (page - 1) * size
+        end = start + size
+        items = combined[start:end]
+        
+        return {
+            "items": items,
+            "total": total,
+            "page": page,
+            "size": size,
+            "pages": math.ceil(total / size) if size > 0 else 1
+        }
+
+
+class MaterialInCRUD:
+    async def create(self, db: AsyncSession, payload: MaterialInCreate):
+        data = payload.dict(exclude_unset=True)
+        data["pass_number"] = await self._generate_unique_pass_no(db)
+        
+        material_in = MaterialIn(**data)
+        db.add(material_in)
+        await db.commit()
+        await db.refresh(material_in)
+        return material_in
+
+    async def _generate_unique_pass_no(self, db: AsyncSession) -> str:
+        today = datetime.now()
+        date_str = today.strftime("%Y%m%d")
+        prefix = f"NEW-{date_str}/"
+
+        result = await db.execute(
+            text(
+                "SELECT pass_number FROM material_in_entries "
+                "WHERE pass_number LIKE :prefix "
+                "ORDER BY CAST(SUBSTRING(pass_number FROM 14) AS INTEGER) DESC LIMIT 1"
+            ),
+            {"prefix": f"{prefix}%"},
+        )
+        last_pass = result.scalar_one_or_none()
+
+        if not last_pass:
+            next_num = 1
+        else:
+            try:
+                next_num = int(last_pass.split("/")[-1]) + 1
+            except (IndexError, ValueError):
+                next_num = 1
+
+        return f"{prefix}{next_num:04d}"
+
+material_pass_crud = MaterialPassCRUD()
+material_in_crud = MaterialInCRUD()
 admission_crud = AdmissionVisitorCRUD()
 general_visitor_crud = GeneralVisitorCRUD()

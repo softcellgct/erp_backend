@@ -28,6 +28,14 @@ from common.schemas.gate.admission_visitor import (
     AdmissionVisitorReportResponse,
     AdmissionVisitorRead,
 )
+from common.schemas.gate.material_schemas import (
+    MaterialPassCreate,
+    MaterialPassUpdate,
+    MaterialPassResponse,
+    MaterialInCreate,
+    MaterialInResponse,
+    UnifiedMaterialReportItem,
+)
 from fastapi_pagination import Page, add_pagination
 from sqlalchemy.ext.asyncio import AsyncSession
 from io import BytesIO
@@ -393,3 +401,125 @@ async def get_all_admission_visitors(
 
 
 add_pagination(admission_visitor_router)
+
+
+# =====================================================
+# Material Movement CRUD Routes
+# =====================================================
+from .services import material_pass_crud
+
+material_router = APIRouter(
+    prefix="/material-passes",
+    tags=["Gate - Material Movement"],
+)
+
+@material_router.post(
+    "",
+    response_model=MaterialPassResponse,
+    name="Create Material Pass",
+)
+async def create_material_pass(
+    payload: MaterialPassCreate,
+    db: AsyncSession = Depends(get_db_session),
+):
+    return await material_pass_crud.create(db, payload)
+
+@material_router.get(
+    "",
+    response_model=Page[MaterialPassResponse],
+    name="Get All Material Passes",
+)
+async def get_all_material_passes(
+    page: int = Query(default=1, ge=1),
+    size: int = Query(default=50, ge=1, le=200),
+    search: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db_session),
+):
+    return await material_pass_crud.get_all(db, page=page, size=size, search=search)
+
+
+
+@material_router.get(
+    "/by-pass/{pass_no:path}",
+    response_model=MaterialPassResponse,
+    name="Get Material Pass By Pass Number",
+)
+async def get_material_pass_by_no(
+    pass_no: str,
+    db: AsyncSession = Depends(get_db_session),
+):
+    decoded_pass_no = unquote(pass_no).strip()
+    material_pass = await material_pass_crud.get_by_pass_no(db, decoded_pass_no)
+    if not material_pass:
+        raise HTTPException(status_code=404, detail="Material pass not found")
+    return material_pass
+
+@material_router.get(
+    "/reports",
+    response_model=dict, # Manual pagination returns a dict
+    name="Get Unified Material Reports",
+)
+async def get_material_reports(
+    page: int = 1,
+    size: int = 50,
+    search: str | None = None,
+    pass_type: str | None = None,
+    status: str | None = None,
+    db: AsyncSession = Depends(get_db_session),
+):
+    return await material_pass_crud.get_unified_report(db, page, size, search, pass_type, status)
+
+@material_router.get(
+    "/{pass_id}",
+    response_model=MaterialPassResponse,
+    name="Get Material Pass",
+)
+async def get_material_pass(
+    pass_id: UUID,
+    db: AsyncSession = Depends(get_db_session),
+):
+    material_pass = await material_pass_crud.get_one(db, pass_id)
+    if not material_pass:
+        raise HTTPException(status_code=404, detail="Material pass not found")
+    return material_pass
+
+@material_router.put(
+    "/{pass_id}",
+    response_model=MaterialPassResponse,
+    name="Update Material Pass",
+)
+async def update_material_pass(
+    pass_id: UUID,
+    payload: MaterialPassUpdate,
+    db: AsyncSession = Depends(get_db_session),
+):
+    material_pass = await material_pass_crud.update(db, pass_id, payload)
+    if not material_pass:
+        raise HTTPException(status_code=404, detail="Material pass not found")
+    return material_pass
+
+add_pagination(material_router)
+
+
+# =====================================================
+# Material In (New Material) CRUD Routes
+# =====================================================
+from .services import material_in_crud
+
+material_in_router = APIRouter(
+    prefix="/material-in",
+    tags=["Gate - Material In (New)"],
+)
+
+@material_in_router.post(
+    "",
+    response_model=MaterialInResponse,
+    name="Create Material In Entry",
+)
+async def create_material_in(
+    payload: MaterialInCreate,
+    db: AsyncSession = Depends(get_db_session),
+):
+    return await material_in_crud.create(db, payload)
+
+add_pagination(material_in_router)
