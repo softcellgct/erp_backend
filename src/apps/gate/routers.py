@@ -462,12 +462,14 @@ async def get_material_pass_by_no(
 async def get_material_reports(
     page: int = 1,
     size: int = 50,
-    search: str | None = None,
-    pass_type: str | None = None,
-    status: str | None = None,
+    search: str | None = Query(default=None),
+    pass_type: str | None = Query(default=None),
+    status: str | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
     db: AsyncSession = Depends(get_db_session),
 ):
-    return await material_pass_crud.get_unified_report(db, page, size, search, pass_type, status)
+    return await material_pass_crud.get_unified_report(db, page, size, search, pass_type, status, date_from, date_to)
 
 @material_router.get(
     "/{pass_id}",
