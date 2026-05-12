@@ -918,13 +918,13 @@ async def list_admission_students(
                 pass
         
         # Count total
-        count_query = select(func.count(AdmissionStudent.id.distinct())).outerjoin(AdmissionStudentPersonalDetails).outerjoin(AdmissionStudentProgramDetails).outerjoin(AdmissionGateEntry).where(and_(*query_filters))
+        count_query = select(func.count(AdmissionStudent.id)).outerjoin(AdmissionStudentPersonalDetails).outerjoin(AdmissionStudentProgramDetails).outerjoin(AdmissionGateEntry).where(and_(*query_filters))
         count_result = await db.execute(count_query)
         total = count_result.scalar() or 0
         
         # Fetch paginated data
         offset = (page - 1) * size
-        data_query = select(AdmissionStudent).distinct().outerjoin(AdmissionStudentPersonalDetails).outerjoin(AdmissionStudentProgramDetails).outerjoin(AdmissionGateEntry).options(
+        data_query = select(AdmissionStudent).outerjoin(AdmissionStudentPersonalDetails).outerjoin(AdmissionStudentProgramDetails).outerjoin(AdmissionGateEntry).options(
             selectinload(AdmissionStudent.program_details), 
             selectinload(AdmissionStudent.personal_details),
             selectinload(AdmissionStudent.previous_academic_details),
