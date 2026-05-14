@@ -269,6 +269,9 @@ class AdmissionVisitorCRUD:
             await db.rollback()
             raise
 
+    async def generate_pass_number(self, db: AsyncSession) -> str:
+        return await self._generate_unique_gate_pass_no(db)
+
     async def _generate_unique_gate_pass_no(self, db: AsyncSession) -> str:
         today = datetime.now()
         date_str = today.strftime("%Y%m%d")
@@ -411,7 +414,15 @@ class AdmissionVisitorCRUD:
                     detail=f"Aadhar number {aadhar_val} already exists",
                 )
 
-        # Filter fields that exist in the model columns
+        # Explicitly handle gate_pass_number and image_url mapping
+        if "gate_pass_no" in update_data:
+            gate_entry.gate_pass_number = update_data.pop("gate_pass_no")
+        if "gate_pass_number" in update_data:
+            gate_entry.gate_pass_number = update_data.pop("gate_pass_number")
+        if "image_url" in update_data:
+            gate_entry.image_url = update_data.pop("image_url")
+
+        # Filter other fields that exist in the model columns
         mapper = inspect(AdmissionGateEntry)
         column_names = {c.key for c in mapper.columns}
         

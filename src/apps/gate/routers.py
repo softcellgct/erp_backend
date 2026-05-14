@@ -256,6 +256,16 @@ async def get_admission_visitor_by_gate_pass(
     if not visitor:
         raise HTTPException(status_code=404, detail="Admission visitor not found")
     return visitor
+    
+@admission_visitor_router.get(
+    "/generate-pass-number",
+    name="Generate New Admission Gate Pass Number",
+    description="Generate a fresh, unique gate pass number for admission visitors.",
+)
+async def generate_admission_pass_number(
+    db: AsyncSession = Depends(get_db_session),
+):
+    return await admission_crud.generate_pass_number(db)
 
 
 @admission_visitor_router.post(
