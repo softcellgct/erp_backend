@@ -379,22 +379,27 @@ async def seed_initial_data() -> None:
                 "HOSTEL_MODULE_REPORTS",
             ],
             "SIS": [
-                "SIS_STUDENTS",
-                "SIS_ACADEMIC_STRUCTURE",
-                "SIS_REPORTS",
+                ("SIS_PERFECT_ENTRY", "SIS Perfect Entry"),
+                ("SIS_ROLL_NUMBERS", "SIS Roll Number Generation"),
+                ("SIS_CLASSES", "SIS Class Management"),
+                ("SIS_STUDENTS", "SIS Student Catalog"),
+                ("SIS_ACADEMIC_STRUCTURE", "SIS Academic Structure"),
+                ("SIS_REPORTS", "SIS Reports"),
             ],
         }
 
+        # Each entry is either "SCREEN_NAME" (title derived from the name) or a
+        # ("SCREEN_NAME", "Custom Title") tuple when a nicer title is wanted.
+        def _split_screen(entry):
+            if isinstance(entry, tuple):
+                return entry[0], entry[1]
+            return entry, entry.replace("_", " ").title()
+
         required_screens = []
-        for module_name, screen_names in screens_by_module.items():
-            for screen_name in screen_names:
-                required_screens.append(
-                    (
-                        screen_name,
-                        screen_name.replace("_", " ").title(),
-                        module_name,
-                    )
-                )
+        for module_name, entries in screens_by_module.items():
+            for entry in entries:
+                screen_name, screen_title = _split_screen(entry)
+                required_screens.append((screen_name, screen_title, module_name))
 
         added_screen_ids = []
         for screen_name, screen_title, module_name in required_screens:
@@ -423,9 +428,9 @@ async def seed_initial_data() -> None:
             existing_perm_screen_ids = {perm.screen_id for perm in existing_perms}
 
             seeded_screen_names = {
-                screen_name
+                _split_screen(entry)[0]
                 for module_screens in screens_by_module.values()
-                for screen_name in module_screens
+                for entry in module_screens
             }
 
             seeded_screen_ids = [

@@ -63,6 +63,8 @@ from common.models.billing.scholarship_config import (
     StaffReferralConcession,
     ScholarshipTypeConfigEnum,
 )
+from common.models.sis.sis_student import SISStudentProfile, HostelStatusEnum, BloodGroupEnum
+from common.models.sis.roll_number_template import RollNumberTemplate
 
 
 __all__ = [
@@ -151,4 +153,8 @@ __all__ = [
     "ScholarshipConfiguration",
     "StaffReferralConcession",
     "ScholarshipTypeConfigEnum",
+    "SISStudentProfile",
+    "HostelStatusEnum",
+    "BloodGroupEnum",
+    "RollNumberTemplate",
 ]

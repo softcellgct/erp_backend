@@ -35,6 +35,7 @@ from .billing.refund_routers import router as refund_router
 from .billing.finance_routers import router as finance_router
 from .meta.routers import religion_router, community_router, caste_router
 from .master.routers import hostel_router
+from .sis.router import router as sis_router
 
 ROUTERS = [
     (auth_router, "/api"),
@@ -73,4 +74,5 @@ ROUTERS = [
     (admission_masters_router, "/api/master"),
     (school_router, "/api/master"),
     (staff_router, "/api/master"),
+    (sis_router, "/api"),
 ]

@@ -210,8 +210,30 @@ class AdmissionStudent(Base):
         index=True,
     )
 
+    # Perfect Entry finalize/lock (SIS) — once finalized the record is read-only;
+    # a super-admin can unlock. Finalize is a sub-state of PROVISIONALLY_ALLOTTED,
+    # so it is modelled as a flag rather than a new AdmissionStatusEnum value.
+    perfect_entry_finalized = Column(Boolean, default=False, nullable=False)
+    perfect_entry_finalized_at = Column(DateTime, nullable=True)
+    perfect_entry_finalized_by = Column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", use_alter=True, deferrable=True, initially="DEFERRED"),
+        nullable=True,
+        index=True,
+    )
+
+    # SIS class/section assignment — one student belongs to one class per year.
+    # `section` (above) is kept as a denormalized mirror of Class.section_name.
+    class_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("classes.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Foreign key relationships
     fee_structure = relationship("FeeStructure", lazy="selectin")
+    assigned_class = relationship("Class", lazy="selectin")
 
     gate_entry = relationship("AdmissionGateEntry", back_populates="admission_student", lazy="selectin")
 
@@ -590,7 +612,19 @@ class AdmissionStudent(Base):
             academic_details = data.get("previous_academic_details")
             if isinstance(academic_details, dict) and student and student.previous_academic_details:
                 academic_details["id"] = student.previous_academic_details.id
-            
+
+            # Perfect Entry finalized (SIS) → personal / program / academic data is
+            # read-only. A super-admin must unlock via the SIS endpoint first.
+            if student and getattr(student, "perfect_entry_finalized", False):
+                if any(
+                    data.get(k) is not None
+                    for k in ("personal_details", "program_details", "previous_academic_details")
+                ):
+                    raise ValueError(
+                        "Perfect Entry is finalized for this student; personal/academic/program "
+                        "details are read-only. Ask a super-admin to unlock first."
+                    )
+
             if not student or not getattr(student, "is_fee_structure_locked", False):
                 continue
 
@@ -721,6 +755,7 @@ class AdmissionStudentProgramDetails(Base):
     institution = relationship("Institution", lazy="selectin")
     department = relationship("Department", lazy="selectin")
     course = relationship("Course", lazy="selectin")
+    academic_year = relationship("AcademicYear", lazy="selectin")
     admission_quota = relationship("SeatQuota", lazy="selectin")
     admission_type = relationship("AdmissionType", lazy="selectin")
 

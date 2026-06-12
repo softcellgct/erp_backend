@@ -1,7 +1,7 @@
 from uuid import UUID
 from components.db.base_model import Base
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String, JSON
+from sqlalchemy import Boolean, CheckConstraint, ForeignKey, Integer, String, JSON, UniqueConstraint
 
 class Institution(Base):
     __tablename__ = "institutions"
@@ -63,10 +63,28 @@ class Class(Base):
     code: Mapped[str] = mapped_column(String(50), unique=True, index=True)
     title: Mapped[str] = mapped_column(String(255))
     course_id: Mapped[UUID] = mapped_column(ForeignKey("courses.id"), index=True)
+    # A class is one (course + academic_year + section) group with a capacity.
+    academic_year_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("academic_years.id"), index=True, nullable=True
+    )
+    institution_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("institutions.id"), index=True, nullable=True
+    )
+    section_name: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    capacity: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
     # Relationships
     course: Mapped["Course"] = relationship(back_populates="classes", lazy="selectin")
+    academic_year: Mapped["AcademicYear"] = relationship(lazy="selectin")
+    institution: Mapped["Institution"] = relationship(lazy="selectin")
+
+    __table_args__ = (
+        UniqueConstraint(
+            "course_id", "academic_year_id", "section_name",
+            name="uq_class_course_year_section",
+        ),
+    )
 
 
 class Hostel(Base):
