@@ -590,7 +590,10 @@ class BillingService:
             d.status = "invoiced"
             db.add(d)
             
-        await db.commit()
+        # Commit only if this is a standalone call
+        # (Though it's safer to let the caller commit if possible)
+        # await db.commit()
+        await db.flush()
         await db.refresh(invoice)
         return invoice
 
@@ -1785,35 +1788,31 @@ class BillingService:
                         demand_semester = semester
                         demand_year = derived_year
                     elif not item.amount_by_semester and not item.amount_by_year and derived_year == 1:
-                        amount = float(item.amount or 0)
-                        demand_semester = semester
-                        demand_year = derived_year
-                else:
+                        # Flat amount - charge only in Semester 1 of Year 1
+                        if semester == 1:
+                            amount = float(item.amount or 0)
+                            demand_semester = semester
+                            demand_year = derived_year
+                else: # semester is None, so we are doing by year
                     if item.amount_by_semester:
                         total = 0.0
+                        semesters_per_year = fs.semesters_per_year or 2
                         for sem_label, sem_amount in item.amount_by_semester.items():
                             sem_num = int(sem_label)
                             sem_year = ((sem_num - 1) // semesters_per_year) + 1
                             if sem_year == year_int:
                                 total += float(sem_amount or 0)
                         amount = total
+                        demand_year = year_int
                     elif item.amount_by_year and str(year_int) in item.amount_by_year:
                         amount = float(item.amount_by_year[str(year_int)] or 0)
-                    elif not item.amount_by_year and year_int == 1:
+                        demand_year = year_int
+                    elif not item.amount_by_semester and not item.amount_by_year and year_int == 1:
                         amount = float(item.amount or 0)
-
-                    demand_year = year_int
+                        demand_year = year_int
 
                 if amount > 0:
-                    fee_head_name = item.fee_head.name if item.fee_head else "Fee"
-                    fee_subhead_name = item.fee_sub_head.name if item.fee_sub_head else ""
-                    scope_label = f"Sem {semester}" if semester is not None else f"Year {year_int}"
-                    description = (
-                        f"{fee_head_name} - {fee_subhead_name} ({scope_label})"
-                        if fee_subhead_name
-                        else f"{fee_head_name} ({scope_label})"
-                    )
-
+                    description = item.fee_sub_head.name if item.fee_sub_head else (item.fee_head.name if item.fee_head else "Fee Item")
                     demand_item = DemandItem(
                         batch_id=batch.id,
                         student_id=student_id,
@@ -1824,12 +1823,13 @@ class BillingService:
                         fee_sub_head_id=item.fee_sub_head_id,
                         semester=demand_semester,
                         year=demand_year,
-                        description=description
+                        description=description,
+                        payer_type=item.payer_type
                     )
                     db.add(demand_item)
                     student_demands.append(demand_item)
-                    created_count += 1
                     total_amount += amount
+                    created_count += 1
 
             if student_demands:
                 await db.flush()

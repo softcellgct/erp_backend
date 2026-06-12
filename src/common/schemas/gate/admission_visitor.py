@@ -118,11 +118,13 @@ class AdmissionVisitorUpdate(BaseModel):
     native_place: Optional[str] = None
     image_url: Optional[str] = None
     gate_pass_no: Optional[str] = None
+    gate_pass_number: Optional[str] = None
     reference_type: Optional[str] = None
     vehicle: Optional[bool] = None
     vehicle_number: Optional[str] = None
     visit_status: Optional[VisitStatus] = None
     check_out_remarks: Optional[str] = None
+    check_in_time: Optional[datetime] = None
     
     consultancy_reference: Optional[ConsultancyReferenceCreate] = None
     staff_reference: Optional[StaffReferenceCreate] = None

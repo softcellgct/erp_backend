@@ -3,6 +3,8 @@ from .gate.routers import (
     person_type_router,
     visitor_router,
     admission_visitor_router,
+    material_router,
+    material_in_router,
 )
 from .auth.routers import (
     auth_router,
@@ -53,6 +55,8 @@ ROUTERS = [
     (person_type_router, "/api/gate"),
     (visitor_router, "/api/gate"),
     (admission_visitor_router, "/api/gate"),
+    (material_router, "/api/gate"),
+    (material_in_router, "/api/gate"),
     (gate_router, "/api/gate"),
     (consultancy_router, "/api/admission"),
     (religion_router, "/api/meta"),
