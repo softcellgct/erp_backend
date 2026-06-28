@@ -7,6 +7,7 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    Integer,
     String,
     Text,
     UUID,
@@ -30,6 +31,23 @@ class BloodGroupEnum(str, enum.Enum):
     AB_NEG = "AB-"
     O_POS = "O+"
     O_NEG = "O-"
+
+
+class EntryModeEnum(str, enum.Enum):
+    """How a student entered the programme."""
+    NORMAL = "NORMAL"
+    LATERAL_ENTRY = "LATERAL_ENTRY"
+    TRANSFER = "TRANSFER"
+
+
+class AcademicStatusEnum(str, enum.Enum):
+    """Current academic standing of a student in the SIS lifecycle."""
+    ACTIVE = "ACTIVE"
+    PROMOTED = "PROMOTED"
+    GRADUATED = "GRADUATED"
+    DISCONTINUED = "DISCONTINUED"
+    TRANSFERRED = "TRANSFERRED"
+    ALUMNI = "ALUMNI"
 
 
 class SISStudentProfile(Base):
@@ -122,6 +140,42 @@ class SISStudentProfile(Base):
     perm_country = Column(String(100), nullable=True, default="India")
     perm_pincode = Column(String(10), nullable=True)
 
+    # ── Academic progression — CURRENT position only.  Full history lives in
+    # SISStudentAcademicHistory (sis_student_academic_history); never overwrite
+    # year/semester without first appending a history record. ──
+    current_year_of_study = Column(Integer, nullable=True)
+    current_semester = Column(Integer, nullable=True)
+    current_academic_year_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("academic_years.id"),
+        nullable=True,
+        index=True,
+    )
+    entry_mode = Column(Enum(EntryModeEnum, name="entry_mode_enum"), nullable=True)
+    admission_batch = Column(String(20), nullable=True, index=True)
+    graduation_year = Column(Integer, nullable=True)
+    academic_status = Column(
+        Enum(AcademicStatusEnum, name="academic_status_enum"),
+        nullable=False,
+        default=AcademicStatusEnum.ACTIVE,
+        server_default=AcademicStatusEnum.ACTIVE.value,
+    )
+
+    # ── Promotion-eligibility holds (independent of the ON_HOLD admission status) ──
+    academic_hold = Column(Boolean, default=False, nullable=False)
+    disciplinary_hold = Column(Boolean, default=False, nullable=False)
+    hold_reason = Column(String(500), nullable=True)
+
+    # ── Lateral entry / diploma background (populated for LATERAL_ENTRY students) ──
+    diploma_institution = Column(String(255), nullable=True)
+    diploma_board = Column(String(255), nullable=True)
+    diploma_register_number = Column(String(100), nullable=True)
+    diploma_completion_year = Column(Integer, nullable=True)
+    diploma_percentage = Column(String(20), nullable=True)
+    diploma_cgpa = Column(String(20), nullable=True)
+    diploma_branch = Column(String(255), nullable=True)
+    diploma_certificate_number = Column(String(100), nullable=True)
+
     # Profile completion
     profile_completed_at = Column(DateTime(timezone=True), nullable=True)
     profile_completed_by = Column(
@@ -134,6 +188,11 @@ class SISStudentProfile(Base):
         "AdmissionStudent",
         lazy="selectin",
         foreign_keys=[admission_student_id],
+    )
+    current_academic_year = relationship(
+        "AcademicYear",
+        lazy="selectin",
+        foreign_keys=[current_academic_year_id],
     )
 
     def __repr__(self):

@@ -271,3 +271,46 @@ class SISStudentListItem(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+# ── Academic Progression ──────────────────────────────────────────────────────
+
+class PromoteStudentsRequest(BaseModel):
+    student_ids: List[UUID]
+    promote_to_year: int
+    promote_to_semester: int
+    target_academic_year_id: Optional[UUID] = None
+    remarks: Optional[str] = None
+
+
+class RolloverPreviewRequest(BaseModel):
+    source_academic_year_id: UUID
+    target_academic_year_id: Optional[UUID] = None
+    department_id: Optional[UUID] = None
+    course_id: Optional[UUID] = None
+
+
+class RolloverCommitRequest(BaseModel):
+    source_academic_year_id: UUID
+    target_academic_year_id: UUID
+    department_id: Optional[UUID] = None
+    course_id: Optional[UUID] = None
+    remarks: Optional[str] = None
+
+
+class LateralEntryUpdate(BaseModel):
+    diploma_institution: Optional[str] = None
+    diploma_board: Optional[str] = None
+    diploma_register_number: Optional[str] = None
+    diploma_completion_year: Optional[int] = None
+    diploma_percentage: Optional[str] = None
+    diploma_cgpa: Optional[str] = None
+    diploma_branch: Optional[str] = None
+    diploma_certificate_number: Optional[str] = None
+    current_year_of_study: Optional[int] = None
+    current_semester: Optional[int] = None
+    remarks: Optional[str] = None
+
+
+class GraduateStudentsRequest(BaseModel):
+    student_ids: List[UUID]

@@ -64,7 +64,17 @@ from common.models.billing.scholarship_config import (
     StaffReferralConcession,
     ScholarshipTypeConfigEnum,
 )
-from common.models.sis.sis_student import SISStudentProfile, HostelStatusEnum, BloodGroupEnum
+from common.models.sis.sis_student import (
+    SISStudentProfile,
+    HostelStatusEnum,
+    BloodGroupEnum,
+    EntryModeEnum,
+    AcademicStatusEnum,
+)
+from common.models.sis.academic_progression import (
+    SISStudentAcademicHistory,
+    PromotionTypeEnum,
+)
 from common.models.sis.roll_number_template import RollNumberTemplate
 
 
@@ -157,6 +167,10 @@ __all__ = [
     "SISStudentProfile",
     "HostelStatusEnum",
     "BloodGroupEnum",
+    "EntryModeEnum",
+    "AcademicStatusEnum",
+    "SISStudentAcademicHistory",
+    "PromotionTypeEnum",
     "RollNumberTemplate",
     "MaterialPass",
     "MaterialStatus",

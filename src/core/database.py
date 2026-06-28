@@ -385,6 +385,12 @@ async def seed_initial_data() -> None:
                 ("SIS_STUDENTS", "SIS Student Catalog"),
                 ("SIS_ACADEMIC_STRUCTURE", "SIS Academic Structure"),
                 ("SIS_REPORTS", "SIS Reports"),
+                ("SIS_ACADEMIC_PROGRESSION", "SIS Academic Progression"),
+                ("SIS_PROMOTION", "SIS Student Promotion"),
+                ("SIS_PROMOTION_HISTORY", "SIS Promotion History"),
+                ("SIS_ACADEMIC_ROLLOVER", "SIS Academic Year Roll Over"),
+                ("SIS_LATERAL_ENTRY", "SIS Lateral Entry Students"),
+                ("SIS_GRADUATION", "SIS Graduation Processing"),
             ],
         }
 
